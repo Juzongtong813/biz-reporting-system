@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/login/login",
+    "pages/package-month/package-month"
+  ],
+  "window": {
+    "navigationBarTitleText": "经营单元上报系统",
+    "navigationBarBackgroundColor": "#1677ff",
+    "navigationBarTextStyle": "white"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

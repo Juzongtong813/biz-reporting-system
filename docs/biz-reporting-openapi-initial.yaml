@@ -1,0 +1,973 @@
+openapi: 3.0.3
+info:
+  title: Business Unit Reporting API
+  version: 0.1.0
+  description: Initial OpenAPI draft for Workbuddy agent implementation.
+servers:
+  - url: https://api.example.com
+tags:
+  - name: Auth
+  - name: Me
+  - name: AdminUsers
+  - name: CityConfigs
+  - name: Contracts
+  - name: Allocations
+  - name: Packages
+  - name: Snapshots
+  - name: AdminPackages
+  - name: Dashboard
+  - name: Reminders
+  - name: Imports
+  - name: Exports
+  - name: RecalcTasks
+  - name: OperationLogs
+paths:
+  /api/auth/admin/login:
+    post:
+      tags: [Auth]
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+  /api/auth/wechat/register:
+    post:
+      tags: [Auth]
+      summary: WeChat register for city user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WechatRegisterRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+  /api/auth/wechat/login:
+    post:
+      tags: [Auth]
+      summary: WeChat login for city user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WechatLoginRequest'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+  /api/me:
+    get:
+      tags: [Me]
+      summary: Current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+  /api/admin/users:
+    get:
+      tags: [AdminUsers]
+      summary: List users
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: cityId
+          schema:
+            type: integer
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - in: query
+          name: keyword
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+  /api/admin/users/{userId}/status:
+    patch:
+      tags: [AdminUsers]
+      summary: Enable or disable user
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserStatusRequest'
+      responses:
+        '200':
+          description: Updated
+  /api/admin/users/{userId}/city:
+    patch:
+      tags: [AdminUsers]
+      summary: Rebind city user to another city
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindUserCityRequest'
+      responses:
+        '200':
+          description: Updated
+  /api/admin/city-configs:
+    get:
+      tags: [CityConfigs]
+      summary: List city configs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Success
+  /api/admin/city-configs/{cityId}:
+    patch:
+      tags: [CityConfigs]
+      summary: Update city config
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: cityId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCityConfigRequest'
+      responses:
+        '200':
+          description: Updated
+  /api/admin/contracts:
+    get:
+      tags: [Contracts]
+      summary: List contracts
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: keyword
+          schema:
+            type: string
+        - in: query
+          name: isCrossCity
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Success
+    post:
+      tags: [Contracts]
+      summary: Create contract
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContractRequest'
+      responses:
+        '200':
+          description: Created
+  /api/admin/contracts/{contractId}:
+    get:
+      tags: [Contracts]
+      summary: Contract detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: contractId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+    patch:
+      tags: [Contracts]
+      summary: Update contract
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: contractId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractRequest'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      tags: [Contracts]
+      summary: Soft delete contract
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: contractId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Deleted
+  /api/admin/contracts/{contractId}/allocations:
+    post:
+      tags: [Allocations]
+      summary: Create city allocation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: contractId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAllocationRequest'
+      responses:
+        '200':
+          description: Created
+  /api/admin/allocations/{allocationId}:
+    patch:
+      tags: [Allocations]
+      summary: Update allocation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: allocationId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAllocationRequest'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      tags: [Allocations]
+      summary: Delete allocation
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: allocationId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Deleted
+  /api/city/packages/current:
+    get:
+      tags: [Packages]
+      summary: Get or initialize current annual package
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: year
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/city/packages/{packageId}/months/{monthNo}:
+    get:
+      tags: [Packages]
+      summary: Get editable month data
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: monthNo
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/city/packages/{packageId}/draft-save:
+    post:
+      tags: [Packages]
+      summary: Save month draft
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftSaveRequest'
+      responses:
+        '200':
+          description: Saved
+  /api/city/packages/{packageId}/submit-preview:
+    post:
+      tags: [Packages]
+      summary: Submit preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftSaveRequest'
+      responses:
+        '200':
+          description: Preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitPreviewResponse'
+  /api/city/packages/{packageId}/submit:
+    post:
+      tags: [Packages]
+      summary: Submit month
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftSaveRequest'
+      responses:
+        '200':
+          description: Submitted
+  /api/city/packages/{packageId}/read-only-months/{monthNo}:
+    get:
+      tags: [Snapshots]
+      summary: Read-only month detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: monthNo
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/admin/packages/{packageId}/return-to-draft:
+    post:
+      tags: [AdminPackages]
+      summary: Return submitted month to draft
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReturnToDraftRequest'
+      responses:
+        '200':
+          description: Updated
+  /api/admin/packages/{packageId}/unlock-months:
+    post:
+      tags: [AdminPackages]
+      summary: Unlock historical months
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnlockMonthsRequest'
+      responses:
+        '200':
+          description: Unlocked
+  /api/admin/packages/{packageId}/open-current-month-contract:
+    post:
+      tags: [AdminPackages]
+      summary: Allow current-month new contract fill
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: packageId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenCurrentMonthContractRequest'
+      responses:
+        '200':
+          description: Opened
+  /api/admin/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Admin dashboard summary
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: year
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: month
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/admin/reminders/send:
+    post:
+      tags: [Reminders]
+      summary: Send manual reminders
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendRemindersRequest'
+      responses:
+        '200':
+          description: Accepted
+  /api/admin/imports/contracts/upload:
+    post:
+      tags: [Imports]
+      summary: Upload contract import file
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Uploaded
+  /api/city/imports/reporting/upload:
+    post:
+      tags: [Imports]
+      summary: Upload city reporting import file
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Uploaded
+  /api/imports/{jobId}/preview:
+    get:
+      tags: [Imports]
+      summary: Import preview
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/imports/{jobId}/confirm:
+    post:
+      tags: [Imports]
+      summary: Confirm import
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmImportRequest'
+      responses:
+        '200':
+          description: Confirmed
+  /api/exports:
+    post:
+      tags: [Exports]
+      summary: Create export job
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportJobRequest'
+      responses:
+        '200':
+          description: Accepted
+  /api/exports/{jobId}:
+    get:
+      tags: [Exports]
+      summary: Export job detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Success
+  /api/admin/recalc-tasks:
+    get:
+      tags: [RecalcTasks]
+      summary: List recalc tasks
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Success
+  /api/admin/recalc-tasks/{taskId}/retry:
+    post:
+      tags: [RecalcTasks]
+      summary: Retry recalc task
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryRecalcTaskRequest'
+      responses:
+        '200':
+          description: Accepted
+  /api/admin/operation-logs:
+    get:
+      tags: [OperationLogs]
+      summary: List operation logs
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Success
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Role:
+      type: string
+      enum: [city_user, system_admin]
+    UserStatus:
+      type: string
+      enum: [enabled, disabled]
+    PackageStatus:
+      type: string
+      enum: [draft, submitted]
+    AdminLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    WechatRegisterRequest:
+      type: object
+      required: [code, name, cityId]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        cityId:
+          type: integer
+    WechatLoginRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    UserBrief:
+      type: object
+      required: [id, role, name]
+      properties:
+        id:
+          type: integer
+        role:
+          $ref: '#/components/schemas/Role'
+        name:
+          type: string
+        cityId:
+          type: integer
+          nullable: true
+    LoginResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserBrief'
+    MeResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        role:
+          $ref: '#/components/schemas/Role'
+        name:
+          type: string
+        cityId:
+          type: integer
+          nullable: true
+        cityName:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/UserStatus'
+    UserListItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        cityId:
+          type: integer
+          nullable: true
+        cityName:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        registerAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+          nullable: true
+    UserListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserListItem'
+    UpdateUserStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/UserStatus'
+    RebindUserCityRequest:
+      type: object
+      required: [cityId]
+      properties:
+        cityId:
+          type: integer
+    UpdateCityConfigRequest:
+      type: object
+      required: [enableMaintenance]
+      properties:
+        enableMaintenance:
+          type: boolean
+    CreateContractRequest:
+      type: object
+      required: [contractCode, contractName, contractAmount, rate]
+      properties:
+        contractCode:
+          type: string
+        contractName:
+          type: string
+        contractAmount:
+          type: number
+        rate:
+          type: number
+        signDate:
+          type: string
+          format: date
+          nullable: true
+        expireDate:
+          type: string
+          format: date
+          nullable: true
+    UpdateContractRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateContractRequest'
+    CreateAllocationRequest:
+      type: object
+      required: [cityId, cityContractAmount, rate, accumulatedOrderAmount, accumulatedInvoiceAmount]
+      properties:
+        cityId:
+          type: integer
+        cityContractAmount:
+          type: number
+        rate:
+          type: number
+        accumulatedOrderAmount:
+          type: number
+        accumulatedInvoiceAmount:
+          type: number
+    UpdateAllocationRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateAllocationRequest'
+    ContractMonthInput:
+      type: object
+      required: [contractId, completionAmount, acceptanceAmount]
+      properties:
+        contractId:
+          type: integer
+        completionAmount:
+          type: number
+        acceptanceAmount:
+          type: number
+    CostMonthInput:
+      type: object
+      required: [costCategoryCode, amount]
+      properties:
+        costCategoryCode:
+          type: string
+        amount:
+          type: number
+    MaintenanceMonthInput:
+      type: object
+      properties:
+        invoiceTotalPrevYear:
+          type: number
+        invoiceMonthCountPrevYear:
+          type: integer
+        invoiceTotalCurrentYear:
+          type: number
+    DraftSaveRequest:
+      type: object
+      required: [monthNo, contractRows, costRows]
+      properties:
+        monthNo:
+          type: integer
+        contractRows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContractMonthInput'
+        costRows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CostMonthInput'
+        maintenanceRow:
+          $ref: '#/components/schemas/MaintenanceMonthInput'
+    SubmitPreviewRequest:
+      allOf:
+        - $ref: '#/components/schemas/DraftSaveRequest'
+    SubmitPreviewResponse:
+      type: object
+      properties:
+        belongMonth:
+          type: integer
+        completionTotal:
+          type: number
+        acceptanceTotal:
+          type: number
+        costTotal:
+          type: number
+        grossProfit:
+          type: number
+        isOverdue:
+          type: boolean
+    SubmitMonthRequest:
+      allOf:
+        - $ref: '#/components/schemas/DraftSaveRequest'
+    ReturnToDraftRequest:
+      type: object
+      required: [monthNo, reason]
+      properties:
+        monthNo:
+          type: integer
+        reason:
+          type: string
+    UnlockMonthsRequest:
+      type: object
+      required: [months, expiresAt]
+      properties:
+        months:
+          type: array
+          items:
+            type: integer
+        expiresAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          nullable: true
+    OpenCurrentMonthContractRequest:
+      type: object
+      required: [monthNo, contractId]
+      properties:
+        monthNo:
+          type: integer
+        contractId:
+          type: integer
+    SendRemindersRequest:
+      type: object
+      required: [year, month, cityIds]
+      properties:
+        year:
+          type: integer
+        month:
+          type: integer
+        cityIds:
+          type: array
+          items:
+            type: integer
+    ConfirmImportRequest:
+      type: object
+      required: [confirmOverwrite]
+      properties:
+        confirmOverwrite:
+          type: boolean
+    CreateExportJobRequest:
+      type: object
+      required: [exportMode, scopeType, reportYear]
+      properties:
+        exportMode:
+          type: string
+          enum: [current_realtime, month_snapshot]
+        scopeType:
+          type: string
+          enum: [city, all_cities]
+        cityId:
+          type: integer
+          nullable: true
+        reportYear:
+          type: integer
+        belongMonth:
+          type: integer
+          nullable: true
+        snapshotRange:
+          type: string
+          enum: [month_only, year_to_month]
+          nullable: true
+    RetryRecalcTaskRequest:
+      type: object
+      required: [retryMode]
+      properties:
+        retryMode:
+          type: string
+          enum: [full, failed_only]
+

@@ -1,0 +1,118 @@
+<view class="page">
+  <!-- ===== 顶部用户信息区（登录/未登录均展示） ===== -->
+  <view class="user-card">
+    <view class="user-info">
+      <text class="user-name">{{isLoggedIn ? userInfo.name : '经营单元上报系统'}}</text>
+      <text class="user-city" wx:if="{{isLoggedIn}}">{{userInfo.cityName || ''}}</text>
+    </view>
+    <text class="year-label">{{year}}年度</text>
+  </view>
+
+  <!-- ===== 未登录：可浏览内容 ===== -->
+  <block wx:if="{{!isLoggedIn}}">
+
+    <!-- 功能简介 -->
+    <view class="intro-card">
+      <text class="intro-title">系统简介</text>
+      <text class="intro-text">中国通信行业地市级经营单元月度数据填报系统。支持合同完工与审定金额录入、7 类运营成本填报、维保代维数据管理。</text>
+    </view>
+
+    <!-- 填报流程 -->
+    <view class="flow-card">
+      <text class="flow-title">填报流程</text>
+      <view class="flow-steps">
+        <view class="flow-step">
+          <view class="step-num">1</view>
+          <text class="step-text">微信登录验证身份</text>
+        </view>
+        <view class="flow-step">
+          <view class="step-num">2</view>
+          <text class="step-text">选择对应月份</text>
+        </view>
+        <view class="flow-step">
+          <view class="step-num">3</view>
+          <text class="step-text">填写合同完工与费用金额</text>
+        </view>
+        <view class="flow-step">
+          <view class="step-num">4</view>
+          <text class="step-text">预览确认后提交</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 月度填报示意 -->
+    <view class="demo-card">
+      <text class="demo-title">月度填报示意</text>
+      <view class="month-grid">
+        <view
+          class="month-cell"
+          wx:for="{{[1,2,3,4,5,6,7,8,9,10,11,12]}}"
+          wx:key="*this"
+          wx:for-item="m"
+          bindtap="onMonthTap"
+          data-month="{{m}}"
+        >
+          <text class="month-num">{{m}}月</text>
+          <text class="month-status">待填报</text>
+        </view>
+      </view>
+      <text class="demo-hint">点击月份可查看填报页面（需先登录）</text>
+    </view>
+
+    <!-- 填报规则 -->
+    <view class="rules-card">
+      <text class="rules-title">填报规则</text>
+      <view class="rule-item">• 每月需填报 7 类成本</view>
+      <view class="rule-item">• 合同完工金额和审定金额分别录入</view>
+      <view class="rule-item">• 审定金额不可超过完工金额</view>
+      <view class="rule-item">• 提交后当月数据进入只读状态</view>
+      <view class="rule-item">• 逾期未提交由系统记录</view>
+    </view>
+
+    <!-- 登录入口 -->
+    <button class="login-btn" type="primary" bindtap="onLoginTap">微信登录，开始填报</button>
+
+  </block>
+
+  <!-- ===== 已登录：正常内容 ===== -->
+  <block wx:else>
+
+  <view class="package-card" wx:if="{{pkgStatus === 'loading'}}">
+    <text>加载中...</text>
+  </view>
+
+  <view class="package-card" wx:elif="{{pkgStatus === 'loaded'}}">
+    <view class="pkg-header">
+      <text class="pkg-title">年度报表包</text>
+      <text class="pkg-status {{packageData.status}}">{{packageData.status === 'submitted' ? '已提交' : '草稿'}}</text>
+    </view>
+
+    <view class="month-grid">
+      <view
+        class="month-cell {{month.submitted ? 'submitted' : ''}}"
+        wx:for="{{months}}"
+        wx:key="monthNo"
+        wx:for-item="month"
+        data-month="{{month.monthNo}}"
+        data-status="{{month.submitted ? 'view' : 'edit'}}"
+        bindtap="onMonthTap"
+      >
+        <text class="month-num">{{month.monthNo}}月</text>
+        <text class="month-status">{{month.submitted ? '已提交' : '待填报'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="package-card" wx:elif="{{pkgStatus === 'empty'}}">
+    <text>暂无年度报表包</text>
+  </view>
+
+  <!-- 代维入口 -->
+  <view class="maintenance-card" wx:if="{{enableMaintenance}}" bindtap="onMaintenanceTap">
+    <text class="maintenance-icon">🔧</text>
+    <text class="maintenance-text">代维管理</text>
+    <text class="maintenance-arrow">›</text>
+  </view>
+
+  </block>
+</view>
