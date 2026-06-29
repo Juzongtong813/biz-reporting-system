@@ -10,7 +10,7 @@
 export * from './enums/index';
 
 // 实体
-export { City } from './contract/city';
+export type { City } from './contract/city';
 export type { Contract, ContractCityAllocation } from './contract/contract';
 export type { AnnualReportPackage } from './package/annual-package';
 export type {
@@ -59,7 +59,7 @@ export type {
   UnlockMonthsRequest,
   OpenCurrentMonthContractRequest,
 } from './reporting/reporting.dto';
-export type { DashboardStats } from './common/dashboard.dto';
+export type { DashboardStats, AdminBusinessSummaryItem, AdminBusinessSummaryResponse } from './common/dashboard.dto';
 export type { CityConfigDto } from './common/city-config.dto';
 export type {
   OperationLogListRequest,
@@ -71,4 +71,11 @@ export type {
   ConfirmImportRequest,
   CreateExportJobRequest,
   RetryRecalcTaskRequest,
+  ImportPreviewResponse,
+  ImportConfirmResponse,
+  ExportJobResponse,
+  ExportCreateResponse,
+  RecalcTaskItem,
+  RecalcTaskListResponse,
+  RecalcRetryResponse,
 } from './common/misc.dto';

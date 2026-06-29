@@ -1,47 +1,71 @@
+/* ========================================
+   月度填报页 — 移动数据录入工具风格
+   色系: 冷静蓝 #1a5cff / 青绿点缀 #14b8a6
+   底色: #f0f2f5 | 面板: #ffffff
+   边框: 1rpx solid #e4e7ed
+   ======================================== */
+
 .page {
-  padding: 24rpx;
+  padding: 0 0 48rpx 0;
   min-height: 100vh;
-  background: #f8f9fb;
+  background: #f0f2f5;
 }
 
+/* ---------- 加载 ---------- */
 .loading-box {
   display: flex;
   justify-content: center;
   padding: 120rpx 0;
-  color: #999;
-  font-size: 28rpx;
+  color: #9aa3b5;
+  font-size: 26rpx;
 }
 
-/* 通用 */
-.section-title {
-  font-size: 32rpx;
-  font-weight: bold;
-  margin-bottom: 20rpx;
+/* ---------- 页面标题 ---------- */
+.page-title {
   text-align: center;
-  color: #1a1a1a;
-}
-
-.section {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 24rpx;
-  margin-bottom: 20rpx;
-  box-shadow: 0 2rpx 12rpx rgba(0,0,0,0.06);
-}
-
-.subsection-title {
+  padding: 28rpx 24rpx 20rpx;
   font-size: 28rpx;
-  font-weight: bold;
-  color: #1a1a1a;
-  margin-bottom: 12rpx;
-  padding-bottom: 12rpx;
-  border-bottom: 2rpx solid #f0f0f0;
+  font-weight: 600;
+  color: #1a1a2e;
+  background: #ffffff;
+  border-bottom: 1rpx solid #e4e7ed;
+  margin-bottom: 14rpx;
 }
 
-/* 合同行 */
+/* ---------- 锁定提示 ---------- */
+.locked-badge {
+  text-align: center;
+  color: #ef4444;
+  font-size: 22rpx;
+  background: #fef2f2;
+  border: 1rpx solid #fecaca;
+  border-radius: 8rpx;
+  padding: 10rpx 16rpx;
+  margin: 0 20rpx 14rpx;
+}
+
+/* ---------- 内容面板 ---------- */
+.section {
+  background: #ffffff;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 12rpx;
+  margin: 0 20rpx 14rpx;
+  padding: 24rpx;
+}
+
+.section-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 16rpx;
+  padding-bottom: 12rpx;
+  border-bottom: 1rpx solid #e4e7ed;
+}
+
+/* ---------- 合同行 ---------- */
 .contract-row, .row-item {
   padding: 14rpx 0;
-  border-bottom: 2rpx solid #f5f5f5;
+  border-bottom: 1rpx solid #f0f1f4;
 }
 
 .contract-row:last-child, .row-item:last-child {
@@ -49,8 +73,8 @@
 }
 
 .contract-name, .row-name {
-  font-size: 26rpx;
-  color: #333;
+  font-size: 24rpx;
+  color: #1a1a2e;
   display: block;
   margin-bottom: 10rpx;
   font-weight: 500;
@@ -58,7 +82,7 @@
 
 .field-group, .row-fields {
   display: flex;
-  gap: 16rpx;
+  gap: 12rpx;
 }
 
 .field {
@@ -66,34 +90,36 @@
 }
 
 .field-label {
-  font-size: 22rpx;
-  color: #888;
+  font-size: 20rpx;
+  color: #9aa3b5;
   display: block;
   margin-bottom: 6rpx;
 }
 
 .field-input {
   width: 100%;
-  height: 72rpx;
-  background: #f7f8fa;
-  border: 2rpx solid #e8e8e8;
-  border-radius: 10rpx;
-  padding: 0 16rpx;
+  height: 70rpx;
+  background: #f4f5f8;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 8rpx;
+  padding: 0 14rpx;
   font-size: 26rpx;
   box-sizing: border-box;
+  color: #1a1a2e;
+  text-align: right;
 }
 
 .field-input:focus {
-  border-color: #1677ff;
+  border-color: #1a5cff;
 }
 
-/* 费用行 */
+/* ---------- 费用行 ---------- */
 .cost-row {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 12rpx;
   padding: 12rpx 0;
-  border-bottom: 2rpx solid #f5f5f5;
+  border-bottom: 1rpx solid #f0f1f4;
 }
 
 .cost-row:last-child {
@@ -102,160 +128,166 @@
 
 .cost-label {
   width: 150rpx;
-  font-size: 26rpx;
-  color: #333;
+  font-size: 24rpx;
+  color: #1a1a2e;
   flex-shrink: 0;
   font-weight: 500;
 }
 
 .cost-input {
   flex: 1;
-  height: 72rpx;
-  background: #f7f8fa;
-  border: 2rpx solid #e8e8e8;
-  border-radius: 10rpx;
-  padding: 0 16rpx;
+  height: 70rpx;
+  background: #f4f5f8;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 8rpx;
+  padding: 0 14rpx;
   font-size: 26rpx;
   text-align: right;
   box-sizing: border-box;
+  color: #1a1a2e;
 }
 
 .cost-input:focus {
-  border-color: #1677ff;
+  border-color: #1a5cff;
 }
 
-/* 只读 */
+/* ---------- 只读态 ---------- */
 .row-value {
-  font-size: 28rpx;
-  color: #333;
+  font-size: 26rpx;
+  color: #1a1a2e;
   font-weight: 500;
 }
 
+/* ---------- 空 ---------- */
 .empty-hint {
   text-align: center;
-  color: #ccc;
-  font-size: 26rpx;
-  padding: 20rpx 0;
+  color: #c0c4cc;
+  font-size: 24rpx;
+  padding: 24rpx 0;
 }
 
-/* 操作按钮 */
+/* ---------- 操作栏 ---------- */
 .action-bar {
   display: flex;
-  gap: 20rpx;
-  margin-top: 32rpx;
+  gap: 12rpx;
+  margin: 20rpx 20rpx 0;
   padding-bottom: 48rpx;
 }
 
 .btn-primary, .btn-secondary {
   flex: 1;
-  height: 88rpx;
-  line-height: 88rpx;
-  border-radius: 16rpx;
-  font-size: 28rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  border-radius: 12rpx;
+  font-size: 26rpx;
   text-align: center;
   font-weight: 500;
 }
 
 .btn-primary {
-  background: #1677ff;
-  color: #fff;
+  background: #1a5cff;
+  color: #ffffff;
   border: none;
 }
 
+.btn-primary:active {
+  background: #154ed6;
+}
+
 .btn-secondary {
-  background: #fff;
-  border: 2rpx solid #d9d9d9;
-  color: #555;
+  background: #ffffff;
+  border: 1rpx solid #d0d4dd;
+  color: #5b6778;
 }
 
+.btn-secondary:active {
+  background: #f4f5f8;
+}
+
+/* ---------- 返回按钮（只读） ---------- */
 .back-btn {
-  width: 100%;
-  height: 88rpx;
-  line-height: 88rpx;
-  border-radius: 16rpx;
-  font-size: 30rpx;
+  width: calc(100% - 40rpx);
+  margin: 20rpx 20rpx 0;
+  height: 84rpx;
+  line-height: 84rpx;
+  border-radius: 12rpx;
+  font-size: 28rpx;
   text-align: center;
-  background: #1677ff;
-  color: #fff;
-  margin-top: 32rpx;
+  background: #1a5cff;
+  color: #ffffff;
   font-weight: 500;
+  border: none;
 }
 
-/* 预览弹窗 */
+/* ========================================
+   预览弹窗 — 数据确认面板风格
+   ======================================== */
+
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(26, 26, 46, 0.5);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
   z-index: 999;
 }
 
 .modal-content {
-  width: 620rpx;
-  background: #fff;
-  border-radius: 24rpx;
-  padding: 40rpx 36rpx;
-  box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.15);
+  width: 100%;
+  background: #ffffff;
+  border-radius: 20rpx 20rpx 0 0;
+  padding: 36rpx 28rpx 48rpx;
+  box-sizing: border-box;
 }
 
 .modal-title {
-  font-size: 34rpx;
-  font-weight: bold;
+  font-size: 28rpx;
+  font-weight: 600;
   text-align: center;
   display: block;
-  margin-bottom: 28rpx;
-  color: #1a1a1a;
+  margin-bottom: 24rpx;
+  color: #1a1a2e;
 }
 
+/* 数据行 */
 .preview-row {
   display: flex;
   justify-content: space-between;
   padding: 14rpx 0;
-  font-size: 28rpx;
-  border-bottom: 2rpx solid #f5f5f5;
-  color: #555;
+  font-size: 26rpx;
+  border-bottom: 1rpx solid #f0f1f4;
+  color: #5b6778;
 }
 
-.preview-row.highlight {
-  color: #1677ff;
-  font-weight: bold;
-  font-size: 32rpx;
-  padding: 18rpx 0;
-  border-bottom: 2rpx solid #e6f4ff;
+/* 毛利高亮 */
+.preview-row.profit {
   background: #f0f9ff;
-  margin: 4rpx -12rpx;
+  margin: 6rpx -12rpx;
   padding: 18rpx 12rpx;
   border-radius: 8rpx;
+  border-bottom: 1rpx solid #dbeafe;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1a5cff;
 }
 
+/* 逾期 */
 .preview-row.overdue {
-  color: #ff4d4f;
+  color: #ef4444;
   font-weight: 500;
 }
 
+/* 确认按钮区 */
 .modal-actions {
   display: flex;
-  gap: 20rpx;
-  margin-top: 36rpx;
+  gap: 12rpx;
+  margin-top: 32rpx;
 }
 
-/* 用于阻止弹窗点击穿透 */
 .noop {
   /* no-op */
-}
-
-/* 只读视图锁定提示 */
-.locked-badge {
-  text-align: center;
-  color: #ff4d4f;
-  font-size: 24rpx;
-  background: #fff2f0;
-  border-radius: 8rpx;
-  padding: 12rpx;
-  margin-bottom: 16rpx;
 }

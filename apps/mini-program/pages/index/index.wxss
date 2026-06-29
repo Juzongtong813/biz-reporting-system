@@ -1,76 +1,97 @@
+/* ========================================
+   首页 — 经营单元上报系统
+   布局 / 色系: #1677ff / #1a5cff
+   ======================================== */
+
 .page {
   padding: 24rpx;
   padding-bottom: 60rpx;
 }
 
-/* 用户卡片 */
-.user-card {
-  background: linear-gradient(135deg, #1677ff, #4096ff);
-  border-radius: 20rpx;
-  padding: 36rpx;
+/* ========================================
+   顶部标题栏
+   ======================================== */
+.header-bar {
+  background: #1677ff;
+  border-radius: 16rpx;
+  padding: 28rpx 24rpx;
   color: #fff;
-  margin-bottom: 28rpx;
+  margin-bottom: 20rpx;
 }
 
-.user-info {
+.header-top {
   display: flex;
-  align-items: baseline;
-  gap: 16rpx;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.user-name {
-  font-size: 36rpx;
+.header-title {
+  font-size: 32rpx;
   font-weight: bold;
 }
 
-.user-city {
-  font-size: 26rpx;
+.header-year {
+  font-size: 24rpx;
   opacity: 0.85;
 }
 
-.year-label {
-  font-size: 28rpx;
-  opacity: 0.9;
-  display: block;
+.header-accent {
+  height: 4rpx;
+  width: 60rpx;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2rpx;
   margin-top: 12rpx;
 }
 
-/* 未登录：内容卡片通用 */
-.intro-card,
-.flow-card,
-.demo-card,
-.rules-card {
+.user-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+  margin-top: 8rpx;
+}
+
+.user-name-label {
+  font-size: 28rpx;
+  font-weight: 500;
+  opacity: 0.95;
+}
+
+.user-city-label {
+  font-size: 24rpx;
+  opacity: 0.75;
+}
+
+/* ========================================
+   通用卡片面板
+   ======================================== */
+.panel {
   background: #fff;
   border-radius: 16rpx;
-  padding: 28rpx 32rpx;
-  margin-bottom: 20rpx;
-  box-shadow: 0 2rpx 12rpx rgba(0,0,0,0.06);
+  padding: 28rpx 24rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.04);
 }
 
-/* 系统简介 */
-.intro-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  color: #1a1a1a;
+.panel-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1a1a2e;
   display: block;
-  margin-bottom: 14rpx;
+  margin-bottom: 16rpx;
 }
 
+/* ========================================
+   介绍文字
+   ======================================== */
 .intro-text {
-  font-size: 26rpx;
+  font-size: 24rpx;
   color: #666;
   line-height: 1.7;
 }
 
-/* 填报流程 — 横排改竖排，间距更紧凑 */
-.flow-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  color: #1a1a1a;
-  display: block;
-  margin-bottom: 20rpx;
-}
-
+/* ========================================
+   填报流程（竖排）
+   ======================================== */
 .flow-steps {
   display: flex;
   flex-direction: column;
@@ -80,42 +101,58 @@
 .flow-step {
   display: flex;
   align-items: center;
-  gap: 20rpx;
-  padding: 14rpx 0;
+  gap: 16rpx;
+  padding: 12rpx 0;
 }
 
-.step-num {
-  width: 44rpx;
-  height: 44rpx;
+.step-dot {
+  width: 20rpx;
+  height: 20rpx;
   border-radius: 50%;
-  background: #1677ff;
-  color: #fff;
-  font-size: 22rpx;
-  font-weight: bold;
-  text-align: center;
-  line-height: 44rpx;
+  background: #e0e0e0;
   flex-shrink: 0;
 }
 
-.step-text {
+.step-dot.active {
+  background: #1677ff;
+}
+
+.step-label {
   font-size: 26rpx;
   color: #444;
-  line-height: 1.4;
 }
 
-.flow-arrow {
-  display: none;
-}
-
-/* 月度示意 */
-.demo-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  color: #1a1a1a;
-  display: block;
+/* ========================================
+   工具栏统计行
+   ======================================== */
+.stats-row {
+  display: flex;
+  justify-content: space-between;
   margin-bottom: 20rpx;
 }
 
+.stat-item {
+  text-align: center;
+  flex: 1;
+}
+
+.stat-num {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+  display: block;
+}
+
+.stat-label {
+  font-size: 22rpx;
+  color: #999;
+  display: block;
+  margin-top: 4rpx;
+}
+
+/* ========================================
+   月度网格（4 列）
+   ======================================== */
 .month-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -152,7 +189,7 @@
   color: #1677ff;
 }
 
-.demo-hint {
+.month-hint {
   font-size: 22rpx;
   color: #bbb;
   text-align: center;
@@ -160,15 +197,81 @@
   margin-top: 16rpx;
 }
 
-/* 填报规则 */
-.rules-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  color: #1a1a1a;
-  display: block;
-  margin-bottom: 14rpx;
+/* ========================================
+   年度包头部
+   ======================================== */
+.pkg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
 }
 
+.pkg-title-text {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.pkg-status-tag {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 8rpx;
+}
+
+.pkg-status-tag.draft {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.pkg-status-tag.submitted {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+/* ========================================
+   汇总面板
+   ======================================== */
+.summary-panel {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 18rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.04);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12rpx;
+}
+
+.summary-item {
+  text-align: center;
+  padding: 12rpx 0;
+}
+
+.summary-num {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #1a1a2e;
+  display: block;
+}
+
+.summary-label {
+  font-size: 22rpx;
+  color: #999;
+  display: block;
+  margin-top: 4rpx;
+}
+
+.summary-profit {
+  color: #52c41a;
+}
+
+/* ========================================
+   填报规则
+   ======================================== */
 .rule-item {
   font-size: 24rpx;
   color: #666;
@@ -176,77 +279,161 @@
   padding: 2rpx 0;
 }
 
-/* 登录按钮 */
+/* ========================================
+   加载提示
+   ======================================== */
+.loading-box {
+  text-align: center;
+  padding: 48rpx 0;
+  font-size: 26rpx;
+  color: #999;
+}
+
+/* ========================================
+   错误状态
+   ======================================== */
+.state-card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 48rpx 28rpx;
+  margin: 20rpx;
+  text-align: center;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.04);
+}
+
+.state-card.error {
+  border: 2rpx solid #fecaca;
+  background: #fef2f2;
+}
+
+.state-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+  display: block;
+  margin-bottom: 12rpx;
+}
+
+.state-card.error .state-title {
+  color: #dc2626;
+}
+
+.state-text {
+  font-size: 24rpx;
+  color: #666;
+  display: block;
+  line-height: 1.6;
+  margin-bottom: 20rpx;
+}
+
+.retry-btn {
+  display: inline-block;
+  padding: 8rpx 32rpx;
+  font-size: 24rpx;
+  border-radius: 8rpx;
+  background: #1677ff;
+  color: #fff;
+  border: none;
+  line-height: 2.2;
+}
+
+.state-card.error .retry-btn {
+  background: #dc2626;
+}
+
+/* ========================================
+   登录按钮
+   ======================================== */
+.login-btn-wrap {
+  margin-top: 24rpx;
+  padding: 0 20rpx;
+}
+
 .login-btn {
   width: 100%;
-  border-radius: 12rpx;
-  margin-top: 8rpx;
   height: 88rpx;
   line-height: 88rpx;
+  border-radius: 12rpx;
   font-size: 30rpx;
   font-weight: 500;
 }
 
-/* 年度包卡片（已登录） */
-.package-card {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 32rpx;
-  margin-bottom: 24rpx;
-  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06);
-}
-
-.pkg-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24rpx;
-}
-
-.pkg-title {
-  font-size: 30rpx;
-  font-weight: bold;
-}
-
-.pkg-status {
-  font-size: 24rpx;
-  padding: 6rpx 16rpx;
-  border-radius: 8rpx;
-}
-
-.pkg-status.draft {
-  background: #fff7e6;
-  color: #fa8c16;
-}
-
-.pkg-status.submitted {
-  background: #f6ffed;
-  color: #52c41a;
-}
-
-/* 代维入口 */
-.maintenance-card {
-  background: #fff;
-  border-radius: 16rpx;
-  padding: 32rpx;
+/* ========================================
+   维保入口
+   ======================================== */
+.maintenance-line {
   display: flex;
   align-items: center;
-  gap: 16rpx;
-  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06);
+  padding: 24rpx 20rpx;
+  background: #fff;
+  border-top: 2rpx solid #f0f0f0;
+  border-bottom: 2rpx solid #f0f0f0;
+  margin: 0 0 14rpx;
 }
 
 .maintenance-icon {
-  font-size: 40rpx;
+  width: 40rpx;
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #1677ff;
+  margin-right: 4rpx;
+  flex: none;
 }
 
-.maintenance-text {
+.maintenance-line text:nth-child(2) {
+  font-size: 28rpx;
+  color: #1a1a2e;
+  margin-left: 12rpx;
   flex: 1;
-  font-size: 30rpx;
 }
 
 .maintenance-arrow {
-  font-size: 36rpx;
-  color: #ccc;
+  font-size: 28rpx;
+  color: #c0c4cc;
+  text-align: right;
 }
 
-.version-tag { text-align: center; font-size: 20rpx; color: #ccc; padding: 20rpx 0; display: block; }
+/* ========================================
+   消息中心入口（保留）
+   ======================================== */
+.messages-link {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 20rpx;
+  background: #ffffff;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 14rpx;
+  margin: 0 20rpx 14rpx;
+}
+
+.ml-icon {
+  width: 40rpx;
+  font-size: 28rpx;
+  margin-right: 12rpx;
+}
+
+.ml-label {
+  flex: 1;
+  font-size: 26rpx;
+  color: #1a1a2e;
+  font-weight: 500;
+}
+
+.ml-badge {
+  min-width: 34rpx;
+  height: 34rpx;
+  padding: 0 10rpx;
+  border-radius: 999rpx;
+  background: #e31b23;
+  color: #ffffff;
+  font-size: 20rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10rpx;
+}
+
+.ml-arrow {
+  font-size: 28rpx;
+  color: #c0c4cc;
+}

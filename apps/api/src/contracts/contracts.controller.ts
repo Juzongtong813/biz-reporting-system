@@ -7,7 +7,9 @@ import {
   Param,
   Body,
   Query,
+  Request,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -15,12 +17,22 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '@biz-reporting/shared-types';
 import { ContractsService } from './contracts.service';
+import type { Express } from 'express';
 import type {
   CreateContractRequest,
   UpdateContractRequest,
   PaginatedResponse,
   PaginationParams,
 } from '@biz-reporting/shared-types';
+
+/** 认证请求上下文（JWT 中间件注入） */
+interface AuthenticatedRequest extends Express.Request {
+  user: {
+    userId: number;
+    role: string;
+    cityId: number | null;
+  };
+}
 
 @ApiTags('Admin - 合同管理')
 @ApiBearerAuth()
@@ -56,8 +68,11 @@ export class ContractsController {
   @Post()
   @ApiOperation({ summary: '创建合同' })
   @ApiResponse({ status: 201, description: '创建成功' })
-  async create(@Body() dto: CreateContractRequest) {
-    return this.contractsService.create(dto);
+  async create(
+    @Body() dto: CreateContractRequest,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.contractsService.create(dto, req.user.userId);
   }
 
   /**
@@ -65,8 +80,12 @@ export class ContractsController {
    */
   @Patch(':contractId')
   @ApiOperation({ summary: '更新合同' })
-  async update(@Param('contractId') id: number, @Body() dto: UpdateContractRequest) {
-    return this.contractsService.update(id, dto);
+  async update(
+    @Param('contractId') id: number,
+    @Body() dto: UpdateContractRequest,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.contractsService.update(id, dto, req.user.userId);
   }
 
   /**
@@ -75,8 +94,21 @@ export class ContractsController {
   @Delete(':contractId')
   @ApiOperation({ summary: '软删除合同' })
   @ApiResponse({ status: 200, description: '已软删除，快照数据不受影响' })
-  async softDelete(@Param('contractId') id: number) {
-    return this.contractsService.softDelete(id);
+  async softDelete(
+    @Param('contractId') id: number,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.contractsService.softDelete(id, req.user.userId);
+  }
+
+  @Delete('all/purge')
+  @ApiOperation({ summary: '[危险] 物理清除所有合同及相关分配数据' })
+  async purgeAll() {
+    try {
+      return await this.contractsService.purgeAll();
+    } catch (err: any) {
+      throw new BadRequestException(err.message || '清除失败');
+    }
   }
 
   // ============================================================

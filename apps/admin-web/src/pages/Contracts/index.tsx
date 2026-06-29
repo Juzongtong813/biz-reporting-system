@@ -5,10 +5,11 @@
  * - 分页表格（合同编号、名称、金额、费率、累计订单/发票、软删除标记）
  * - 顶部搜索：合同名称关键词
  * - 新建/编辑 Modal（严格对齐 CreateContractRequest DTO）
- * - 详情 Drawer
+ * - 详情 Drawer（含城市分配列表 + 经营测算指标）
  * - 软删除操作（确认后执行）
+ * - 城市分配管理：新增/编辑/删除（含 estimatedOrderAmount2026 等 4 字段）
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Table,
   Button,
@@ -24,6 +25,8 @@ import {
   Popconfirm,
   message,
   Card,
+  Divider,
+  Select,
 } from 'antd';
 import {
   PlusOutlined,
@@ -35,7 +38,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as contractsApi from '@/api/contracts.api';
-import type { Contract, CreateContractRequest } from '@biz-reporting/shared-types';
+import type { Contract, ContractCityAllocation, CreateContractRequest } from '@biz-reporting/shared-types';
 import type { TablePagination } from '@/types';
 import dayjs from 'dayjs';
 
@@ -50,14 +53,23 @@ export default function Contracts() {
     total: 0,
   });
 
-  // ---- Modal 状态 ----
-  const [modalOpen, setModalOpen] = useState(false);
+  // ---- 合同 Modal 状态 ----
+  const [contractModalOpen, setContractModalOpen] = useState(false);
   const [editingContract, setEditingContract] = useState<Contract | null>(null);
-  const [form] = Form.useForm();
+  const [contractForm] = Form.useForm();
 
   // ---- Drawer 状态 ----
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [detailContract, setDetailContract] = useState<Contract | null>(null);
+
+  // ---- 分配 Modal 状态 ----
+  const [allocModalOpen, setAllocModalOpen] = useState(false);
+  const [editingAllocation, setEditingAllocation] = useState<ContractCityAllocation | null>(null);
+  const [allocForm] = Form.useForm();
+
+  // ---- 分配列表 ----
+  const [allocations, setAllocations] = useState<ContractCityAllocation[]>([]);
+  const [allocationsLoading, setAllocationsLoading] = useState(false);
 
   // ---- 列表查询 ----
   const { data, isLoading, refetch } = useQuery({
@@ -84,8 +96,8 @@ export default function Contracts() {
     mutationFn: contractsApi.createContract,
     onSuccess: () => {
       message.success('合同创建成功');
-      setModalOpen(false);
-      form.resetFields();
+      setContractModalOpen(false);
+      contractForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
     },
   });
@@ -95,9 +107,9 @@ export default function Contracts() {
       contractsApi.updateContract(id, data as any),
     onSuccess: () => {
       message.success('合同更新成功');
-      setModalOpen(false);
+      setContractModalOpen(false);
       setEditingContract(null);
-      form.resetFields();
+      contractForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
     },
   });
@@ -110,16 +122,74 @@ export default function Contracts() {
     },
   });
 
+  // ---- 分配 Mutation ----
+  const createAllocMutation = useMutation({
+    mutationFn: ({ contractId, data }: { contractId: number; data: any }) =>
+      contractsApi.createAllocation(contractId, data),
+    onSuccess: () => {
+      message.success('分配创建成功');
+      setAllocModalOpen(false);
+      allocForm.resetFields();
+      if (detailContract) loadContractDetail(detailContract.id);
+    },
+  });
+
+  const updateAllocMutation = useMutation({
+    mutationFn: ({ allocId, data }: { allocId: number; data: any }) =>
+      contractsApi.updateAllocation(allocId, data),
+    onSuccess: () => {
+      message.success('分配更新成功');
+      setAllocModalOpen(false);
+      setEditingAllocation(null);
+      allocForm.resetFields();
+      if (detailContract) loadContractDetail(detailContract.id);
+    },
+  });
+
+  const deleteAllocMutation = useMutation({
+    mutationFn: contractsApi.deleteAllocation,
+    onSuccess: () => {
+      message.success('分配已删除');
+      if (detailContract) loadContractDetail(detailContract.id);
+    },
+  });
+
+  // ---- 清空所有合同 ----
+  const purgeMutation = useMutation({
+    mutationFn: () => contractsApi.purgeContracts(),
+    onSuccess: () => {
+      message.success('所有合同已清除');
+      queryClient.invalidateQueries({ queryKey: ['contracts'] });
+    },
+    onError: (e: any) => {
+      message.error(e?.response?.data?.message || '清除失败');
+    },
+  });
+
+  // ---- 分配加载（从合同详情接口获取，不再单独调 allocations 路由） ----
+  async function loadContractDetail(contractId: number) {
+    setAllocationsLoading(true);
+    try {
+      const detail = await contractsApi.getContract(contractId);
+      setDetailContract(detail);
+      setAllocations(detail.allocations ?? []);
+    } catch {
+      setAllocations([]);
+    } finally {
+      setAllocationsLoading(false);
+    }
+  }
+
   // ---- 事件处理 ----
   function handleAdd() {
     setEditingContract(null);
-    form.resetFields();
-    setModalOpen(true);
+    contractForm.resetFields();
+    setContractModalOpen(true);
   }
 
   function handleEdit(contract: Contract) {
     setEditingContract(contract);
-    form.setFieldsValue({
+    contractForm.setFieldsValue({
       contractCode: contract.contractCode,
       contractName: contract.contractName,
       contractAmount: contract.contractAmount,
@@ -127,16 +197,17 @@ export default function Contracts() {
       signDate: contract.signDate ? dayjs(contract.signDate as any) : undefined,
       expireDate: contract.expireDate ? dayjs(contract.expireDate as any) : undefined,
     });
-    setModalOpen(true);
+    setContractModalOpen(true);
   }
 
   function handleView(contract: Contract) {
-    setDetailContract(contract);
+    setDetailContract(contract); // 先显示列表数据（快速展示）
     setDrawerOpen(true);
+    loadContractDetail(contract.id); // 再异步拉详情含 allocations
   }
 
-  function handleModalOk() {
-    form.validateFields().then((values) => {
+  function handleContractModalOk() {
+    contractForm.validateFields().then((values) => {
       const formData: CreateContractRequest = {
         contractCode: values.contractCode,
         contractName: values.contractName,
@@ -162,7 +233,53 @@ export default function Contracts() {
     deleteMutation.mutate(contractId);
   }
 
+  // ---- 分配操作 ----
+  function handleAddAllocation() {
+    setEditingAllocation(null);
+    allocForm.resetFields();
+    setAllocModalOpen(true);
+  }
+
+  function handleEditAllocation(alloc: ContractCityAllocation) {
+    setEditingAllocation(alloc);
+    allocForm.setFieldsValue({
+      cityId: alloc.cityId,
+      cityContractAmount: alloc.cityContractAmount,
+      rate: alloc.rate,
+      estimatedOrderAmount2026: alloc.estimatedOrderAmount2026,
+      estimatedIncomeAmount2026: alloc.estimatedIncomeAmount2026,
+      remark: alloc.remark,
+      sourceCityName: alloc.sourceCityName,
+    });
+    setAllocModalOpen(true);
+  }
+
+  function handleAllocModalOk() {
+    allocForm.validateFields().then((values) => {
+      const allocData = {
+        cityId: values.cityId,
+        cityContractAmount: values.cityContractAmount || 0,
+        rate: values.rate || 0,
+        estimatedOrderAmount2026: values.estimatedOrderAmount2026,
+        estimatedIncomeAmount2026: values.estimatedIncomeAmount2026,
+        remark: values.remark || null,
+        sourceCityName: values.sourceCityName || null,
+      };
+
+      if (editingAllocation) {
+        updateAllocMutation.mutate({ allocId: editingAllocation.id, data: allocData });
+      } else if (detailContract) {
+        createAllocMutation.mutate({ contractId: detailContract.id, data: allocData });
+      }
+    });
+  }
+
+  function handleDeleteAllocation(allocId: number) {
+    deleteAllocMutation.mutate(allocId);
+  }
+
   const isMutating = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
+  const isAllocMutating = createAllocMutation.isPending || updateAllocMutation.isPending || deleteAllocMutation.isPending;
 
   // ---- 表格列定义 ----
   const columns = [
@@ -193,6 +310,18 @@ export default function Contracts() {
       width: 80,
       align: 'right' as const,
       render: (v: number) => `${(v * 100).toFixed(1)}%`,
+    },
+    {
+      title: '分配城市',
+      key: 'cities',
+      width: 200,
+      render: (_: unknown, record: any) => {
+        const cities = record.cities as Array<{ cityId: number; cityName: string }> | undefined;
+        if (!cities || cities.length === 0) {
+          return <Tag color="default">未分配</Tag>;
+        }
+        return cities.map((c) => <Tag key={c.cityId} color="blue">{c.cityName}</Tag>);
+      },
     },
     {
       title: '累计订单金额',
@@ -263,6 +392,89 @@ export default function Contracts() {
     },
   ];
 
+  // ---- 分配表格列 ----
+  const allocationColumns = [
+    {
+      title: '城市ID',
+      dataIndex: 'cityId',
+      key: 'cityId',
+      width: 80,
+    },
+    {
+      title: '城市合同金额',
+      dataIndex: 'cityContractAmount',
+      key: 'cityContractAmount',
+      width: 130,
+      align: 'right' as const,
+      render: (v: number) => v.toLocaleString(),
+    },
+    {
+      title: '费率',
+      dataIndex: 'rate',
+      key: 'rate',
+      width: 80,
+      align: 'right' as const,
+      render: (v: number) => `${(v * 100).toFixed(1)}%`,
+    },
+    {
+      title: '26年预估订单',
+      dataIndex: 'estimatedOrderAmount2026',
+      key: 'estimatedOrderAmount2026',
+      width: 140,
+      align: 'right' as const,
+      render: (v: number) => (v != null ? v.toLocaleString() : '0'),
+    },
+    {
+      title: '26年预计收入',
+      dataIndex: 'estimatedIncomeAmount2026',
+      key: 'estimatedIncomeAmount2026',
+      width: 140,
+      align: 'right' as const,
+      render: (v: number) => (v != null ? v.toLocaleString() : '0'),
+    },
+    {
+      title: '备注',
+      dataIndex: 'remark',
+      key: 'remark',
+      ellipsis: true,
+      render: (v: string | null) => v || '-',
+    },
+    {
+      title: '来源城市',
+      dataIndex: 'sourceCityName',
+      key: 'sourceCityName',
+      width: 100,
+      render: (v: string | null) => v || '-',
+    },
+    {
+      title: '操作',
+      key: 'allocActions',
+      width: 140,
+      render: (_: any, record: ContractCityAllocation) => (
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleEditAllocation(record)}
+          >
+            编辑
+          </Button>
+          <Popconfirm
+            title="确定删除此分配？"
+            onConfirm={() => handleDeleteAllocation(record.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <div>
       {/* 搜索栏 */}
@@ -282,6 +494,18 @@ export default function Contracts() {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
             新建合同
           </Button>
+          <Popconfirm
+            title="确定清空所有合同？"
+            description="此操作不可恢复！合同、城市分配、经营测算指标将全部物理删除。"
+            onConfirm={() => purgeMutation.mutate()}
+            okText="确认清除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+          >
+            <Button danger loading={purgeMutation.isPending}>
+              清空所有合同
+            </Button>
+          </Popconfirm>
         </Space>
       </Card>
 
@@ -302,20 +526,20 @@ export default function Contracts() {
         scroll={{ x: 1100 }}
       />
 
-      {/* 新建/编辑 Modal */}
+      {/* ========== 合同新建/编辑 Modal ========== */}
       <Modal
         title={editingContract ? '编辑合同' : '新建合同'}
-        open={modalOpen}
-        onOk={handleModalOk}
+        open={contractModalOpen}
+        onOk={handleContractModalOk}
         onCancel={() => {
-          setModalOpen(false);
+          setContractModalOpen(false);
           setEditingContract(null);
-          form.resetFields();
+          contractForm.resetFields();
         }}
         confirmLoading={isMutating}
         destroyOnClose
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+        <Form form={contractForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
             name="contractCode"
             label="合同编号"
@@ -359,15 +583,16 @@ export default function Contracts() {
         </Form>
       </Modal>
 
-      {/* 详情 Drawer */}
+      {/* ========== 合同详情 Drawer ========== */}
       <Drawer
         title="合同详情"
         open={drawerOpen}
         onClose={() => {
           setDrawerOpen(false);
           setDetailContract(null);
+          setAllocations([]);
         }}
-        width={560}
+        width={640}
       >
         {detailContract && (
           <>
@@ -408,9 +633,111 @@ export default function Contracts() {
                 )}
               </Descriptions.Item>
             </Descriptions>
+
+            <Divider />
+
+            {/* 城市分配列表 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h4 style={{ margin: 0 }}>城市分配与经营测算</h4>
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={handleAddAllocation}
+                disabled={!!detailContract.isDeleted}
+              >
+                新增分配
+              </Button>
+            </div>
+            <Table
+              rowKey="id"
+              columns={allocationColumns}
+              dataSource={allocations}
+              loading={allocationsLoading || isAllocMutating}
+              size="small"
+              pagination={false}
+              scroll={{ x: 800 }}
+              locale={{ emptyText: '暂无城市分配' }}
+            />
           </>
         )}
       </Drawer>
+
+      {/* ========== 分配新建/编辑 Modal ========== */}
+      <Modal
+        title={editingAllocation ? '编辑城市分配' : '新增城市分配'}
+        open={allocModalOpen}
+        onOk={handleAllocModalOk}
+        onCancel={() => {
+          setAllocModalOpen(false);
+          setEditingAllocation(null);
+          allocForm.resetFields();
+        }}
+        confirmLoading={isAllocMutating}
+        destroyOnClose
+        width={520}
+      >
+        <Form form={allocForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="cityId"
+            label="城市ID"
+            rules={[{ required: true, message: '请输入城市ID' }]}
+          >
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="城市ID" disabled={!!editingAllocation} />
+          </Form.Item>
+          <Form.Item
+            name="cityContractAmount"
+            label="城市合同金额"
+            rules={[{ required: true, message: '请输入城市合同金额' }]}
+          >
+            <InputNumber
+              min={0}
+              style={{ width: '100%' }}
+              placeholder="城市合同金额（元）"
+              formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+            />
+          </Form.Item>
+          <Form.Item
+            name="rate"
+            label="费率"
+            rules={[{ required: true, message: '请输入费率' }]}
+            extra="请输入小数，如 0.03 表示 3%"
+          >
+            <InputNumber min={0} max={1} step={0.001} style={{ width: '100%' }} placeholder="如 0.03" />
+          </Form.Item>
+
+          <Divider plain>经营测算指标</Divider>
+
+          <Form.Item
+            name="estimatedOrderAmount2026"
+            label="26年预估订单"
+          >
+            <InputNumber
+              min={0}
+              style={{ width: '100%' }}
+              placeholder="26年预估订单金额"
+              formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+            />
+          </Form.Item>
+          <Form.Item
+            name="estimatedIncomeAmount2026"
+            label="26年预计收入"
+          >
+            <InputNumber
+              min={0}
+              style={{ width: '100%' }}
+              placeholder="26年预计收入金额"
+              formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+            />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={3} placeholder="备注信息" maxLength={500} showCount />
+          </Form.Item>
+          <Form.Item name="sourceCityName" label="来源城市">
+            <Input placeholder="来源城市名称" maxLength={100} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

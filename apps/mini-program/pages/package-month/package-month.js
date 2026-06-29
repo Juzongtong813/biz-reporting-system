@@ -13,6 +13,11 @@ const COST_LABELS = {
 
 const COST_CATEGORY_CODES = Object.keys(COST_LABELS);
 
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 Page({
   data: {
     // 路由参数
@@ -72,13 +77,19 @@ Page({
 
         // 合同行
         if (src.contractRows && src.contractRows.length > 0) {
-          this.setData({ contractRows: src.contractRows });
+          const normalized = src.contractRows.map((r) => ({
+            ...r,
+            completionAmount: toNumber(r.completionAmount),
+            acceptanceAmount: toNumber(r.acceptanceAmount),
+          }));
+          this.setData({ contractRows: normalized });
         }
 
         // 费用行（加上中文标签）
         if (src.costRows && src.costRows.length > 0) {
           const labeled = src.costRows.map((r) => ({
             ...r,
+            amount: toNumber(r.amount),
             costCategoryLabel: COST_LABELS[r.costCategoryCode] || r.costCategoryCode,
           }));
           this.setData({ costRows: labeled });
@@ -89,7 +100,13 @@ Page({
         // 维保行（注意：快照中字段名为 maintenanceRows 对象，草稿中是 maintenanceRow）
         const maint = src.maintenanceRows || src.maintenanceRow;
         if (maint) {
-          this.setData({ maintenanceRow: maint });
+          this.setData({
+            maintenanceRow: {
+              invoiceTotalPrevYear: toNumber(maint.invoiceTotalPrevYear),
+              invoiceMonthCountPrevYear: toNumber(maint.invoiceMonthCountPrevYear),
+              invoiceTotalCurrentYear: toNumber(maint.invoiceTotalCurrentYear),
+            },
+          });
         } else if (this.data.enableMaintenance) {
           this.setData({ maintenanceRow: { invoiceTotalPrevYear: 0, invoiceMonthCountPrevYear: 0, invoiceTotalCurrentYear: 0 } });
         }
@@ -180,12 +197,12 @@ Page({
       monthNo,
       contractRows: contractRows.map((r) => ({
         contractId: r.contractId,
-        completionAmount: r.completionAmount || 0,
-        acceptanceAmount: r.acceptanceAmount || 0,
+        completionAmount: toNumber(r.completionAmount),
+        acceptanceAmount: toNumber(r.acceptanceAmount),
       })),
       costRows: costRows.map((r) => ({
         costCategoryCode: r.costCategoryCode,
-        amount: r.amount || 0,
+        amount: toNumber(r.amount),
       })),
     };
 
@@ -246,12 +263,12 @@ Page({
       monthNo,
       contractRows: contractRows.map((r) => ({
         contractId: r.contractId,
-        completionAmount: r.completionAmount || 0,
-        acceptanceAmount: r.acceptanceAmount || 0,
+        completionAmount: toNumber(r.completionAmount),
+        acceptanceAmount: toNumber(r.acceptanceAmount),
       })),
       costRows: costRows.map((r) => ({
         costCategoryCode: r.costCategoryCode,
-        amount: r.amount || 0,
+        amount: toNumber(r.amount),
       })),
     };
 
@@ -272,12 +289,12 @@ Page({
       monthNo,
       contractRows: contractRows.map((r) => ({
         contractId: r.contractId,
-        completionAmount: r.completionAmount || 0,
-        acceptanceAmount: r.acceptanceAmount || 0,
+        completionAmount: toNumber(r.completionAmount),
+        acceptanceAmount: toNumber(r.acceptanceAmount),
       })),
       costRows: costRows.map((r) => ({
         costCategoryCode: r.costCategoryCode,
-        amount: r.amount || 0,
+        amount: toNumber(r.amount),
       })),
     };
 

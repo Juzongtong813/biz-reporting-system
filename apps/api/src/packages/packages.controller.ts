@@ -53,9 +53,16 @@ export class PackagesController {
   ) {
     const cityId = req.user.cityId ?? 0;
     if (!cityId) {
-      throw new BadRequestException('当前用户未绑定城市，无法获取报表包');
+      throw new BadRequestException('当前账号未绑定城市，请联系管理员');
     }
-    return this.packagesService.getOrCreateCurrent(cityId, Number(year));
+    const pkg = await this.packagesService.getOrCreateCurrent(cityId, Number(year));
+    // 聚合月度快照状态，供前端渲染 12 个月的状态网格
+    const months = await this.packagesService.getMonthStatuses(pkg.id);
+    // 城市有效合同分配数
+    const contractCount = await this.packagesService.getCityContractCount(Number(cityId));
+    // 年度累计汇总（仅基于已提交的 month_snapshots）
+    const summary = await this.packagesService.getYearSummary(pkg.id);
+    return { ...pkg, months, contractCount, summary };
   }
 
   /**

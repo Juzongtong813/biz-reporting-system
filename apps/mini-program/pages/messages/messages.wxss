@@ -1,0 +1,174 @@
+page {
+  background: #edf0f5;
+}
+
+.page {
+  padding: 0 24rpx 32rpx;
+}
+
+.header-bar {
+  padding: 20rpx 0 8rpx;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.header-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.header-badge {
+  min-width: 34rpx;
+  height: 34rpx;
+  padding: 0 10rpx;
+  border-radius: 999rpx;
+  background: #e31b23;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-badge-num {
+  font-size: 20rpx;
+  color: #ffffff;
+  line-height: 1;
+}
+
+.header-tip {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #7a8496;
+}
+
+.header-accent {
+  width: 48rpx;
+  height: 4rpx;
+  background: #1a5cff;
+  border-radius: 2rpx;
+  margin-top: 8rpx;
+}
+
+.panel,
+.state-card {
+  background: #ffffff;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 14rpx;
+  padding: 24rpx 20rpx;
+  margin-top: 16rpx;
+}
+
+.state-card {
+  text-align: center;
+}
+
+.state-card.error {
+  border-color: #f5c2c7;
+  background: #fff7f7;
+}
+
+.state-title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 8rpx;
+}
+
+.state-text {
+  display: block;
+  color: #7a8496;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.retry-btn {
+  margin-top: 18rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  border-radius: 10rpx;
+  background: #1a5cff;
+  color: #ffffff;
+  font-size: 26rpx;
+}
+
+.msg-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-item {
+  display: flex;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+
+.msg-item:last-child {
+  border-bottom: none;
+}
+
+.msg-left {
+  width: 24rpx;
+  display: flex;
+  justify-content: center;
+  padding-top: 8rpx;
+  flex-shrink: 0;
+}
+
+.msg-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #1a5cff;
+}
+
+.msg-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  min-width: 0;
+}
+
+.msg-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.msg-title {
+  font-size: 26rpx;
+  font-weight: 500;
+  color: #1a1a2e;
+}
+
+.msg-item.unread .msg-title {
+  font-weight: 600;
+}
+
+.msg-tag {
+  font-size: 20rpx;
+  color: #1a5cff;
+  border: 1rpx solid #c7dcff;
+  background: #f3f8ff;
+  border-radius: 999rpx;
+  padding: 2rpx 10rpx;
+  flex-shrink: 0;
+}
+
+.msg-summary {
+  font-size: 24rpx;
+  color: #5b6778;
+  line-height: 1.5;
+}
+
+.msg-time {
+  font-size: 20rpx;
+  color: #c0c4cc;
+}

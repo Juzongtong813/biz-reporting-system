@@ -27,6 +27,12 @@ import type {
 const DEFAULT_DEADLINE_DAY = 10;
 const DEFAULT_DEADLINE_HOUR = 18;
 
+/** 旧快照 contractRowsJson 内部行对象结构（unknown 边界类型守卫用） */
+type SnapshotContractRowLike = {
+  contractId?: unknown;
+  completionAmount?: unknown;
+};
+
 /**
  * 年度报表包核心服务
  *
@@ -87,6 +93,114 @@ export class PackagesService {
   }
 
   /**
+   * 获取指定包的各月提交状态（含逾期标记）
+   * 返回格式: [{monthNo: 1, submitted: true, overdue: false}, ...]
+   */
+  async getMonthStatuses(packageId: number): Promise<{monthNo: number; submitted: boolean; overdue: boolean}[]> {
+    const snapshots = await this.snapshotRepo.find({
+      where: { packageId },
+      select: ['belongMonth'],
+    });
+    const submittedSet = new Set(snapshots.map((s) => s.belongMonth));
+    const months: {monthNo: number; submitted: boolean; overdue: boolean}[] = [];
+    for (let m = 1; m <= 12; m++) {
+      const submitted = submittedSet.has(m);
+      const overdue = !submitted && this.isMonthOverdue(m);
+      months.push({ monthNo: m, submitted, overdue });
+    }
+    return months;
+  }
+
+  /**
+   * 统计该城市有效合同分配数（过滤软删除）
+   */
+  async getCityContractCount(cityId: number): Promise<number> {
+    const raw = await this.allocationRepo
+      .createQueryBuilder('a')
+      .innerJoin('contracts', 'c', 'c.id = a.contractId AND c.is_deleted = 0')
+      .where('a.cityId = :cityId', { cityId })
+      .select('COUNT(*)', 'count')
+      .getRawOne<{ count: string }>();
+    return raw ? Number(raw.count) : 0;
+  }
+
+  /**
+   * 获取全年累计汇总（仅基于已提交的 month_snapshots）
+   *
+   * 旧快照兼容策略：
+   * - 旧快照可能没有 orderGrossProfit / netProfit 等新字段
+   * - 遇到旧快照时通过 contractRowsJson + allocation.rate 回算
+   * - 缺失 allocation 时按 0 处理（不抛错，确保首页不崩溃）
+   * - grossProfit 永远等于 orderGrossProfit，不独立累加
+   */
+  async getYearSummary(packageId: number): Promise<{
+    completionTotal: number;
+    acceptanceTotal: number;
+    costTotal: number;
+    orderGrossProfit: number;
+    grossProfit: number;
+    costRate: number;
+    costIncomeRate: number;
+    netProfit: number;
+    netProfitRate: number;
+  }> {
+    const pkg = await this.findPackageOrThrow(packageId);
+
+    const snapshots = await this.snapshotRepo.find({
+      where: { packageId },
+      select: ['cityId', 'summaryJson', 'contractRowsJson'],
+    });
+
+    let completionTotal = 0;
+    let acceptanceTotal = 0;
+    let costTotal = 0;
+    let orderGrossProfit = 0;
+
+    for (const s of snapshots) {
+      const summary = s.summaryJson as Record<string, unknown> | null;
+      if (!summary) continue;
+
+      completionTotal += this.toFiniteNumber(summary.completionTotal);
+      acceptanceTotal += this.toFiniteNumber(summary.acceptanceTotal);
+      costTotal += this.toFiniteNumber(summary.costTotal);
+
+      const ogp = this.toFiniteNumber(summary.orderGrossProfit);
+      if (ogp !== 0 || 'orderGrossProfit' in summary) {
+        // 新快照：取 snapshot 中存的值
+        orderGrossProfit += ogp;
+      } else {
+        // 旧快照兼容：从 contractRowsJson 回算
+        orderGrossProfit += await this.calculateSnapshotOrderGrossProfitFallback(
+          pkg,
+          s.contractRowsJson,
+        );
+      }
+    }
+
+    const grossProfit = orderGrossProfit; // 强制等于 orderGrossProfit
+
+    // 全年的比例基于全年累计值重新计算
+    const costRate = completionTotal !== 0 ? costTotal / completionTotal : 0;
+    const costIncomeRate = orderGrossProfit !== 0 ? costTotal / orderGrossProfit : 0;
+    const netProfit = orderGrossProfit - costTotal;
+    const netProfitRate = completionTotal !== 0 ? netProfit / completionTotal : 0;
+
+    const safe = (v: number) => (Number.isFinite(v) ? v : 0);
+
+    return {
+      completionTotal,
+      acceptanceTotal,
+      costTotal,
+      orderGrossProfit,
+      grossProfit,
+      costRate: safe(costRate),
+      costIncomeRate: safe(costIncomeRate),
+      netProfit,
+      netProfitRate: safe(netProfitRate),
+    };
+  }
+
+  /**
    * 获取指定月度的填报数据（草稿或最新快照）
    *
    * 锁定逻辑：
@@ -98,33 +212,75 @@ export class PackagesService {
     const pkg = await this.findPackageOrThrow(packageId);
     this.verifyCityOwnership(pkg, user);
 
+    // 已有快照且无有效解锁 → 跳过懒加载初始化（提交月走 read-only）
+    const existingSnapshot = await this.snapshotRepo.findOne({
+      where: { packageId, belongMonth: monthNo },
+      select: ['id'],
+    });
+    if (existingSnapshot) {
+      const activeGrant = await this.unlockGrantRepo.findOne({
+        where: { packageId, monthNo, expiresAt: MoreThan(new Date()) },
+        select: ['id'],
+      });
+      const isLocked = !activeGrant;
+      if (isLocked) {
+        // 已锁定提交月 → 只查已有行，不自动初始化
+        const contractRows = await this.contractRowRepo.find({
+          where: { packageId, monthNo },
+        });
+        const costRowsPromise = this.costRowRepo.find({ where: { packageId, monthNo } });
+        const maintenanceRowsPromise = this.maintenanceRowRepo.find({ where: { packageId, monthNo } });
+        const [costRows, maintenanceRows] = await Promise.all([costRowsPromise, maintenanceRowsPromise]);
+
+        return this.assembleMonthResponse(pkg, monthNo, contractRows, costRows, maintenanceRows, true, '该月已提交，如需修改请联系管理员申请解锁');
+      }
+    }
+
     // 查询 3 张行表的草稿数据
-    const contractRows = await this.contractRowRepo.find({
+    const existingContractRows = await this.contractRowRepo.find({
       where: { packageId, monthNo },
+      order: { id: 'ASC' },
     });
 
-    // 无合同行时从合同分配自动初始化
-    let resolvedContractRows = contractRows;
-    if (contractRows.length === 0) {
+    // 过滤：仅保留合同仍存在且未软删除的行
+    const existingContractIds = existingContractRows
+      .map((row) => Number(row.contractId))
+      .filter((id) => Number.isFinite(id));
+
+    const activeContracts = existingContractIds.length > 0
+      ? await this.contractRepo.find({
+          where: { id: In(existingContractIds), isDeleted: SoftDeleteFlag.NOT_DELETED },
+          select: ['id'],
+        })
+      : [];
+
+    const activeContractIdSet = new Set(activeContracts.map((c) => Number(c.id)));
+
+    let resolvedContractRows = existingContractRows.filter((row) =>
+      activeContractIdSet.has(Number(row.contractId)),
+    );
+
+    // 无有效合同行时从合同分配自动初始化
+    if (resolvedContractRows.length === 0) {
       const allocations = await this.allocationRepo.find({
         where: { cityId: pkg.cityId },
       });
       if (allocations.length > 0) {
-        // 注意: allocation.contractId 是 bigint → JS string；contract.id 是 PrimaryGeneratedColumn → number
-        const contractIds = allocations.map((a) => Number(a.contractId));
+        const allocContractIds = allocations.map((a) => Number(a.contractId));
         const contracts = await this.contractRepo.find({
-          where: { id: In(contractIds) },
+          where: { id: In(allocContractIds), isDeleted: SoftDeleteFlag.NOT_DELETED },
         });
         const contractMap = new Map(contracts.map((c) => [c.id, c]));
 
         const newRows: ContractMonthRowEntity[] = [];
         for (const alloc of allocations) {
-          const contract = contractMap.get(Number(alloc.contractId));
-          if (contract && !contract.isDeleted) {
+          const cId = Number(alloc.contractId);
+          const contract = contractMap.get(cId);
+          if (contract) {
             newRows.push(
               this.contractRowRepo.create({
                 packageId,
-                contractId: alloc.contractId,
+                contractId: cId,
                 contractCodeSnapshot: contract.contractCode,
                 contractNameSnapshot: contract.contractName,
                 cityAllocationId: alloc.id,
@@ -139,65 +295,83 @@ export class PackagesService {
         }
         if (newRows.length > 0) {
           await this.contractRowRepo.save(newRows);
-          resolvedContractRows = newRows;
+          const allRows = await this.contractRowRepo.find({
+            where: { packageId, monthNo },
+            order: { id: 'ASC' },
+          });
+          // 重新验证所有行的合同有效性（re-read 会包含旧脏行）
+          const allContractIds = allRows
+            .map((row) => Number(row.contractId))
+            .filter((id) => Number.isFinite(id));
+          const validContracts = allContractIds.length > 0
+            ? await this.contractRepo.find({
+                where: { id: In(allContractIds), isDeleted: SoftDeleteFlag.NOT_DELETED },
+                select: ['id'],
+              })
+            : [];
+          const validIdSet = new Set(validContracts.map((c) => Number(c.id)));
+          resolvedContractRows = allRows.filter((row) =>
+            validIdSet.has(Number(row.contractId)),
+          );
         }
       }
     }
 
-    // 数据一致性：过滤掉已软删除合同的旧月度行（预防脏数据）
-    if (resolvedContractRows.length > 0) {
-      const rowContractIds = resolvedContractRows.map((r) => Number(r.contractId));
-      const validContracts = await this.contractRepo.find({
-        where: { id: In(rowContractIds), isDeleted: SoftDeleteFlag.NOT_DELETED },
-        select: ['id'],
-      });
-      const validIdSet = new Set(validContracts.map((c) => Number(c.id)));
-      resolvedContractRows = resolvedContractRows.filter((r) =>
-        validIdSet.has(Number(r.contractId)),
-      );
-    }
-
-    const costRows = await this.costRowRepo.find({
-      where: { packageId, monthNo },
-    });
-    const maintenanceRows = await this.maintenanceRowRepo.find({
-      where: { packageId, monthNo },
-    });
+    const [costRows, maintenanceRows] = await Promise.all([
+      this.costRowRepo.find({ where: { packageId, monthNo } }),
+      this.maintenanceRowRepo.find({ where: { packageId, monthNo } }),
+    ]);
 
     // 检查是否已有提交快照（已提交=锁定基础状态）
-    const existingSnapshot = await this.snapshotRepo.findOne({
+    const snapshot = existingSnapshot || await this.snapshotRepo.findOne({
       where: { packageId, belongMonth: monthNo },
+      select: ['id'],
     });
 
     let isLocked = false;
     let lockReason: string | null = null;
 
-    if (existingSnapshot) {
-      // 已提交过 → 默认锁定，检查是否有有效解锁授权
+    if (snapshot) {
       const activeGrant = await this.unlockGrantRepo.findOne({
         where: {
           packageId,
           monthNo,
           expiresAt: MoreThan(new Date()),
         },
+        select: ['id'],
       });
 
       if (!activeGrant) {
         isLocked = true;
         lockReason = '该月已提交，如需修改请联系管理员申请解锁';
       }
-      // 有有效授权 → 保持 isLocked=false，可编辑
     }
 
+    return this.assembleMonthResponse(pkg, monthNo, resolvedContractRows, costRows, maintenanceRows, isLocked, lockReason);
+  }
+
+  /**
+   * 组装 getMonthData 的统一响应结构
+   */
+  private assembleMonthResponse(
+    pkg: AnnualPackageEntity,
+    monthNo: number,
+    contractRows: ContractMonthRowEntity[],
+    costRows: any[],
+    maintenanceRows: any[],
+    isLocked: boolean,
+    lockReason: string | null,
+  ) {
     return {
       packageId: pkg.id,
       cityId: pkg.cityId,
       reportYear: pkg.reportYear,
       status: pkg.status,
       monthNo,
-      contractRows: resolvedContractRows.map((r) => ({
+      contractRows: contractRows.map((r) => ({
         contractId: r.contractId,
         contractCode: r.contractCodeSnapshot,
+        contractName: r.contractNameSnapshot,
         completionAmount: r.completionAmount,
         acceptanceAmount: r.acceptanceAmount,
       })),
@@ -407,17 +581,17 @@ export class PackagesService {
     // 校验
     this.validateSubmission(dto);
 
-    // 计算汇总（正确公式：grossProfit = completionTotal - costTotal）
-    const completionTotal = dto.contractRows.reduce((sum, r) => sum + (r.completionAmount || 0), 0);
-    const acceptanceTotal = dto.contractRows.reduce((sum, r) => sum + (r.acceptanceAmount || 0), 0);
-    const costTotal = dto.costRows.reduce((sum, r) => sum + (r.amount || 0), 0);
+    // 使用统一公式引擎计算
+    const summary = await this.calculateBusinessSummary(
+      packageId,
+      dto.monthNo,
+      dto.contractRows,
+      dto.costRows,
+    );
 
     return {
       belongMonth: dto.monthNo,
-      completionTotal,
-      acceptanceTotal,
-      costTotal,
-      grossProfit: completionTotal - costTotal,
+      ...summary,
       isOverdue: this.isMonthOverdue(dto.monthNo),
     };
   }
@@ -435,8 +609,15 @@ export class PackagesService {
     // 2. 先执行 draftSave（确保 3 张行表数据是最新的）
     await this.draftSave(packageId, dto, user);
 
-    // 3. 生成不可变快照（JSON 序列化全部数据）
+    // 3. 使用统一公式引擎计算 summaryJson
     const isOverdue = this.isMonthOverdue(dto.monthNo);
+    const summary = await this.calculateBusinessSummary(
+      packageId,
+      dto.monthNo,
+      dto.contractRows,
+      dto.costRows,
+    );
+
     const snapshot = this.snapshotRepo.create({
       packageId,
       cityId: pkg.cityId,
@@ -445,12 +626,8 @@ export class PackagesService {
       actualSubmittedAt: new Date(),
       isOverdue: isOverdue ? 1 : 0,
       summaryJson: {
-        completionTotal: dto.contractRows.reduce((s, r) => s + (r.completionAmount || 0), 0),
-        acceptanceTotal: dto.contractRows.reduce((s, r) => s + (r.acceptanceAmount || 0), 0),
-        costTotal: dto.costRows.reduce((s, r) => s + (r.amount || 0), 0),
-        grossProfit:
-          dto.contractRows.reduce((s, r) => s + (r.completionAmount || 0), 0) -
-          dto.costRows.reduce((s, r) => s + (r.amount || 0), 0),
+        ...summary,
+        isOverdue,
       },
       contractRowsJson: dto.contractRows,
       costRowsJson: dto.costRows,
@@ -535,14 +712,26 @@ export class PackagesService {
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth() + 1;
 
-    const packages = await this.packageRepo.find({
-      where: { reportYear: currentYear },
-    });
+    // 使用 JOIN 从数据库直接获取城市名称，避免 TypeORM bigint→string 类型不匹配
+    const rawRows = await this.packageRepo
+      .createQueryBuilder('pkg')
+      .leftJoin(CityEntity, 'city', 'city.id = pkg.cityId')
+      .select([
+        'pkg.id AS id',
+        'pkg.city_id AS cityId',
+        'city.name AS cityName',
+        'pkg.report_year AS reportYear',
+        'pkg.status AS status',
+        'pkg.last_updated_by AS lastUpdatedBy',
+        'pkg.last_updated_at AS lastUpdatedAt',
+        'pkg.created_at AS createdAt',
+        'pkg.updated_at AS updatedAt',
+      ])
+      .where('pkg.report_year = :year', { year: currentYear })
+      .orderBy('pkg.city_id', 'ASC')
+      .getRawMany();
 
-    const cities = await this.cityRepo.find();
-    const cityMap = new Map(cities.map((c) => [c.id, c.name]));
-
-    // 批量查询当月快照
+    // 批量查询当月快照和提交计数
     const submittedCityIds = new Set<number>();
     const snapshotCounts = new Map<number, number>();
 
@@ -562,18 +751,18 @@ export class PackagesService {
       );
     }
 
-    const items: AdminPackageItem[] = packages.map((pkg) => ({
-      id: pkg.id,
-      cityId: pkg.cityId,
-      cityName: cityMap.get(pkg.cityId) ?? `城市#${pkg.cityId}`,
-      reportYear: pkg.reportYear,
-      status: pkg.status,
-      currentMonthSubmitted: submittedCityIds.has(pkg.cityId),
-      submittedMonthCount: snapshotCounts.get(pkg.cityId) || 0,
-      lastUpdatedBy: pkg.lastUpdatedBy,
-      lastUpdatedAt: pkg.lastUpdatedAt?.toISOString() ?? null,
-      createdAt: pkg.createdAt.toISOString(),
-      updatedAt: pkg.updatedAt.toISOString(),
+    const items: AdminPackageItem[] = rawRows.map((row) => ({
+      id: Number(row.id),
+      cityId: Number(row.cityId),
+      cityName: row.cityName ?? `城市#${row.cityId}`,
+      reportYear: Number(row.reportYear),
+      status: row.status,
+      currentMonthSubmitted: submittedCityIds.has(Number(row.cityId)),
+      submittedMonthCount: snapshotCounts.get(Number(row.cityId)) || 0,
+      lastUpdatedBy: row.lastUpdatedBy ? Number(row.lastUpdatedBy) : null,
+      lastUpdatedAt: row.lastUpdatedAt?.toISOString() ?? null,
+      createdAt: row.createdAt?.toISOString() ?? '',
+      updatedAt: row.updatedAt?.toISOString() ?? '',
     }));
 
     return { items, total: items.length, page: 1, pageSize: items.length };
@@ -759,6 +948,173 @@ export class PackagesService {
   // ============================================================
   // 内部方法
   // ============================================================
+
+  /**
+   * 统一经营测算公式引擎
+   *
+   * 公式口径：
+   * - completionTotal = sum(contractRows.completionAmount)
+   * - acceptanceTotal = sum(contractRows.acceptanceAmount)
+   * - costTotal = sum(costRows.amount)
+   * - orderGrossProfit = sum(contractRow.completionAmount × allocation.rate)
+   * - grossProfit = orderGrossProfit（保留旧字段名，值等于新口径）
+   * - costRate = costTotal / completionTotal
+   * - costIncomeRate = costTotal / orderGrossProfit
+   * - netProfit = orderGrossProfit - costTotal
+   * - netProfitRate = netProfit / completionTotal
+   *
+   * 除法保护：分母为 0 时返回 0，不返回 NaN / Infinity
+   *
+   * allocation.rate 查询规则：
+   *   allocation.cityId = package.cityId
+   *   allocation.contractId = row.contractId
+   */
+  private async calculateBusinessSummary(
+    packageId: number,
+    monthNo: number,
+    contractRows: { contractId: number; completionAmount: number; acceptanceAmount: number }[],
+    costRows: { amount: number }[],
+  ): Promise<{
+    completionTotal: number;
+    acceptanceTotal: number;
+    costTotal: number;
+    orderGrossProfit: number;
+    grossProfit: number;
+    costRate: number;
+    costIncomeRate: number;
+    netProfit: number;
+    netProfitRate: number;
+  }> {
+    const pkg = await this.findPackageOrThrow(packageId);
+
+    // 收集所有 contractId
+    const contractIds = contractRows.map((r) => Number(r.contractId)).filter((id) => id > 0);
+
+    // 批量查询 allocation（cityId + contractId）
+    const allocations = contractIds.length > 0
+      ? await this.allocationRepo.find({
+          where: {
+            cityId: pkg.cityId,
+            contractId: In(contractIds),
+          },
+        })
+      : [];
+    const allocMap = new Map(allocations.map((a) => [Number(a.contractId), a]));
+
+    const completionTotal = contractRows.reduce((s, r) => s + Number(r.completionAmount || 0), 0);
+    const acceptanceTotal = contractRows.reduce((s, r) => s + Number(r.acceptanceAmount || 0), 0);
+    const costTotal = costRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+    // 订单毛利 = sum(completionAmount × allocation.rate)
+    let orderGrossProfit = 0;
+    for (const row of contractRows) {
+      const contractId = Number(row.contractId);
+      const alloc = allocMap.get(contractId);
+      if (!alloc) {
+        throw new BadRequestException(
+          `合同 #${contractId} 未配置地市分配费率，无法计算订单毛利`,
+        );
+      }
+      orderGrossProfit += Number(row.completionAmount || 0) * Number(alloc.rate);
+    }
+
+    const grossProfit = orderGrossProfit; // 保留旧字段名，值等于新口径
+
+    // 除法保护：分母为 0 则返回 0
+    const costRate = completionTotal !== 0 ? costTotal / completionTotal : 0;
+    const costIncomeRate = orderGrossProfit !== 0 ? costTotal / orderGrossProfit : 0;
+    const netProfit = orderGrossProfit - costTotal;
+    const netProfitRate = completionTotal !== 0 ? netProfit / completionTotal : 0;
+
+    const safe = (v: number) => (isFinite(v) ? v : 0);
+
+    return {
+      completionTotal,
+      acceptanceTotal,
+      costTotal,
+      orderGrossProfit,
+      grossProfit,
+      costRate: safe(costRate),
+      costIncomeRate: safe(costIncomeRate),
+      netProfit,
+      netProfitRate: safe(netProfitRate),
+    };
+  }
+
+  /**
+   * 安全数字转换：所有从 JSON 读取的数字必须经过此函数
+   * - 非数字 / undefined / null / NaN / Infinity 统一返回 0
+   */
+  private toFiniteNumber(value: unknown): number {
+    const n = Number(value ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  /**
+   * 类型守卫：判断 unknown 是否为 SnapshotContractRowLike 结构
+   */
+  private isSnapshotContractRowLike(value: unknown): value is SnapshotContractRowLike {
+    return typeof value === 'object' && value !== null;
+  }
+
+  /**
+   * 旧快照兼容：从 contractRowsJson 回算 orderGrossProfit
+   *
+   * 用于年度汇总中旧快照没有 orderGrossProfit 字段的情况。
+   * 从 contractRowsJson 读取 contractId + completionAmount，
+   * 用 package.cityId + contractId 查 allocation.rate 重新计算。
+   *
+   * 缺失 allocation 时不抛错，按 0 处理（年度汇总不应因旧数据崩溃）。
+   * 与 calculateBusinessSummary 不同——后者对新提交严格抛 400。
+   */
+  private async calculateSnapshotOrderGrossProfitFallback(
+    pkg: AnnualPackageEntity,
+    contractRowsJson: unknown,
+  ): Promise<number> {
+    if (!Array.isArray(contractRowsJson) || contractRowsJson.length === 0) {
+      return 0;
+    }
+
+    // 用类型守卫过滤出结构正确的行
+    const rows = contractRowsJson.filter((row): row is SnapshotContractRowLike =>
+      this.isSnapshotContractRowLike(row),
+    );
+
+    if (rows.length === 0) return 0;
+
+    const contractIds = rows
+      .map((row) => Number(row.contractId))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    const allocations = contractIds.length > 0
+      ? await this.allocationRepo.find({
+          where: {
+            cityId: pkg.cityId,
+            contractId: In(contractIds),
+          },
+        })
+      : [];
+    const allocMap = new Map(allocations.map((a) => [Number(a.contractId), a]));
+
+    let total = 0;
+    for (const row of rows) {
+      const contractId = Number(row.contractId);
+      if (!Number.isFinite(contractId) || contractId <= 0) continue;
+
+      const completionAmount = this.toFiniteNumber(row.completionAmount);
+      const alloc = allocMap.get(contractId);
+
+      if (!alloc) {
+        // 旧快照兼容：缺失 allocation 时无法补算，按 0 处理
+        // 新提交场景不会走此分支（calculateBusinessSummary 严格校验）
+        continue;
+      }
+
+      total += completionAmount * Number(alloc.rate);
+    }
+
+    return total;
+  }
 
   private async findPackageOrThrow(id: number): Promise<AnnualPackageEntity> {
     const pkg = await this.packageRepo.findOne({ where: { id } });

@@ -1,5 +1,5 @@
-/**
- * Axios 单例 — 所有 API 请求的唯一入口
+﻿/**
+ * Axios 单例 - 所有 API 请求的唯一入口
  *
  * 职责：
  * 1. 自动附加 Authorization header
@@ -11,7 +11,7 @@ import axios, { AxiosError } from 'axios';
 import { message } from 'antd';
 import { getToken, clearToken } from './auth';
 
-const BASE_URL = '/api';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const request = axios.create({
   baseURL: BASE_URL,
@@ -44,9 +44,9 @@ request.interceptors.response.use(
 
       if (status === 401) {
         clearToken();
-        // 避免在登录页重复跳转
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login';
+        // HashRouter：登录页必须走 hash 路由，避免静态站点跳错地址
+        if (!window.location.hash.includes('/login')) {
+          window.location.hash = '#/login';
         }
         message.error('登录已过期，请重新登录');
       } else {

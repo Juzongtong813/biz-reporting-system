@@ -22,6 +22,7 @@ export interface Contract {
   updatedBy: number;
   createdAt: Date;
   updatedAt: Date;
+  allocations?: ContractCityAllocation[];
 }
 
 /**
@@ -38,6 +39,10 @@ export interface ContractCityAllocation {
   rate: number;
   accumulatedOrderAmount: number;
   accumulatedInvoiceAmount: number;
+  estimatedOrderAmount2026: number;
+  estimatedIncomeAmount2026: number;
+  remark: string | null;
+  sourceCityName: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

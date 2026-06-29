@@ -47,6 +47,11 @@ export interface SnapshotSummaryData {
   completionTotal: number;
   acceptanceTotal: number;
   costTotal: number;
+  orderGrossProfit: number;
   grossProfit: number;
+  costRate: number;
+  costIncomeRate: number;
+  netProfit: number;
+  netProfitRate: number;
   isOverdue: boolean;
 }

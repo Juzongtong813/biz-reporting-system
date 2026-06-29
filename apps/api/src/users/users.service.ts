@@ -18,7 +18,6 @@ export interface CreateCityUserInput {
   cityId: number;
 }
 
-/** 含城市名称的用户详情（用于 GET /me 接口返回） */
 export interface UserWithCityName extends Omit<UserEntity, 'passwordHash'> {
   cityName: string | null;
 }
@@ -34,12 +33,10 @@ export class UsersService {
     private readonly operationLogRepo: Repository<OperationLogEntity>,
   ) {}
 
-  /** 按 ID 查找用户（含 cityName 联表查询）*/
   async findById(id: number): Promise<UserWithCityName | null> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) return null;
 
-    // 联查城市名称
     let cityName: string | null = null;
     if (user.cityId) {
       const city = await this.cityRepository.findOne({
@@ -53,20 +50,20 @@ export class UsersService {
     return { ...rest, cityName };
   }
 
-  /** 按用户名查找管理员 */
   async findByUsername(username: string): Promise<UserEntity | null> {
-    return this.userRepository.findOne({
-      where: { username },
-      select: ['id', 'role', 'name', 'cityId', 'username', 'passwordHash', 'status'], // 显式包含密码字段
-    });
+    return this.withTransientDbRetry(
+      () => this.userRepository.findOne({
+        where: { username },
+        select: ['id', 'role', 'name', 'cityId', 'username', 'passwordHash', 'status'],
+      }),
+      `find user by username: ${username}`,
+    );
   }
 
-  /** 按 openid 查找微信用户 */
   async findByOpenid(openid: string): Promise<UserEntity | null> {
     return this.userRepository.findOne({ where: { openid } });
   }
 
-  /** 创建城市用户（微信注册） */
   async createCityUser(input: CreateCityUserInput): Promise<UserEntity> {
     const user = this.userRepository.create({
       role: Role.CITY_USER,
@@ -79,17 +76,15 @@ export class UsersService {
     return this.userRepository.save(user);
   }
 
-  /** 更新最后登录时间 */
   async updateLastLogin(userId: number): Promise<void> {
-    await this.userRepository.update(userId, {
-      lastLoginAt: new Date(),
-    });
+    await this.withTransientDbRetry(
+      () => this.userRepository.update(userId, {
+        lastLoginAt: new Date(),
+      }),
+      `update last login: ${userId}`,
+    );
   }
 
-  /**
-   * 初始化种子管理员（仅当表中无管理员时执行）
-   * TODO: 在 AppModule.onModuleInit 中调用一次
-   */
   async seedAdminIfNeeded(): Promise<void> {
     const adminCount = await this.userRepository.count({
       where: { role: Role.SYSTEM_ADMIN },
@@ -110,13 +105,6 @@ export class UsersService {
     await this.userRepository.save(admin);
   }
 
-  // ============================================================
-  // Admin 用户管理方法
-  // ============================================================
-
-  /**
-   * 分页查询用户列表（含城市名称 + role）
-   */
   async list(params: PaginationParams): Promise<UserListResponse> {
     const page = params.page || 1;
     const pageSize = params.pageSize || 20;
@@ -153,9 +141,6 @@ export class UsersService {
     return { items, total, page, pageSize };
   }
 
-  /**
-   * 更新用户状态（启用/禁用）
-   */
   async updateStatus(
     userId: number,
     status: UserStatus,
@@ -175,9 +160,6 @@ export class UsersService {
     };
   }
 
-  /**
-   * 重新绑定城市用户到其他城市
-   */
   async rebindCity(userId: number, cityId: number, operatorUserId: number): Promise<UserListItem> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException(`用户 #${userId} 不存在`);
@@ -219,5 +201,61 @@ export class UsersService {
       registerAt: updated.registerAt.toISOString(),
       lastLoginAt: updated.lastLoginAt?.toISOString() ?? null,
     };
+  }
+
+  private async withTransientDbRetry<T>(
+    operation: () => Promise<T>,
+    context: string,
+    maxRetries = 1,
+  ): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (attempt >= maxRetries || !this.isTransientDbError(error)) {
+          throw error;
+        }
+
+        const message = this.getErrorMessage(error);
+        console.warn(`[UsersService] retrying ${context} after transient DB error: ${message}`);
+        await this.delay(150 * (attempt + 1));
+      }
+    }
+
+    throw new Error(`${context} failed after retry`);
+  }
+
+  private isTransientDbError(error: unknown): boolean {
+    const message = this.getErrorMessage(error).toLowerCase();
+    return (
+      message.includes('econnreset') ||
+      message.includes('malformed communication packet') ||
+      message.includes('protocol') ||
+      message.includes('connection lost') ||
+      message.includes('read eof') ||
+      message.includes('deadlock found') ||
+      message.includes('lock wait timeout exceeded')
+    );
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    if (typeof error === 'object' && error !== null) {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === 'string') {
+        return message;
+      }
+    }
+
+    return String(error);
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 }

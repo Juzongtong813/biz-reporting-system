@@ -1,48 +1,55 @@
 <view class="login-container">
-  <view class="logo-section">
-    <text class="logo-title">经营单元上报系统</text>
-    <text class="logo-subtitle">请使用微信登录</text>
+  <view class="login-bg-layer"></view>
+  
+  <view class="login-header">
+    <text class="logo-label">经营单元上报系统</text>
+    <text class="logo-title">数据填报平台</text>
+    <text class="logo-desc">地市级经营单元月度数据上报与成本管理</text>
   </view>
 
-  <!-- 登录按钮（用 hidden 而非 wx:if，让 picker 始终在 DOM 中） -->
-  <view hidden="{{showRegister}}" class="login-section">
-    <!-- 隐私协议勾选（自定义勾选框，避免 checkbox 组件跨设备事件差异） -->
-    <view class="privacy-row" bindtap="onAgreePrivacyChange">
-      <view class="custom-checkbox {{agreePrivacy ? 'checked' : ''}}">
-        <text class="check-mark" wx:if="{{agreePrivacy}}">✓</text>
+  <!-- 登录 -->
+  <view hidden="{{showRegister}}" class="login-panel">
+    <view class="panel-inner">
+      <view class="privacy-row" bindtap="onAgreePrivacyChange">
+        <view class="custom-checkbox {{agreePrivacy ? 'checked' : ''}}">
+          <text class="check-mark" wx:if="{{agreePrivacy}}">✓</text>
+        </view>
+        <view class="privacy-content">
+          <text class="privacy-text">已阅读并同意</text>
+          <text class="privacy-link" catchtap="onOpenTerms">《服务协议》</text>
+          <text class="privacy-text">和</text>
+          <text class="privacy-link" catchtap="onOpenPrivacy">《隐私政策》</text>
+        </view>
       </view>
-      <text class="privacy-text">
-        我已阅读并同意
-        <text class="privacy-link" catchtap="onOpenTerms">《用户服务协议》</text>
-        和
-        <text class="privacy-link" catchtap="onOpenPrivacy">《隐私政策》</text>
-      </text>
-    </view>
 
-    <button class="login-btn" type="primary" loading="{{loading}}" disabled="{{!agreePrivacy}}" bindtap="handleLogin">
-      {{loading ? '登录中...' : '微信一键登录'}}
-    </button>
+      <button class="login-btn" type="primary" loading="{{loading}}" disabled="{{!agreePrivacy}}" bindtap="handleLogin">
+        {{loading ? '登录中...' : '微信一键登录'}}
+      </button>
+
+      <text class="login-helper">使用微信身份登录，无需注册账号</text>
+    </view>
   </view>
 
-  <!-- 注册表单（hidden 保持 picker 始终在 DOM 中，避免条件渲染丢失 range 绑定） -->
-  <view hidden="{{!showRegister}}" class="register-form">
-    <view class="form-item">
-      <text class="form-label">姓名</text>
-      <input class="form-input" placeholder="请输入您的姓名" value="{{name}}" bindinput="onNameInput" />
-    </view>
-    <view class="form-item">
-      <text class="form-label">城市</text>
-      <picker class="form-input" mode="selector" range="{{cityList}}" range-key="name" bindchange="onCityChange">
-        <view class="picker-value">{{selectedCity ? selectedCity.name : '请选择城市'}}</view>
-      </picker>
-    </view>
+  <!-- 注册 -->
+  <view hidden="{{!showRegister}}" class="login-panel">
+    <view class="panel-inner">
+      <view class="form-item">
+        <text class="form-label">姓名</text>
+        <input class="form-input" placeholder="请输入姓名" value="{{name}}" bindinput="onNameInput" />
+      </view>
+      <view class="form-item">
+        <text class="form-label">城市</text>
+        <picker class="form-input" mode="selector" range="{{cityList}}" range-key="name" bindchange="onCityChange">
+          <view class="picker-value">{{selectedCity ? selectedCity.name : '请选择城市'}}</view>
+        </picker>
+      </view>
 
-    <button class="login-btn" type="primary" loading="{{registerLoading}}" bindtap="handleRegister">
-      {{registerLoading ? '注册中...' : '注册并登录'}}
-    </button>
-    <text class="back-link" bindtap="backToLogin">← 返回登录</text>
+      <button class="login-btn" type="primary" loading="{{registerLoading}}" bindtap="handleRegister">
+        {{registerLoading ? '注册中...' : '注册并登录'}}
+      </button>
+      <text class="back-link" bindtap="backToLogin">← 返回登录</text>
+    </view>
   </view>
 
   <text wx:if="{{errorMsg}}" class="error-msg">{{errorMsg}}</text>
-  <text class="version-tag">v0617d</text>
 </view>

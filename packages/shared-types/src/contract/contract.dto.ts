@@ -24,6 +24,10 @@ export interface CreateAllocationRequest {
   rate?: number;
   accumulatedOrderAmount?: number;
   accumulatedInvoiceAmount?: number;
+  estimatedOrderAmount2026?: number;
+  estimatedIncomeAmount2026?: number;
+  remark?: string | null;
+  sourceCityName?: string | null;
 }
 
 /** 更新分配 = 继承创建字段 */

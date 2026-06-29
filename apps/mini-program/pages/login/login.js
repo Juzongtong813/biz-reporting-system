@@ -24,12 +24,12 @@ Page({
 
   /** 打开用户服务协议 */
   onOpenTerms() {
-    wx.showToast({ title: '协议页面开发中', icon: 'none' });
+    wx.navigateTo({ url: '/pages/terms/terms' });
   },
 
   /** 打开隐私政策 */
   onOpenPrivacy() {
-    wx.showToast({ title: '隐私政策页面开发中', icon: 'none' });
+    wx.navigateTo({ url: '/pages/privacy/privacy' });
   },
 
   handleLogin() {

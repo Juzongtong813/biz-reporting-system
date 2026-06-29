@@ -2,7 +2,10 @@
   "pages": [
     "pages/index/index",
     "pages/login/login",
-    "pages/package-month/package-month"
+    "pages/package-month/package-month",
+    "pages/terms/terms",
+    "pages/privacy/privacy",
+    "pages/messages/messages"
   ],
   "window": {
     "navigationBarTitleText": "经营单元上报系统",

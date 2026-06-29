@@ -94,6 +94,10 @@ export class AuthService {
       throw new UnauthorizedException('账号已被禁用，请联系管理员');
     }
 
+    if (user.role === Role.CITY_USER && !user.cityId) {
+      throw new UnauthorizedException('当前账号未绑定城市，请联系管理员');
+    }
+
     // 更新最后登录时间
     await this.usersService.updateLastLogin(user.id);
 

@@ -1,0 +1,48 @@
+<view class="privacy-container">
+  <view class="privacy-card">
+    <text class="privacy-title">隐私政策</text>
+    <view class="privacy-body">
+      <text class="privacy-section-title">一、信息收集</text>
+      <text class="privacy-text">
+        1.1 为提供本平台服务，我们可能收集以下信息：用户微信身份标识、姓名、所属城市、填报的经营数据。
+      </text>
+      <text class="privacy-text">
+        1.2 我们仅收集为用户提供服务所必需的最小范围信息，不会过度收集。
+      </text>
+
+      <text class="privacy-section-title">二、信息使用</text>
+      <text class="privacy-text">
+        2.1 收集的信息仅用于本平台的数据填报、成本管理和统计分析等核心功能。
+      </text>
+      <text class="privacy-text">
+        2.2 我们不会将用户个人信息用于本平台功能之外的任何用途。
+      </text>
+
+      <text class="privacy-section-title">三、信息保护</text>
+      <text class="privacy-text">
+        3.1 我们采用行业标准的安全措施保护用户信息，包括但不限于数据加密、访问控制和安全审计。
+      </text>
+      <text class="privacy-text">
+        3.2 我们严格限制内部人员对用户数据的访问权限，确保数据安全。
+      </text>
+
+      <text class="privacy-section-title">四、信息共享</text>
+      <text class="privacy-text">
+        4.1 我们不会向第三方出售或共享用户个人信息，法律法规另有规定或用户明确同意的除外。
+      </text>
+      <text class="privacy-text">
+        4.2 在法律法规要求或行政/司法机关依法要求时，我们可能会依法提供相关信息。
+      </text>
+
+      <text class="privacy-section-title">五、用户权利</text>
+      <text class="privacy-text">
+        5.1 用户有权查询、更正其个人信息，如有疑问可联系本平台管理员。
+      </text>
+      <text class="privacy-text">
+        5.2 用户停止使用本平台服务后，我们将在合理期限内删除或匿名化处理相关数据。
+      </text>
+    </view>
+  </view>
+
+  <button class="back-btn" bindtap="goBack">返回登录</button>
+</view>

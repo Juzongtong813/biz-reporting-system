@@ -17,6 +17,7 @@ App({
     // 使用裸 wx.request，不触发 request.js 的 401 自动 redirect
     wx.request({
       url: `${BASE_URL}/me`,
+      timeout: 8000,
       header: { Authorization: `Bearer ${token}` },
       success: (res) => {
         if (res.statusCode === 200) {

@@ -23,3 +23,20 @@ pnpm-debug.log*
 # Build cache
 .turbo/
 *.tsbuildinfo
+
+# Development database
+*.sqlite
+*.sqlite3
+
+# Uploads
+uploads/
+
+# AI editor config (local)
+.workbuddy/
+.codebuddy/
+.rules/
+codebuddy-plugin/
+.mcp.json
+
+# Generated docs
+CODEBUDDY.md

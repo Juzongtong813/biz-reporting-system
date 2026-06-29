@@ -8,6 +8,7 @@ function request(options) {
     const token = wx.getStorageSync('token');
     wx.request({
       url: `${BASE_URL}${options.url}`,
+      timeout: 15000,
       method: options.method || 'GET',
       data: options.data,
       header: {

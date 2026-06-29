@@ -15,6 +15,7 @@ import {
   MenuUnfoldOutlined,
   UserOutlined,
   LogoutOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { clearToken } from '@/utils/auth';
@@ -28,6 +29,7 @@ const menuItems: MenuItem[] = [
   { key: '/admin/contracts', label: '合同管理', icon: <FileTextOutlined />, path: '/admin/contracts' },
   { key: '/admin/packages', label: '报表包管理', icon: <SnippetsOutlined />, path: '/admin/packages' },
   { key: '/admin/users', label: '用户管理', icon: <TeamOutlined />, path: '/admin/users' },
+  { key: '/admin/ws6-tasks', label: '任务中心', icon: <ExperimentOutlined />, path: '/admin/ws6-tasks' },
 ];
 
 interface AdminLayoutProps {

@@ -1,160 +1,223 @@
+/* ========================================
+   登录页 — 企业登录入口
+   色系: #1a5cff / #14b8a6
+   底色: #f0f2f5
+   ======================================== */
+
 .login-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 60rpx 40rpx 0;
+  justify-content: center;
   min-height: 100vh;
-  background: #f8f9fb;
+  padding: 0 44rpx;
+  background: #edf0f5;
+  position: relative;
+  overflow: hidden;
 }
 
-.logo-section {
+/* ---------- 极淡冷色层次 ---------- */
+.login-bg-layer {
+  position: absolute;
+  top: -120rpx;
+  right: -80rpx;
+  width: 400rpx;
+  height: 400rpx;
+  border-radius: 50%;
+  background: rgba(26, 92, 255, 0.025);
+  pointer-events: none;
+}
+
+/* ---------- 标题区域 ---------- */
+.login-header {
   text-align: center;
-  margin-bottom: 60rpx;
+  margin-bottom: 40rpx;
+}
+
+.logo-label {
+  font-size: 22rpx;
+  color: #9aa3b5;
+  display: block;
+  letter-spacing: 4rpx;
+  margin-bottom: 8rpx;
 }
 
 .logo-title {
-  font-size: 44rpx;
-  font-weight: bold;
-  color: #1677ff;
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #1a1a2e;
   display: block;
-  letter-spacing: 2rpx;
+  letter-spacing: 1rpx;
+  margin-bottom: 10rpx;
 }
 
-.logo-subtitle {
-  font-size: 26rpx;
-  color: #999;
-  margin-top: 12rpx;
+.logo-desc {
+  font-size: 24rpx;
+  color: #9aa3b5;
   display: block;
+  line-height: 1.5;
 }
 
-.login-section, .register-form {
+/* ---------- 登录面板 ---------- */
+.login-panel {
   width: 100%;
-  background: #fff;
-  border-radius: 20rpx;
-  padding: 40rpx 36rpx;
-  box-shadow: 0 2rpx 16rpx rgba(0,0,0,0.06);
 }
 
+.panel-inner {
+  background: #ffffff;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 14rpx;
+  padding: 32rpx 28rpx;
+}
+
+/* ---------- 按钮 ---------- */
 .login-btn {
   width: 100%;
   height: 88rpx;
   line-height: 88rpx;
-  border-radius: 16rpx;
-  font-size: 30rpx;
+  border-radius: 12rpx;
+  font-size: 28rpx;
   font-weight: 500;
-  margin-top: 32rpx;
+  margin-top: 24rpx;
   border: none;
+  background: #1a5cff;
+  color: #ffffff;
+  text-align: center;
+  padding: 0;
 }
 
-/* 按钮禁用态 — 审核员需要一眼看清 */
 .login-btn[disabled] {
-  opacity: 0.45;
-  background: #1677ff !important;
-  color: #fff !important;
+  opacity: 0.35;
+  background: #1a5cff !important;
+  color: #ffffff !important;
 }
 
-/* 注册表单 */
+.login-btn:not([disabled]):active {
+  background: #154ed6;
+}
+
+/* ---------- 按钮下方辅助说明 ---------- */
+.login-helper {
+  display: block;
+  text-align: center;
+  font-size: 22rpx;
+  color: #c0c4cc;
+  margin-top: 16rpx;
+}
+
+/* ---------- 注册表单 ---------- */
 .form-item {
-  margin-bottom: 28rpx;
+  margin-bottom: 24rpx;
 }
 
 .form-label {
-  font-size: 26rpx;
-  color: #555;
+  font-size: 24rpx;
+  color: #5b6778;
   display: block;
-  margin-bottom: 10rpx;
+  margin-bottom: 8rpx;
   font-weight: 500;
 }
 
 .form-input {
   width: 100%;
-  height: 84rpx;
-  background: #f7f8fa;
-  border: 2rpx solid #e8e8e8;
-  border-radius: 12rpx;
-  padding: 0 20rpx;
-  font-size: 28rpx;
+  height: 80rpx;
+  background: #f4f5f8;
+  border: 1rpx solid #e4e7ed;
+  border-radius: 10rpx;
+  padding: 0 18rpx;
+  font-size: 26rpx;
   box-sizing: border-box;
-  line-height: 84rpx;
+  line-height: 80rpx;
+  color: #1a1a2e;
 }
 
 .form-input:focus {
-  border-color: #1677ff;
+  border-color: #1a5cff;
 }
 
 .picker-value {
-  color: #333;
-  line-height: 84rpx;
+  color: #1a1a2e;
+  line-height: 80rpx;
 }
 
 .back-link {
-  color: #1677ff;
-  font-size: 26rpx;
+  color: #1a5cff;
+  font-size: 24rpx;
   text-align: center;
   display: block;
-  margin-top: 24rpx;
+  margin-top: 20rpx;
 }
 
+.back-link:active {
+  opacity: 0.6;
+}
+
+/* ---------- 错误消息 ---------- */
 .error-msg {
-  color: #ff4d4f;
-  font-size: 26rpx;
-  margin-top: 20rpx;
-  background: #fff2f0;
+  color: #ef4444;
+  font-size: 24rpx;
+  margin-top: 16rpx;
+  background: #fef2f2;
+  border: 1rpx solid #fecaca;
   border-radius: 8rpx;
-  padding: 12rpx 16rpx;
-  width: 100%;
+  padding: 10rpx 16rpx;
+  width: calc(100% - 88rpx);
   text-align: center;
   box-sizing: border-box;
 }
 
-/* 隐私协议勾选 */
+/* ---------- 隐私协议模块 ---------- */
 .privacy-row {
   display: flex;
   align-items: center;
-  margin: 16rpx 0 0;
-  padding: 12rpx;
-  border-radius: 12rpx;
-  background: #fafbfc;
-  transition: background 0.2s;
+  padding: 14rpx 16rpx;
+  background: #f4f5f8;
+  border-radius: 10rpx;
+  border: 1rpx solid #e4e7ed;
 }
 
-/* 自定义勾选框 */
 .custom-checkbox {
-  width: 40rpx;
-  height: 40rpx;
-  border: 3rpx solid #d0d0d0;
-  border-radius: 8rpx;
+  width: 36rpx;
+  height: 36rpx;
+  border: 2rpx solid #c8ccd6;
+  border-radius: 6rpx;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   margin-right: 14rpx;
   box-sizing: border-box;
-  background: #fff;
-  transition: all 0.2s;
+  background: #ffffff;
+  transition: all 0.15s;
 }
 
 .custom-checkbox.checked {
-  background: #1677ff;
-  border-color: #1677ff;
+  background: #1a5cff;
+  border-color: #1a5cff;
 }
 
 .check-mark {
-  color: #fff;
-  font-size: 24rpx;
+  color: #ffffff;
+  font-size: 20rpx;
   font-weight: bold;
   line-height: 1;
 }
 
+.privacy-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2rpx;
+}
+
 .privacy-text {
-  font-size: 24rpx;
-  color: #666;
+  font-size: 22rpx;
+  color: #5b6778;
   line-height: 1.5;
 }
 
 .privacy-link {
-  color: #1677ff;
+  color: #1a5cff;
   font-weight: 500;
+  font-size: 22rpx;
 }
-
-.version-tag { text-align: center; font-size: 20rpx; color: #ccc; padding: 20rpx 0; display: block; }

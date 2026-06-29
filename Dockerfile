@@ -23,6 +23,15 @@ COPY packages/shared-types ./packages/shared-types
 COPY packages/shared-constants ./packages/shared-constants
 COPY apps/api ./apps/api
 
+# 🔥 强制清理本地编译垃圾，确保容器内从干净源码重编译
+RUN find packages/ -type f \( \
+      -name '*.tsbuildinfo' -o \
+      -name '*.js' -o \
+      -name '*.d.ts' -o \
+      -name '*.js.map' -o \
+      -name '*.d.ts.map' \
+    \) -delete && echo "CLEANUP: removed local build artifacts"
+
 RUN pnpm --filter @biz-reporting/shared-types build
 RUN pnpm --filter @biz-reporting/shared-constants build
 RUN pnpm --filter @biz-reporting/api build
