@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Unique, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Unique } from 'typeorm';
 import { PackageStatus } from '@biz-reporting/shared-types';
 
 /**
@@ -9,6 +9,7 @@ import { PackageStatus } from '@biz-reporting/shared-types';
  * 状态流转: draft ↔ submitted（见 PACKAGE_STATUS_TRANSITIONS）
  */
 @Entity('annual_report_packages')
+@Unique('uk_packages_city_year', ['cityId', 'reportYear'])
 export class AnnualPackageEntity {
   @PrimaryGeneratedColumn()
   id: number;

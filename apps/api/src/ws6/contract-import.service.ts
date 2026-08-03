@@ -1,70 +1,105 @@
-/**
- * 合同导入解析器
- *
- * 解析上传的 Excel 文件，提取合同信息并写入 contracts / contract_city_allocations 表。
- *
- * 列映射（按表头名称匹配，不依赖列位置）：
- *   甲方合同编号 → contractCode
- *   合同名称     → contractName
- *   合同金额（含税，万元）→ contractAmount（万元→元）
- *   税率         → rate
- *   签订日期     → signDate
- *   合同到期时间 → expireDate
- *   地市         → 城市（去括号匹配 + 多城市拆分，金额均分）
- */
 import * as XLSX from 'xlsx';
-import { Injectable, Logger } from '@nestjs/common';
+import { readWorkbookSafe } from '../common/files/workbook-policy';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
-import { ContractEntity } from '../contracts/contract.entity';
+import { DataSource, In, Repository } from 'typeorm';
+import { createHash } from 'crypto';
 import { AllocationEntity } from '../contracts/allocation.entity';
+import { ContractCityBusinessMetricEntity } from '../contracts/contract-city-business-metric.entity';
+import { ContractEntity } from '../contracts/contract.entity';
 import { CityEntity } from '../cities/city.entity';
+import { SoftDeleteFlag } from '@biz-reporting/shared-types';
+import { AtomicityError } from './reporting-import.service';
 
-/** 单行解析结果（含城市拆分后信息） */
-export interface ParsedContractRow {
+type CellValue = string | number | boolean | Date | null | undefined;
+
+interface ImportErrorRow {
+  row: number;
+  message: string;
+}
+
+interface ParsedAllocationRow {
+  excelRow: number;
+  cityName: string;
   contractCode: string;
   contractName: string;
-  contractAmount: number;    // 元 (已从万元转换)
-  rate: number | null;
+  contractAmount: number;
+  rate: number;
+  accumulatedOrderAmount: number;
+  accumulatedInvoiceAmount: number;
+  estimatedOrderAmount2026: number;
+  estimatedIncomeAmount2026: number;
   signDate: Date | null;
   expireDate: Date | null;
-  cityNames: string[];       // 去括号+拆分后的城市名列表
-  excelRow: number;          // Excel 行号（用于报错）
+  syntheticCode: boolean;
+}
+
+interface ParsedContractImport {
+  rows: ParsedAllocationRow[];
+  errors: ImportErrorRow[];
+  totalRows: number;
+}
+
+interface ContractPreviewRow {
+  contractCode: string;
+  contractName: string;
+  amount: number;
+  rate: number;
+  cityCount: number;
+  status: 'previewed';
+}
+
+interface AllocationPreviewRow {
+  contractCode: string;
+  cityName: string;
+  cityContractAmount: number;
+  rate: number;
+  accumulatedOrderAmount: number;
+  accumulatedInvoiceAmount: number;
+  estimatedOrderAmount2026: number;
+  estimatedIncomeAmount2026: number;
 }
 
 export interface ContractImportResult {
-  contracts: Array<{ contractCode: string; contractName: string; amount: number; cityCount: number; status: string }>;
-  errors: Array<{ row: number; message: string }>;
+  contracts: ContractPreviewRow[];
+  allocations: AllocationPreviewRow[];
+  errors: ImportErrorRow[];
   totalRows: number;
   successCount: number;
   failCount: number;
+  diffSummary?: {
+    overwriteCount: number;
+    insertCount: number;
+    contractOverwriteCount: number;
+    allocationOverwriteCount: number;
+  };
 }
 
-/**
- * 表头名 → 逻辑字段映射（支持别名）
- * 当前支持的两种模板：
- *   1) 原模板（铁塔合同台账）：甲方合同编号 / 合同名称 / 合同金额（含税，万元）...
- *   2) 合同明细汇总：合同编码 / 合同名称 / 合同金额(万元) / 到期时间 ...
- */
-const HEADER_MAP: Record<string, string> = {
-  '甲方\n合同编号': 'contractCode',
-  '甲方合同编号': 'contractCode',
-  '合同编码': 'contractCode',
-  '合同名称': 'contractName',
-  '合同金额\n（含税，万元）': 'contractAmount',
-  '合同金额（含税，万元）': 'contractAmount',
-  '合同金额(万元)': 'contractAmount',
-  '税率': 'rate',
-  '签订日期': 'signDate',
-  '合同到期时间': 'expireDate',
-  '到期时间': 'expireDate',
-  '地市': 'city',
-};
+interface ContractAggregate {
+  contractCode: string;
+  contractName: string;
+  contractAmount: number;
+  rateValues: number[];
+  accumulatedOrderAmount: number;
+  accumulatedInvoiceAmount: number;
+  signDate: Date | null;
+  expireDate: Date | null;
+  cityNames: Set<string>;
+}
+
+interface AllocationAggregate {
+  contractCode: string;
+  cityName: string;
+  cityContractAmount: number;
+  rateValues: number[];
+  accumulatedOrderAmount: number;
+  accumulatedInvoiceAmount: number;
+  estimatedOrderAmount2026: number;
+  estimatedIncomeAmount2026: number;
+}
 
 @Injectable()
 export class ContractImportService {
-  private readonly logger = new Logger(ContractImportService.name);
-
   constructor(
     @InjectRepository(ContractEntity)
     private readonly contractRepo: Repository<ContractEntity>,
@@ -72,316 +107,581 @@ export class ContractImportService {
     private readonly allocationRepo: Repository<AllocationEntity>,
     @InjectRepository(CityEntity)
     private readonly cityRepo: Repository<CityEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
-  /** 解析并返回预览结果（不写入 DB） */
-  async preview(fileBuffer: Buffer): Promise<ContractImportResult> {
-    const parsed = this.parseBuffer(fileBuffer);
-    return this.toResult(parsed);
-  }
-
-  /** 解析并执行导入（预览确认后触发） */
-  async execute(fileBuffer: Buffer, operatorUserId: number): Promise<ContractImportResult> {
-    const parsed = this.parseBuffer(fileBuffer);
-
-    // 收集所有城市名 → 批量查 cities 表
-    const allCityNames = [...new Set(parsed.rows.flatMap((r) => r.cityNames))];
-    const cities = await this.cityRepo.find({ where: { name: In(allCityNames) } });
-    const cityMap = new Map(cities.map((c) => [c.name, c]));
-
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const row of parsed.rows) {
-      try {
-        // 检查合同是否已存在
-        const existing = await this.contractRepo.findOne({
-          where: { contractCode: row.contractCode },
-        });
-        if (existing) {
-          parsed.errors.push({ row: row.excelRow, message: `合同 ${row.contractCode} 已存在，跳过` });
-          failCount++;
-          continue;
-        }
-
-        // 1. 创建合同
-        const contract = this.contractRepo.create({
-          contractCode: row.contractCode,
-          contractName: row.contractName,
-          contractAmount: row.contractAmount,
-          rate: row.rate ?? 0,
-          signDate: row.signDate,
-          expireDate: row.expireDate,
-          createdBy: operatorUserId,
-          updatedBy: operatorUserId,
-        });
-        const saved = await this.contractRepo.save(contract);
-
-        // 2. 创建地市分配
-        const validCities = row.cityNames
-          .map((name) => cityMap.get(name))
-          .filter((c): c is CityEntity => c !== undefined);
-
-        if (validCities.length === 0) {
-          parsed.errors.push({ row: row.excelRow, message: `合同 ${row.contractCode} 无匹配城市，已创建合同但未分配` });
-          failCount++;
-          continue;
-        }
-
-        const perCityAmount = Math.round((row.contractAmount / validCities.length) * 100) / 100;
-        const allocations = validCities.map((city) =>
-          this.allocationRepo.create({
-            contractId: saved.id,
-            cityId: city.id,
-            cityContractAmount: perCityAmount,
-            rate: row.rate ?? 0,
-          }),
-        );
-        await this.allocationRepo.save(allocations);
-        successCount++;
-      } catch (err) {
-        parsed.errors.push({ row: row.excelRow, message: `合同 ${row.contractCode} 写入失败: ${err instanceof Error ? err.message : String(err)}` });
-        failCount++;
-      }
-    }
-
-    return {
-      contracts: parsed.rows.map((r) => ({
-        contractCode: r.contractCode,
-        contractName: r.contractName,
-        amount: r.contractAmount,
-        cityCount: r.cityNames.length,
-        status: 'completed',
-      })),
-      errors: parsed.errors,
-      totalRows: parsed.totalRows,
-      successCount,
-      failCount,
-    };
-  }
-
-  /** 从缓存的解析结果执行写入（跳过文件解析，直接落库） */
-  async executeFromCache(
-    contracts: Array<{ contractCode: string; contractName?: string; amount?: number; cityCount?: number }>,
-    operatorUserId: number,
-  ): Promise<ContractImportResult> {
-    const result: ContractImportResult = {
-      contracts: [],
-      errors: [],
-      totalRows: contracts.length,
-      successCount: 0,
-      failCount: 0,
-    };
-
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const c of contracts) {
-      try {
-        const existing = await this.contractRepo.findOne({
-          where: { contractCode: c.contractCode },
-        });
-        if (existing) {
-          result.errors.push({ row: 0, message: `合同 ${c.contractCode} 已存在，跳过` });
-          failCount++;
-          continue;
-        }
-
-        const contract = this.contractRepo.create({
-          contractCode: c.contractCode,
-          contractName: c.contractName || c.contractCode,
-          contractAmount: c.amount ?? 0,
-          rate: 0,
-          createdBy: operatorUserId,
-          updatedBy: operatorUserId,
-        });
-        await this.contractRepo.save(contract);
-        successCount++;
-      } catch (err) {
-        result.errors.push({ row: 0, message: `合同 ${c.contractCode} 写入失败: ${err instanceof Error ? err.message : String(err)}` });
-        failCount++;
-      }
-    }
-
-    result.contracts = contracts.map((c) => ({
-      contractCode: c.contractCode,
-      contractName: c.contractName || c.contractCode,
-      amount: c.amount ?? 0,
-      cityCount: c.cityCount ?? 0,
-      status: 'completed',
-    }));
-    result.successCount = successCount;
-    result.failCount = failCount;
+  async preview(fileBuffer: Buffer, fileName?: string | null): Promise<ContractImportResult> {
+    const result = this.toResult(this.parseWorkbook(fileBuffer, fileName));
+    result.diffSummary = await this.calculateDiffSummary(result);
     return result;
   }
 
-  // ==================== 内部 ====================
+  async execute(
+    fileBuffer: Buffer,
+    operatorUserId: number,
+    fileName?: string | null,
+  ): Promise<ContractImportResult> {
+    const parsed = this.parseWorkbook(fileBuffer, fileName);
+    const normalized = this.normalizeParsedRows(parsed.rows);
 
-  private parseBuffer(fileBuffer: Buffer): {
-    rows: ParsedContractRow[];
-    errors: Array<{ row: number; message: string }>;
-    totalRows: number;
-  } {
-    const rows: ParsedContractRow[] = [];
-    const errors: Array<{ row: number; message: string }> = [];
+    await this.dataSource.transaction(async (manager) => {
+      const contractRepo = manager.getRepository(ContractEntity);
+      const allocationRepo = manager.getRepository(AllocationEntity);
+      const metricRepo = manager.getRepository(ContractCityBusinessMetricEntity);
+      const cityRepo = manager.getRepository(CityEntity);
 
-    let workbook: XLSX.WorkBook;
-    try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-    } catch (err) {
-      errors.push({ row: 0, message: `无法读取文件: ${err instanceof Error ? err.message : String(err)}` });
-      return { rows, errors, totalRows: 0 };
-    }
+      const cityNames = [...new Set(normalized.allocations.map((row) => row.cityName))];
+      const cities = cityNames.length > 0
+        ? await cityRepo.find({ where: { name: In(cityNames) } })
+        : [];
+      const cityMap = new Map(cities.map((city) => [city.name, city]));
 
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    // 用 header:1 读原始行数组，跳过合并标题行
-    const rawRows: (unknown[] | undefined)[] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+      const contractCodes = normalized.contracts.map((row) => row.contractCode);
+      const existingContracts = contractCodes.length > 0
+        ? await contractRepo.find({ where: { contractCode: In(contractCodes) } })
+        : [];
+      const contractMap = new Map(existingContracts.map((contract) => [contract.contractCode, contract]));
 
-    // 找到真正的表头行（必须包含 "合同编码" 或 "甲方合同编号" 等关键词）
-    let headerRowIndex = -1;
-    const headerKeywords = ['合同编码', '甲方合同编号', '合同名称'];
-    for (let i = 0; i < rawRows.length; i++) {
-      const row = rawRows[i];
-      if (!row) continue;
-      const rowStr = row.map((v) => String(v ?? '')).join('');
-      if (headerKeywords.some((kw) => rowStr.includes(kw))) {
-        headerRowIndex = i;
-        break;
-      }
-    }
+      for (const row of normalized.contracts) {
+        const existing = contractMap.get(row.contractCode);
+        const contractData = {
+          contractCode: row.contractCode,
+          contractName: row.contractName,
+          contractAmount: row.contractAmount,
+          rate: row.rate,
+          accumulatedOrderAmount: row.accumulatedOrderAmount,
+          accumulatedInvoiceAmount: row.accumulatedInvoiceAmount,
+          signDate: row.signDate,
+          expireDate: row.expireDate,
+          isDeleted: SoftDeleteFlag.NOT_DELETED,
+          updatedBy: operatorUserId,
+        };
 
-    if (headerRowIndex === -1) {
-      errors.push({ row: 0, message: '无法识别表头行，请确认文件包含"合同编码"或"甲方合同编号"列' });
-      return { rows, errors, totalRows: 0 };
-    }
-
-    // 构建列名映射：列索引 → 逻辑字段名
-    const headerRow = rawRows[headerRowIndex] || [];
-    const colMap = new Map<number, string>();
-    for (let c = 0; c < headerRow.length; c++) {
-      const headerName = String(headerRow[c] ?? '').replace(/\n/g, '').trim();
-      if (!headerName) continue;
-      for (const [key, mapped] of Object.entries(HEADER_MAP)) {
-        if (key === headerName) {
-          colMap.set(c, mapped);
-          break;
+        if (existing) {
+          await contractRepo.update(existing.id, contractData);
+          contractMap.set(row.contractCode, { ...existing, ...contractData });
+        } else {
+          const created = contractRepo.create({
+            ...contractData,
+            createdBy: operatorUserId,
+          });
+          const saved = await contractRepo.save(created);
+          contractMap.set(row.contractCode, saved);
         }
       }
-    }
 
-    // 解析数据行
-    for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
-      const raw = rawRows[i];
-      if (!raw) continue;
-      const excelRow = i + 1; // Excel 行号（1-based）
+      const allContractIds = [...contractMap.values()].map((contract) => Number(contract.id));
+      const existingAllocations = allContractIds.length > 0
+        ? await allocationRepo.find({ where: { contractId: In(allContractIds) } })
+        : [];
+      const allocationMap = new Map(
+        existingAllocations.map((allocation) => [
+          this.allocationKey(Number(allocation.contractId), Number(allocation.cityId)),
+          allocation,
+        ]),
+      );
 
-      // 将原始数组 + colMap 转成 { fieldName: value } 对象
-      const obj: Record<string, unknown> = {};
-      for (const [colIdx, fieldName] of colMap) {
-        obj[fieldName] = raw[colIdx] ?? null;
-      }
-
-      try {
-        const contractCode = this.strVal(obj, 'contractCode');
-        if (!contractCode) {
-          errors.push({ row: excelRow, message: '甲方合同编号为空，跳过' });
+      for (const row of normalized.allocations) {
+        const contract = contractMap.get(row.contractCode);
+        const city = cityMap.get(row.cityName);
+        if (!contract) {
+          parsed.errors.push({ row: 0, message: `合同 ${row.contractCode} 未能写入，跳过分配` });
+          continue;
+        }
+        if (!city) {
+          parsed.errors.push({ row: 0, message: `城市 ${row.cityName} 不存在，合同 ${row.contractCode} 的分配已跳过` });
           continue;
         }
 
-        const contractName = this.strVal(obj, 'contractName') || contractCode;
-        const amountWan = this.numVal(obj, 'contractAmount');
-        const contractAmount = amountWan !== null ? Math.round(amountWan * 10000 * 100) / 100 : 0;
-        const rate = this.numVal(obj, 'rate');
-        const signDate = this.dateVal(obj, 'signDate');
-        const expireDate = this.dateVal(obj, 'expireDate');
-        const cityRaw = this.strVal(obj, 'city') || '';
+        const key = this.allocationKey(Number(contract.id), Number(city.id));
+        const existing = allocationMap.get(key);
+        const allocationData = {
+          contractId: Number(contract.id),
+          cityId: Number(city.id),
+          cityContractAmount: row.cityContractAmount,
+          rate: row.rate,
+          accumulatedOrderAmount: row.accumulatedOrderAmount,
+          accumulatedInvoiceAmount: row.accumulatedInvoiceAmount,
+        };
 
-        // 地市解析
-        const cityNames = this.parseCities(cityRaw);
+        let allocation: AllocationEntity;
+        if (existing) {
+          await allocationRepo.update(existing.id, allocationData);
+          allocation = { ...existing, ...allocationData };
+          allocationMap.set(key, allocation);
+        } else {
+          allocation = await allocationRepo.save(allocationRepo.create(allocationData));
+          allocationMap.set(key, allocation);
+        }
 
-        rows.push({
-          contractCode,
-          contractName,
-          contractAmount,
-          rate,
-          signDate,
-          expireDate,
-          cityNames,
-          excelRow,
+        const metricData = {
+          contractCityAllocationId: Number(allocation.id),
+          estimatedOrderAmount2026: row.estimatedOrderAmount2026,
+          estimatedIncomeAmount2026: row.estimatedIncomeAmount2026,
+          sourceCityName: row.cityName,
+          remark: null,
+        };
+        const existingMetric = await metricRepo.findOne({
+          where: { contractCityAllocationId: Number(allocation.id) },
         });
-      } catch (err) {
-        errors.push({ row: excelRow, message: `解析失败: ${err instanceof Error ? err.message : String(err)}` });
+        if (existingMetric) {
+          await metricRepo.update(existingMetric.id, metricData);
+        } else {
+          await metricRepo.save(metricRepo.create(metricData));
+        }
+      }
+
+      // D-03（WS6-D03-2）：事务内出现任何行级错误（parsed.errors 非空）必须抛错整体回滚，
+      // 禁止部分提交后 successCount 虚高（跳过行计入成功）。
+      if (parsed.errors.length > 0) {
+        throw new AtomicityError([...parsed.errors]);
+      }
+    });
+
+    const result = this.toResult(parsed);
+    result.successCount = result.allocations.length;
+    result.failCount = result.errors.length;
+    return result;
+  }
+
+  private parseWorkbook(fileBuffer: Buffer, fileName?: string | null): ParsedContractImport {
+    const errors: ImportErrorRow[] = [];
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = readWorkbookSafe(fileBuffer);
+    } catch (error) {
+      return {
+        rows: [],
+        errors: [{ row: 0, message: `无法读取 Excel 文件：${this.errorMessage(error)}` }],
+        totalRows: 0,
+      };
+    }
+
+    const sourceCity = this.inferCityName(fileName ?? '');
+    const sheetName = this.findSheetName(workbook, ['合同转化', '合同信息', '合同明细']) ?? workbook.SheetNames[0];
+    const sheetRows = this.getRows(workbook.Sheets[sheetName]);
+    const parsedByHeader = this.parseByHeader(sheetRows, sourceCity);
+    if (parsedByHeader.rows.length > 0) {
+      return parsedByHeader;
+    }
+
+    errors.push(...parsedByHeader.errors);
+    const fixed = this.parseFixedConversionSheet(sheetRows, sourceCity);
+    return {
+      rows: fixed.rows,
+      errors: [...errors, ...fixed.errors],
+      totalRows: sheetRows.length,
+    };
+  }
+
+  private parseByHeader(rows: CellValue[][], fallbackCityName: string | null): ParsedContractImport {
+    const headerIndex = rows.findIndex((row) => {
+      const text = row.map((cell) => this.cellText(cell)).join('|');
+      return text.includes('合同') && (text.includes('编码') || text.includes('编号')) && text.includes('名称');
+    });
+
+    if (headerIndex < 0) {
+      return { rows: [], errors: [], totalRows: rows.length };
+    }
+
+    const header = rows[headerIndex].map((cell) => this.normalizeHeader(this.cellText(cell)));
+    const index = {
+      city: this.findHeaderIndex(header, ['地市', '城市']),
+      code: this.findHeaderIndex(header, ['合同编码', '甲方合同编码', '甲方合同编号', '合同编号']),
+      name: this.findHeaderIndex(header, ['合同名称']),
+      amount: this.findHeaderIndex(header, ['合同金额', '合同金额万元', '合同金额含税万元']),
+      rate: this.findHeaderIndex(header, ['管理费率', '管理费', '费率']),
+      signDate: this.findHeaderIndex(header, ['签订日期', '签约日期']),
+      expireDate: this.findHeaderIndex(header, ['到期时间', '到期日期']),
+      accumulatedOrder: this.findHeaderIndex(header, ['累计订单金额', '累计订单']),
+      accumulatedInvoice: this.findHeaderIndex(header, ['累计开票金额', '累计发票金额', '累计开票']),
+      estimatedOrder: this.findHeaderIndex(header, ['26年预估订单', '2026年预估订单']),
+      estimatedIncome: this.findHeaderIndex(header, ['26年预计收入', '2026年预计收入']),
+    };
+
+    if (index.name < 0 || (index.code < 0 && index.city < 0)) {
+      return {
+        rows: [],
+        errors: [{ row: headerIndex + 1, message: '合同表头缺少合同名称或合同编码/地市字段' }],
+        totalRows: rows.length,
+      };
+    }
+
+    const amountIsWan = index.amount >= 0 && header[index.amount].includes('万元');
+    const output: ParsedAllocationRow[] = [];
+    const errors: ImportErrorRow[] = [];
+
+    for (let i = headerIndex + 1; i < rows.length; i += 1) {
+      const row = rows[i];
+      const excelRow = i + 1;
+      const contractName = this.cellText(row[index.name]);
+      if (!contractName) continue;
+
+      const cityName = this.normalizeCityName(this.cellText(row[index.city])) ?? fallbackCityName;
+      if (!cityName) {
+        errors.push({ row: excelRow, message: `合同 ${contractName} 未识别到地市` });
+        continue;
+      }
+
+      const rawCode = this.cellText(row[index.code]);
+      const syntheticCode = !this.isMeaningfulCode(rawCode);
+      const contractCode = syntheticCode ? this.syntheticCode(cityName, contractName) : this.normalizeContractCode(rawCode);
+      const amount = this.normalizeMoneyAmount(row[index.amount], amountIsWan);
+      const rate = this.parseRate(row[index.rate]);
+
+      output.push({
+        excelRow,
+        cityName,
+        contractCode,
+        contractName,
+        contractAmount: this.round2(amount),
+        rate,
+        accumulatedOrderAmount: this.round2(this.toNumber(row[index.accumulatedOrder])),
+        accumulatedInvoiceAmount: this.round2(this.toNumber(row[index.accumulatedInvoice])),
+        estimatedOrderAmount2026: this.round2(this.toNumber(row[index.estimatedOrder])),
+        estimatedIncomeAmount2026: this.round2(this.toNumber(row[index.estimatedIncome])),
+        signDate: this.toDate(row[index.signDate]),
+        expireDate: this.toDate(row[index.expireDate]),
+        syntheticCode,
+      });
+    }
+
+    return { rows: output, errors, totalRows: rows.length };
+  }
+
+  private parseFixedConversionSheet(rows: CellValue[][], fallbackCityName: string | null): ParsedContractImport {
+    const output: ParsedAllocationRow[] = [];
+    const errors: ImportErrorRow[] = [];
+
+    for (let i = 2; i < rows.length; i += 1) {
+      const row = rows[i];
+      const excelRow = i + 1;
+      const contractName = this.cellText(row[1]);
+      if (!contractName || contractName.includes('合同名称')) continue;
+
+      const cityName = this.normalizeCityName(this.cellText(row[0])) ?? fallbackCityName;
+      if (!cityName) {
+        errors.push({ row: excelRow, message: `合同 ${contractName} 未识别到地市` });
+        continue;
+      }
+
+      const rawCode = this.cellText(row[2]);
+      const syntheticCode = !this.isMeaningfulCode(rawCode);
+      const contractCode = syntheticCode ? this.syntheticCode(cityName, contractName) : this.normalizeContractCode(rawCode);
+
+      output.push({
+        excelRow,
+        cityName,
+        contractCode,
+        contractName,
+        contractAmount: this.round2(this.normalizeMoneyAmount(row[3], true)),
+        rate: this.parseRate(row[7] ?? row[4]),
+        accumulatedOrderAmount: this.round2(this.toNumber(row[8])),
+        accumulatedInvoiceAmount: this.round2(this.toNumber(row[9])),
+        estimatedOrderAmount2026: this.round2(this.toNumber(row[10])),
+        estimatedIncomeAmount2026: this.round2(this.toNumber(row[11])),
+        signDate: this.toDate(row[5]),
+        expireDate: this.toDate(row[6]),
+        syntheticCode,
+      });
+    }
+
+    return { rows: output, errors, totalRows: rows.length };
+  }
+
+  private normalizeParsedRows(rows: ParsedAllocationRow[]): {
+    contracts: Array<{
+      contractCode: string;
+      contractName: string;
+      contractAmount: number;
+      rate: number;
+      accumulatedOrderAmount: number;
+      accumulatedInvoiceAmount: number;
+      signDate: Date | null;
+      expireDate: Date | null;
+    }>;
+    allocations: AllocationPreviewRow[];
+  } {
+    const contracts = new Map<string, ContractAggregate>();
+    const allocations = new Map<string, AllocationAggregate>();
+
+    for (const row of rows) {
+      const existingContract = contracts.get(row.contractCode);
+      if (existingContract) {
+        existingContract.contractAmount = Math.max(existingContract.contractAmount, row.contractAmount);
+        existingContract.accumulatedOrderAmount += row.accumulatedOrderAmount;
+        existingContract.accumulatedInvoiceAmount += row.accumulatedInvoiceAmount;
+        existingContract.cityNames.add(row.cityName);
+        existingContract.rateValues.push(row.rate);
+        existingContract.signDate = existingContract.signDate ?? row.signDate;
+        existingContract.expireDate = existingContract.expireDate ?? row.expireDate;
+      } else {
+        contracts.set(row.contractCode, {
+          contractCode: row.contractCode,
+          contractName: row.contractName,
+          contractAmount: row.contractAmount,
+          rateValues: [row.rate],
+          accumulatedOrderAmount: row.accumulatedOrderAmount,
+          accumulatedInvoiceAmount: row.accumulatedInvoiceAmount,
+          signDate: row.signDate,
+          expireDate: row.expireDate,
+          cityNames: new Set([row.cityName]),
+        });
+      }
+
+      const allocationKey = `${row.contractCode}::${row.cityName}`;
+      const existingAllocation = allocations.get(allocationKey);
+      if (existingAllocation) {
+        existingAllocation.cityContractAmount += row.contractAmount;
+        existingAllocation.accumulatedOrderAmount += row.accumulatedOrderAmount;
+        existingAllocation.accumulatedInvoiceAmount += row.accumulatedInvoiceAmount;
+        existingAllocation.estimatedOrderAmount2026 += row.estimatedOrderAmount2026;
+        existingAllocation.estimatedIncomeAmount2026 += row.estimatedIncomeAmount2026;
+        existingAllocation.rateValues.push(row.rate);
+      } else {
+        allocations.set(allocationKey, {
+          contractCode: row.contractCode,
+          cityName: row.cityName,
+          cityContractAmount: row.contractAmount,
+          rateValues: [row.rate],
+          accumulatedOrderAmount: row.accumulatedOrderAmount,
+          accumulatedInvoiceAmount: row.accumulatedInvoiceAmount,
+          estimatedOrderAmount2026: row.estimatedOrderAmount2026,
+          estimatedIncomeAmount2026: row.estimatedIncomeAmount2026,
+        });
       }
     }
 
-    return { rows, errors, totalRows: rawRows.length };
+    return {
+      contracts: [...contracts.values()].map((row) => ({
+        contractCode: row.contractCode,
+        contractName: row.contractName,
+        contractAmount: this.round2(row.contractAmount),
+        rate: this.average(row.rateValues),
+        accumulatedOrderAmount: this.round2(row.accumulatedOrderAmount),
+        accumulatedInvoiceAmount: this.round2(row.accumulatedInvoiceAmount),
+        signDate: row.signDate,
+        expireDate: row.expireDate,
+      })),
+      allocations: [...allocations.values()].map((row) => ({
+        contractCode: row.contractCode,
+        cityName: row.cityName,
+        cityContractAmount: this.round2(row.cityContractAmount),
+        rate: this.average(row.rateValues),
+        accumulatedOrderAmount: this.round2(row.accumulatedOrderAmount),
+        accumulatedInvoiceAmount: this.round2(row.accumulatedInvoiceAmount),
+        estimatedOrderAmount2026: this.round2(row.estimatedOrderAmount2026),
+        estimatedIncomeAmount2026: this.round2(row.estimatedIncomeAmount2026),
+      })),
+    };
   }
 
-  /** 转为外部 ContractImportResult */
-  private toResult(parsed: {
-    rows: ParsedContractRow[];
-    errors: Array<{ row: number; message: string }>;
-    totalRows: number;
-  }): ContractImportResult {
+  private toResult(parsed: ParsedContractImport): ContractImportResult {
+    const normalized = this.normalizeParsedRows(parsed.rows);
+    const cityCountByContract = new Map<string, number>();
+    for (const row of normalized.allocations) {
+      cityCountByContract.set(row.contractCode, (cityCountByContract.get(row.contractCode) ?? 0) + 1);
+    }
+
     return {
-      contracts: parsed.rows.map((r) => ({
-        contractCode: r.contractCode,
-        contractName: r.contractName,
-        amount: r.contractAmount,
-        cityCount: r.cityNames.length,
+      contracts: normalized.contracts.map((row) => ({
+        contractCode: row.contractCode,
+        contractName: row.contractName,
+        amount: row.contractAmount,
+        rate: row.rate,
+        cityCount: cityCountByContract.get(row.contractCode) ?? 0,
         status: 'previewed',
       })),
+      allocations: normalized.allocations,
       errors: parsed.errors,
       totalRows: parsed.totalRows,
-      successCount: parsed.rows.length,
+      successCount: normalized.allocations.length,
       failCount: parsed.errors.length,
     };
   }
 
-  /** 解析地市列：去括号 → 按分隔符拆分 */
-  private parseCities(raw: string): string[] {
-    const stripped = raw.replace(/[（(][^)）]*[)）]/g, '').trim();
-    return stripped.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean);
+  private async calculateDiffSummary(result: ContractImportResult): Promise<{
+    overwriteCount: number;
+    insertCount: number;
+    contractOverwriteCount: number;
+    allocationOverwriteCount: number;
+  }> {
+    const contractCodes = result.contracts.map((contract) => contract.contractCode);
+    const cityNames = [...new Set(result.allocations.map((allocation) => allocation.cityName))];
+    const [contracts, cities] = await Promise.all([
+      contractCodes.length > 0
+        ? this.contractRepo.find({ where: { contractCode: In(contractCodes) } })
+        : [],
+      cityNames.length > 0
+        ? this.cityRepo.find({ where: { name: In(cityNames) } })
+        : [],
+    ]);
+    const contractByCode = new Map(contracts.map((contract) => [contract.contractCode, contract]));
+    const cityByName = new Map(cities.map((city) => [city.name, city]));
+    const contractIds = contracts.map((contract) => Number(contract.id));
+    const allocations = contractIds.length > 0
+      ? await this.allocationRepo.find({ where: { contractId: In(contractIds) } })
+      : [];
+    const allocationKeys = new Set(
+      allocations.map((allocation) =>
+        this.allocationKey(Number(allocation.contractId), Number(allocation.cityId)),
+      ),
+    );
+    const contractOverwriteCount = contracts.length;
+    const allocationOverwriteCount = result.allocations.filter((allocation) => {
+      const contract = contractByCode.get(allocation.contractCode);
+      const city = cityByName.get(allocation.cityName);
+      return contract && city
+        ? allocationKeys.has(this.allocationKey(Number(contract.id), Number(city.id)))
+        : false;
+    }).length;
+    const overwriteCount = contractOverwriteCount + allocationOverwriteCount;
+    const totalCount = result.contracts.length + result.allocations.length;
+    return {
+      overwriteCount,
+      insertCount: Math.max(0, totalCount - overwriteCount),
+      contractOverwriteCount,
+      allocationOverwriteCount,
+    };
   }
 
-  // ---- 类型转换辅助 ----
-  private strVal(obj: Record<string, unknown>, key: string): string | null {
-    for (const [header, mapped] of Object.entries(HEADER_MAP)) {
-      if (mapped === key) {
-        const v = obj[header];
-        if (v !== null && v !== undefined) return String(v).trim();
-      }
+  private getRows(sheet: XLSX.WorkSheet | undefined): CellValue[][] {
+    if (!sheet) return [];
+    return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true }) as CellValue[][];
+  }
+
+  private findSheetName(workbook: XLSX.WorkBook, keywords: string[]): string | null {
+    return workbook.SheetNames.find((name) => keywords.some((keyword) => name.includes(keyword))) ?? null;
+  }
+
+  private findHeaderIndex(headers: string[], candidates: string[]): number {
+    return headers.findIndex((header) => candidates.some((candidate) => header.includes(this.normalizeHeader(candidate))));
+  }
+
+  private normalizeHeader(value: string): string {
+    return value.replace(/\s+/g, '').replace(/[()（）]/g, '').trim();
+  }
+
+  private cellText(value: CellValue): string {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return String(value).trim();
+  }
+
+  private isMeaningfulCode(code: string): boolean {
+    const value = code.trim();
+    return value !== '' && !['无', '暂无', '待定', '-', '—', 'null', 'NULL'].includes(value);
+  }
+
+  private normalizeCityName(value: string): string | null {
+    const raw = value.replace(/[（(].*?[）)]/g, '').replace(/市$/, '').trim();
+    if (!raw) return null;
+    const aliases: Record<string, string> = {
+      济南: '济南',
+      青岛: '青岛',
+      淄博: '淄博',
+      枣庄: '枣庄',
+      东营: '东营',
+      烟台: '烟台',
+      潍坊: '潍坊',
+      济宁: '济宁',
+      泰安: '泰安',
+      威海: '威海',
+      日照: '日照',
+      临沂: '临沂',
+      德州: '德州',
+      聊城: '聊城',
+      滨州: '滨州',
+      菏泽: '菏泽',
+    };
+    return aliases[raw] ?? null;
+  }
+
+  private inferCityName(fileName: string): string | null {
+    const names = ['济南', '青岛', '淄博', '枣庄', '东营', '烟台', '潍坊', '济宁', '泰安', '威海', '日照', '临沂', '德州', '聊城', '滨州', '菏泽'];
+    return names.find((city) => fileName.includes(city)) ?? null;
+  }
+
+  private syntheticCode(cityName: string, contractName: string): string {
+    const hash = createHash('sha1').update(`${cityName}|${contractName}`).digest('hex').slice(0, 10).toUpperCase();
+    return `NO-CODE-${cityName}-${hash}`;
+  }
+
+  private normalizeContractCode(value: string): string {
+    return value.replace(/\s*\/\s*/g, '/').replace(/\s+/g, '').trim();
+  }
+
+  private normalizeMoneyAmount(value: CellValue, headerIsWan: boolean): number {
+    const amount = this.toNumber(value);
+    if (!headerIsWan) return amount;
+    // Some historical sheets label the column as 万元 but contain yuan-level values.
+    return Math.abs(amount) >= 100000 ? amount : amount * 10000;
+  }
+  private toNumber(value: CellValue): number {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const text = String(value).replace(/[,\s￥¥元]/g, '');
+    const match = text.match(/-?\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : 0;
+  }
+
+  private parseRate(value: CellValue): number {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') {
+      return this.rateNumber(value);
     }
-    const v = obj[key];
-    if (v !== null && v !== undefined) return String(v).trim();
+
+    const text = String(value);
+    const matches = text.match(/-?\d+(?:\.\d+)?%?/g) ?? [];
+    const values = matches
+      .map((item) => {
+        const hasPercent = item.includes('%') || text.includes('%');
+        const n = Number(item.replace('%', ''));
+        if (!Number.isFinite(n)) return null;
+        return hasPercent ? n / 100 : this.rateNumber(n);
+      })
+      .filter((item): item is number => item !== null);
+
+    return values.length > 0 ? this.average(values) : 0;
+  }
+
+  private rateNumber(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.abs(value) > 1 ? value / 100 : value;
+  }
+
+  private average(values: number[]): number {
+    const safeValues = values.filter((value) => Number.isFinite(value));
+    if (safeValues.length === 0) return 0;
+    return this.round4(safeValues.reduce((sum, value) => sum + value, 0) / safeValues.length);
+  }
+
+  private toDate(value: CellValue): Date | null {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+    if (typeof value === 'number') {
+      const date = new Date((value - 25569) * 86400 * 1000);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const date = new Date(value.trim().replace(/\./g, '-').replace(/\//g, '-'));
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
     return null;
   }
 
-  private numVal(obj: Record<string, unknown>, key: string): number | null {
-    const s = this.strVal(obj, key);
-    if (s === null) return null;
-    const n = Number(s);
-    return isNaN(n) ? null : n;
+  private allocationKey(contractId: number, cityId: number): string {
+    return `${contractId}:${cityId}`;
   }
 
-  private dateVal(obj: Record<string, unknown>, key: string): Date | null {
-    for (const [header, mapped] of Object.entries(HEADER_MAP)) {
-      if (mapped === key) {
-        const v = obj[header];
-        if (v instanceof Date) return v;
-        if (typeof v === 'number') {
-          const d = new Date((v - 25569) * 86400 * 1000);
-          return isNaN(d.getTime()) ? null : d;
-        }
-        if (typeof v === 'string') {
-          const d = new Date(v);
-          return isNaN(d.getTime()) ? null : d;
-        }
-      }
-    }
-    const v = obj[key];
-    if (v instanceof Date) return v;
-    return null;
+  private round2(value: number): number {
+    return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  }
+
+  private round4(value: number): number {
+    return Math.round((Number.isFinite(value) ? value : 0) * 10000) / 10000;
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

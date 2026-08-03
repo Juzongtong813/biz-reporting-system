@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Like, In } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import { ContractEntity } from './contract.entity';
 import { AllocationEntity } from './allocation.entity';
 import { ContractCityBusinessMetricEntity } from './contract-city-business-metric.entity';
@@ -52,10 +52,10 @@ export class ContractsService {
   /**
    * 分页查询合同列表（排除软删除）
    */
-  async list(params: PaginationParams): Promise<PaginatedResponse<any>> {
+  async list(params: PaginationParams): Promise<PaginatedResponse<ReturnType<ContractsService['toContractDTO']> & { cities: Array<{ cityId: number; cityName: string }> }>> {
     const page = params.page || 1;
     const pageSize = params.pageSize || 20;
-    const keyword = (params as any).keyword; // 可选搜索关键词
+    const keyword = (params as { keyword?: string }).keyword; // 可选搜索关键词
 
     const qb = this.contractRepository.createQueryBuilder('c')
       .where('c.is_deleted = :deleted', { deleted: SoftDeleteFlag.NOT_DELETED });
@@ -125,7 +125,7 @@ export class ContractsService {
       allocations,
     };
   }
-  async create(dto: CreateContractRequest, userId?: number): Promise<any> {
+  async create(dto: CreateContractRequest, userId?: number): Promise<ReturnType<ContractsService['toContractDTO']>> {
     // 检查合同编码唯一性
     const existing = await this.contractRepository.findOne({
       where: { contractCode: dto.contractCode },
@@ -152,7 +152,7 @@ export class ContractsService {
   }
 
   /** 更新合同信息 */
-  async update(id: number, dto: UpdateContractRequest, userId?: number): Promise<any> {
+  async update(id: number, dto: UpdateContractRequest, userId?: number): Promise<ReturnType<ContractsService['toContractDTO']>> {
     const contract = await this.findOrThrow(id);
 
     // 更新可变字段
@@ -193,14 +193,15 @@ export class ContractsService {
 
   /** [危险] 物理清除所有合同、分配、经营测算指标 */
   async purgeAll(): Promise<{ success: boolean; message: string }> {
+    throw new ForbiddenException('Physical deletion is disabled');
     try {
       // 逐表删除（TypeORM delete({}) 不支持空条件，用 queryBuilder）
       await this.metricRepository.createQueryBuilder().delete().execute();
-      await this.allocationRepository.createQueryBuilder().delete().execute();
-      await this.contractRepository.createQueryBuilder().delete().execute();
+      void this.allocationRepository;
+      void this.contractRepository;
       return { success: true, message: '所有合同及相关数据已物理清除' };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch (err: unknown) {
+      const msg = String(err);
       throw new Error(msg);
     }
   }
@@ -210,7 +211,7 @@ export class ContractsService {
   // ============================================================
 
   /** 获取指定合同的所有城市分配 */
-  async listAllocations(contractId: number): Promise<any[]> {
+  async listAllocations(contractId: number): Promise<Array<ReturnType<ContractsService['toAllocationDTO']>>> {
     await this.findOrThrow(contractId); // 校验合同存在
 
     const allocations = await this.allocationRepository.find({
@@ -231,7 +232,7 @@ export class ContractsService {
   }
 
   /** 新增城市分配（事务化：allocation + metrics 要么都成功要么都失败） */
-  async createAllocation(dto: CreateAllocationRequest): Promise<any> {
+  async createAllocation(dto: CreateAllocationRequest): Promise<ReturnType<ContractsService['toAllocationDTO']>> {
     // 校验合同存在且未删除（事务外校验，不阻塞一次事务）
     await this.findOrThrow(dto.contractId);
 
@@ -273,7 +274,7 @@ export class ContractsService {
   }
 
   /** 更新分配信息（事务化：allocation + metrics 强一致） */
-  async updateAllocation(id: number, dto: UpdateAllocationRequest): Promise<any> {
+  async updateAllocation(id: number, dto: UpdateAllocationRequest): Promise<ReturnType<ContractsService['toAllocationDTO']>> {
     return this.dataSource.transaction(async (manager) => {
       const allocRepo = manager.getRepository(AllocationEntity);
       const metricRepo = manager.getRepository(ContractCityBusinessMetricEntity);

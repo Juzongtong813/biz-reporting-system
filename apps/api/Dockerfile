@@ -1,18 +1,6 @@
-# =============================================================================
-# 经营单元上报系统 - 后端 API Dockerfile
-# CloudBase Run 部署使用
-#
-# 构建命令（在项目根目录 biz-reporting-system/ 执行）：
-#   docker build -t biz-reporting-api:latest -f apps/api/Dockerfile .
-#
-# 运行命令：
-#   docker run -p 3000:3000 \
-#     -e DB_TYPE=sqlite \
-#     -e DB_SYNC=true \
-#     -e JWT_SECRET=local-dev-secret \
-#     biz-reporting-api:latest
-# =============================================================================
-
+# Business reporting API - CloudBase Run Dockerfile
+# E-06 注意：权威 Dockerfile = 仓库根 Dockerfile（B-02 确认线上 003 构建输入）。
+# 本副本必须与根 Dockerfile 保持一致，修改任一处需同步另一处。
 FROM node:20-alpine AS builder
 
 RUN apk add --no-cache python3 make g++
@@ -20,7 +8,6 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 WORKDIR /app
 
-# 复制 pnpm workspace 配置文件
 COPY pnpm-lock.yaml ./
 COPY pnpm-workspace.yaml ./
 COPY package.json ./
@@ -28,40 +15,42 @@ COPY packages/shared-types/package.json ./packages/shared-types/
 COPY packages/shared-constants/package.json ./packages/shared-constants/
 COPY apps/api/package.json ./apps/api/
 
-# 安装 pnpm
 RUN npm install -g pnpm@9
 RUN pnpm config set script-shell /bin/ash
+RUN pnpm install --frozen-lockfile --prefer-offline
 
-# 安装依赖（仅生产 + 构建用）
-RUN pnpm install --no-frozen-lockfile --prefer-offline
-
-# 复制源码
 COPY packages/shared-types ./packages/shared-types
 COPY packages/shared-constants ./packages/shared-constants
 COPY apps/api ./apps/api
 
-# 先构建共享包，再构建 API
+# Remove local build artifacts from the Docker context before compiling.
+RUN find packages apps/api -type f \( \
+      -name '*.tsbuildinfo' -o \
+      -name '*.js' -o \
+      -name '*.d.ts' -o \
+      -name '*.js.map' -o \
+      -name '*.d.ts.map' \
+    \) -delete && echo "CLEANUP: removed local build artifacts"
+
 RUN pnpm --filter @biz-reporting/shared-types build
 RUN pnpm --filter @biz-reporting/shared-constants build
 RUN pnpm --filter @biz-reporting/api build
-
-# 用 pnpm deploy 生成独立部署目录（自动处理 symlink，仅含生产依赖）
 RUN pnpm deploy --filter=@biz-reporting/api /app/deploy
 
-# =============================================================================
-# 运行阶段（用 pnpm deploy 生成独立部署目录，自动处理 symlink）
-# =============================================================================
 FROM node:20-alpine AS runner
 
+# E-06：非 root 运行（UID/GID 10001），持久挂载点挂载前兜底可写
+RUN addgroup -g 10001 app && adduser -u 10001 -G app -S app \
+    && mkdir -p /mnt/fact-source-files && chown 10001:10001 /mnt/fact-source-files
+
 WORKDIR /app
+ENV FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
+LABEL com.biz-reporting.required-persistent-mount="/mnt/fact-source-files"
+COPY --from=builder --chown=10001:10001 /app/deploy ./
 
-# 复制 pnpm deploy 生成的独立部署目录
-COPY --from=builder /app/deploy ./
-
-# 健康检查（使用公开的 /api 端点，无需认证）
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:${PORT:-3000}/api || exit 1
+  CMD wget -qO- http://localhost:${PORT:-3000}/api/health/live || exit 1
 
 EXPOSE 3000
-
+USER 10001
 CMD ["node", "dist/main.js"]

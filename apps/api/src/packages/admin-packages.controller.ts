@@ -18,12 +18,14 @@ import type {
   PaginatedResponse,
   ReturnToDraftRequest,
   UnlockMonthsRequest,
+  BulkUnlockMonthsRequest,
+  BulkUnlockMonthsResponse,
   OpenCurrentMonthContractRequest,
 } from '@biz-reporting/shared-types';
 import { PackagesService } from './packages.service';
 
 interface AuthenticatedRequest extends ExpressRequest {
-  user: { id: number; role: string; cityId: number | null };
+  user: { userId: number; role: string; cityId: number | null };
 }
 
 @ApiTags('Admin - 报表包管理')
@@ -40,6 +42,15 @@ export class AdminPackagesController {
     return this.packagesService.listAllPackages();
   }
 
+  @Post('bulk-unlock-months')
+  @ApiOperation({ summary: '批量解锁指定年度全部地市的指定月份' })
+  @ApiResponse({ status: 200, description: '批量解锁成功' })
+  async bulkUnlockMonths(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: BulkUnlockMonthsRequest,
+  ): Promise<BulkUnlockMonthsResponse> {
+    return this.packagesService.bulkUnlockMonths(dto, req.user);
+  }
   @Post(':packageId/return-to-draft')
   @ApiOperation({ summary: '退回已提交的报表包到草稿状态' })
   @ApiResponse({ status: 200, description: '退回成功' })

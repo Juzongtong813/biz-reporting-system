@@ -1,21 +1,19 @@
 /**
- * 导入导出 / 提醒 / 重算 DTO
- * 来源：OpenAPI YAML — Reminders + Imports + Exports + RecalcTasks tags
+ * Misc DTOs for reminders, imports, exports, and recalc tasks.
  */
 
-/** 发送提醒请求 */
 export interface SendRemindersRequest {
   year: number;
   month: number;
   cityIds: number[];
 }
 
-/** 确认导入请求 */
 export interface ConfirmImportRequest {
   confirmOverwrite: boolean;
+  cityId?: number | null;
+  reportYear?: number | null;
 }
 
-/** 创建导出任务请求 */
 export interface CreateExportJobRequest {
   exportMode: 'current_realtime' | 'month_snapshot';
   scopeType: 'city' | 'all_cities';
@@ -25,31 +23,89 @@ export interface CreateExportJobRequest {
   snapshotRange?: 'month_only' | 'year_to_month' | null;
 }
 
-/** 重试重算任务请求 */
 export interface RetryRecalcTaskRequest {
   retryMode: 'full' | 'failed_only';
 }
 
-// ============================================================
-// WS6 响应 DTO
-// ============================================================
-
-/** 导入预览响应 */
 export interface ImportPreviewResponse {
   id: number;
   status: string;
   parsedSummary: Record<string, unknown> | null;
   diffSummary: Record<string, unknown> | null;
   errorSummary: Record<string, unknown> | null;
+  qualityIssues?: ImportQualityIssue[];
 }
 
-/** 导入确认响应 */
 export interface ImportConfirmResponse {
   success: boolean;
   jobId: number;
+  status?: string;
+  alreadyConfirmed?: boolean;
 }
 
-/** 导出任务状态响应 */
+export type ImportQualityIssueType =
+  | 'template'
+  | 'mapping'
+  | 'duplicate'
+  | 'scope'
+  | 'parse'
+  | 'validation';
+
+export interface ImportQualityIssue {
+  id: string;
+  issueType: ImportQualityIssueType;
+  severity: 'blocking' | 'warning';
+  rowNo: number | null;
+  sourceLocation: string;
+  originalValue: string | null;
+  description: string;
+  blocking: boolean;
+  suggestedOwner: 'system_admin' | 'city_user';
+}
+
+export interface ImportJobListItem {
+  id: number;
+  jobType: string;
+  operatorUserId: number;
+  operatorName: string | null;
+  cityId: number | null;
+  cityName: string | null;
+  reportYear: number | null;
+  status: string;
+  sourceFileName: string | null;
+  confirmedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportJobDetail extends ImportJobListItem {
+  sourceFileUrl: string;
+  parsedSummary: Record<string, unknown> | null;
+  diffSummary: Record<string, unknown> | null;
+  errorSummary: Record<string, unknown> | null;
+  qualityIssues: ImportQualityIssue[];
+}
+
+export interface ImportJobListResponse {
+  items: ImportJobListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ImportJobCancelResponse {
+  success: boolean;
+  jobId: number;
+  status: string;
+}
+
+/** D-04：导入任务重试响应（FAILED → PENDING）。 */
+export interface ImportJobRetryResponse {
+  success: boolean;
+  jobId: number;
+  status: string;
+}
+
 export interface ExportJobResponse {
   id: number;
   status: string;
@@ -58,13 +114,11 @@ export interface ExportJobResponse {
   createdAt: Date;
 }
 
-/** 导出创建响应 */
 export interface ExportCreateResponse {
   jobId: number;
   status: string;
 }
 
-/** 重算任务列表响应 */
 export interface RecalcTaskItem {
   id: number;
   taskType: string;
@@ -74,13 +128,11 @@ export interface RecalcTaskItem {
   updatedAt: Date;
 }
 
-/** 重算任务列表响应 */
 export interface RecalcTaskListResponse {
   items: RecalcTaskItem[];
   total: number;
 }
 
-/** 重算重试响应 */
 export interface RecalcRetryResponse {
   success: boolean;
   taskId: number;

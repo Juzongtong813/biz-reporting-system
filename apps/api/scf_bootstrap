@@ -13,6 +13,7 @@
 # - DB_PASSWORD: 数据库密码
 # - DB_DATABASE: 数据库名
 # - DB_SYNC: false（生产禁止自动同步）
+# - FACT_SOURCE_STORAGE_ROOT: /mnt/fact-source-files（必须是 CloudBase COS/CFS 持久挂载点）
 # - JWT_SECRET: JWT 签名密钥
 # - JWT_EXPIRES_IN: 8h
 # - CORS_ORIGINS: 允许的跨域来源，逗号分隔

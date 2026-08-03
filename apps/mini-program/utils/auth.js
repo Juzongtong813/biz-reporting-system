@@ -24,8 +24,7 @@ function wechatLogin() {
               wx.setStorageSync('userInfo', data.user);
               resolve(data);
             } else if (apiRes.statusCode === 404) {
-              // 未注册
-              resolve({ needRegister: true, code: res.code });
+              resolve({ needBind: true });
             } else {
               reject({
                 code: apiRes.statusCode,
@@ -46,10 +45,9 @@ function wechatLogin() {
 }
 
 /**
- * 微信注册
- * 不依赖外部 code（已过期），内部重新 wx.login 获取新 code。
+ * 使用 root_admin 签发的一次性邀请绑定微信身份。
  */
-function wechatRegister(name, cityId) {
+function wechatBind(invitationToken) {
   return new Promise((resolve, reject) => {
     wx.login({
       success: (loginRes) => {
@@ -58,20 +56,17 @@ function wechatRegister(name, cityId) {
           return;
         }
         wx.request({
-          url: `${BASE_URL}/auth/wechat/register`,
+          url: `${BASE_URL}/auth/wechat/bind`,
           method: 'POST',
-          data: { code: loginRes.code, name, cityId },
+          data: { code: loginRes.code, invitationToken },
           header: { 'Content-Type': 'application/json' },
           success: (apiRes) => {
             if (apiRes.statusCode === 200 || apiRes.statusCode === 201) {
-              const data = apiRes.data;
-              wx.setStorageSync('token', data.token);
-              wx.setStorageSync('userInfo', data.user);
-              resolve(data);
+              resolve(apiRes.data);
             } else {
               reject({
                 code: apiRes.statusCode,
-                message: (apiRes.data && apiRes.data.message) || '注册失败',
+                message: (apiRes.data && apiRes.data.message) || '邀请绑定失败',
               });
             }
           },
@@ -95,4 +90,4 @@ function getMe() {
   return request({ url: '/me' });
 }
 
-module.exports = { wechatLogin, wechatRegister, getMe };
+module.exports = { wechatLogin, wechatBind, getMe };

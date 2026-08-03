@@ -9,8 +9,8 @@ import request from '@/utils/request';
 
 const BASE = '/admin/dashboard';
 
-export function getDashboard(): Promise<DashboardStats> {
-  return request.get(BASE);
+export function getDashboard(year?: number, month?: number): Promise<DashboardStats> {
+  return request.get(BASE, { params: { year, month } });
 }
 
 export function getBusinessSummary(year: number): Promise<AdminBusinessSummaryResponse> {

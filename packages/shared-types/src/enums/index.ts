@@ -7,10 +7,49 @@
 // 角色枚举（来自 OpenAPI schemas.Role）
 // ============================================================
 export enum Role {
+  /** 唯一最高权限账号 */
+  ROOT_ADMIN = 'root_admin',
+  /** 合同与合同地市分配管理员 */
+  CONTRACT_MANAGER = 'contract_manager',
   /** 城市用户（微信登录） */
   CITY_USER = 'city_user',
   /** 系统管理员（账号密码登录） */
   SYSTEM_ADMIN = 'system_admin',
+}
+
+// ============================================================
+// 权限代码（服务端 Guard、前端菜单与验收矩阵共用）
+// ============================================================
+export enum Permission {
+  ME_READ = 'me.read',
+  ME_PASSWORD_UPDATE = 'me.password.update',
+  AUTH_LOGOUT = 'auth.logout',
+  CITIES_READ = 'cities.read',
+  CITIES_MANAGE = 'cities.manage',
+  ACCOUNTS_READ = 'accounts.read',
+  ACCOUNTS_CREATE = 'accounts.create',
+  ACCOUNTS_UPDATE = 'accounts.update',
+  ACCOUNTS_RESET_PASSWORD = 'accounts.reset_password',
+  ACCOUNTS_INVITE_WECHAT = 'accounts.invite_wechat',
+  CONTRACTS_READ = 'contracts.read',
+  CONTRACTS_CREATE = 'contracts.create',
+  CONTRACTS_UPDATE = 'contracts.update',
+  CONTRACTS_SOFT_DELETE = 'contracts.soft_delete',
+  CONTRACTS_PURGE = 'contracts.purge',
+  CONTRACT_ALLOCATIONS_READ = 'contract_allocations.read',
+  CONTRACT_ALLOCATIONS_CREATE = 'contract_allocations.create',
+  CONTRACT_ALLOCATIONS_UPDATE = 'contract_allocations.update',
+  CONTRACT_ALLOCATIONS_DELETE = 'contract_allocations.delete',
+  DASHBOARD_READ = 'dashboard.read',
+  PROVINCE_OPERATIONS = 'province.operations',
+  CITY_DATA_READ = 'city_data.read',
+  CITY_DATA_WRITE = 'city_data.write',
+  CITY_IMPORT = 'city_data.import',
+  PROVINCE_FACTS_READ = 'province_facts.read',
+  EXPORT_CITY = 'exports.city',
+  EXPORT_PROVINCE = 'exports.province',
+  EXPORT_AUDIT = 'exports.audit',
+  OPERATION_LOGS_READ = 'operation_logs.read',
 }
 
 // ============================================================
@@ -53,8 +92,10 @@ export enum SoftDeleteFlag {
 export enum JobStatus {
   PENDING = 'pending',
   PROCESSING = 'processing',
+  PREVIEWED = 'previewed',
   COMPLETED = 'completed',
   FAILED = 'failed',
+  CANCELLED = 'cancelled',
 }
 
 // ============================================================
@@ -63,6 +104,7 @@ export enum JobStatus {
 export enum ImportJobType {
   CONTRACT = 'contract',
   CITY_REPORTING = 'city_reporting',
+  CITY_COST = 'city_cost',
 }
 
 // ============================================================

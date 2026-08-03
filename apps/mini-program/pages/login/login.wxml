@@ -8,7 +8,7 @@
   </view>
 
   <!-- 登录 -->
-  <view hidden="{{showRegister}}" class="login-panel">
+  <view hidden="{{showBind}}" class="login-panel">
     <view class="panel-inner">
       <view class="privacy-row" bindtap="onAgreePrivacyChange">
         <view class="custom-checkbox {{agreePrivacy ? 'checked' : ''}}">
@@ -26,26 +26,20 @@
         {{loading ? '登录中...' : '微信一键登录'}}
       </button>
 
-      <text class="login-helper">使用微信身份登录，无需注册账号</text>
+      <text class="login-helper">仅限已由管理员预建并完成微信绑定的账号</text>
     </view>
   </view>
 
-  <!-- 注册 -->
-  <view hidden="{{!showRegister}}" class="login-panel">
+  <!-- 邀请绑定 -->
+  <view hidden="{{!showBind}}" class="login-panel">
     <view class="panel-inner">
       <view class="form-item">
-        <text class="form-label">姓名</text>
-        <input class="form-input" placeholder="请输入姓名" value="{{name}}" bindinput="onNameInput" />
-      </view>
-      <view class="form-item">
-        <text class="form-label">城市</text>
-        <picker class="form-input" mode="selector" range="{{cityList}}" range-key="name" bindchange="onCityChange">
-          <view class="picker-value">{{selectedCity ? selectedCity.name : '请选择城市'}}</view>
-        </picker>
+        <text class="form-label">微信绑定邀请</text>
+        <input class="form-input" password placeholder="请输入管理员签发的一次性邀请" value="{{invitationToken}}" bindinput="onInvitationInput" />
       </view>
 
-      <button class="login-btn" type="primary" loading="{{registerLoading}}" bindtap="handleRegister">
-        {{registerLoading ? '注册中...' : '注册并登录'}}
+      <button class="login-btn" type="primary" loading="{{bindLoading}}" bindtap="handleBind">
+        {{bindLoading ? '绑定中...' : '绑定并登录'}}
       </button>
       <text class="back-link" bindtap="backToLogin">← 返回登录</text>
     </view>

@@ -4,28 +4,47 @@
  */
 import { UserBrief } from '../user/user';
 
-/** 管理员登录请求 */
-export interface AdminLoginRequest {
-  username: string;
-  password: string;
+/** 管理员登录请求（DEV-003：interface→class，供 ValidationPipe 运行时元数据） */
+// F-01 二次纠偏：strictPropertyInitialization 下未初始化属性需 `!` 明确赋值断言（TS2564 修复）。
+// 保留 class 运行时元数据（ValidationPipe 依赖），不得改回 interface，不得关闭 strictPropertyInitialization。
+export class AdminLoginRequest {
+  username!: string;
+  password!: string;
 }
 
-/** 微信注册请求（首次登录自动注册） */
-export interface WechatRegisterRequest {
-  code: string;   // wx.login() 获取的临时 code
-  name: string;   // 用户昵称/真实姓名
-  cityId: number; // 绑定的城市 ID
+/** Web 地市账号密码登录请求 */
+export class CityPasswordLoginRequest {
+  username!: string;
+  password!: string;
 }
 
 /** 微信登录请求（已有用户直接登录） */
-export interface WechatLoginRequest {
-  code: string; // wx.login() 获取的临时 code
+export class WechatLoginRequest {
+  code!: string; // wx.login() 获取的临时 code
 }
 
 /** 登录统一响应 */
 export interface LoginResponse {
   token: string;      // JWT access_token
   user: UserBrief;    // 当前用户简版信息
+}
+
+/** root_admin 预建用户后签发的一次性微信绑定邀请 */
+export class WechatBindRequest {
+  code!: string;
+  invitationToken!: string;
+}
+
+/** 当前用户修改本人密码 */
+export interface ChangeOwnPasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
+export interface ChangeOwnPasswordResponse {
+  success: true;
+  requiresLogin: true;
 }
 
 /** 当前用户详情响应（GET /api/me） */
@@ -36,4 +55,5 @@ export interface MeResponse {
   cityId: number | null;
   cityName: string | null;
   status: import('../enums').UserStatus;
+  mustChangePassword: boolean;
 }

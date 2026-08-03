@@ -15,6 +15,8 @@ export interface User {
   username: string | null;
   passwordHash: string | null; // 前端永远不接收此字段
   status: import('../enums').UserStatus;
+  authVersion: number;
+  mustChangePassword: boolean;
   registerAt: Date;
   lastLoginAt: Date | null;
   createdAt: Date;
@@ -27,4 +29,5 @@ export interface UserBrief {
   role: import('../enums').Role;
   name: string;
   cityId: number | null;
+  mustChangePassword: boolean;
 }

@@ -1,10 +1,4 @@
-/**
- * AuthGuard — 路由守卫组件
- *
- * 未登录时重定向到 /login，已登录时渲染子组件。
- * 配合 React Router v6 嵌套路由使用（包裹 protected layout route）。
- */
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { isAuthenticated } from '@/utils/auth';
 
 interface AuthGuardProps {
@@ -12,9 +6,16 @@ interface AuthGuardProps {
 }
 
 export default function AuthGuard({ children }: AuthGuardProps) {
+  const location = useLocation();
+
   if (!isAuthenticated()) {
-    // replace 避免登录后返回时出现历史记录问题
-    return <Navigate to="/login" replace />;
+    const originalPath = `${location.pathname}${location.search}`;
+    return (
+      <Navigate
+        to={`/login?redirect=${encodeURIComponent(originalPath)}`}
+        replace
+      />
+    );
   }
 
   return <>{children}</>;

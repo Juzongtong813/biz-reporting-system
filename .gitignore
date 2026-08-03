@@ -40,3 +40,6 @@ codebuddy-plugin/
 
 # Generated docs
 CODEBUDDY.md
+
+# Release build output
+/scripts/release/out/

@@ -36,6 +36,7 @@ export const mockUserBrief: UserBrief = {
   role: Role.SYSTEM_ADMIN,
   name: '系统管理员',
   cityId: null,
+  mustChangePassword: false,
 };
 
 export const mockMeResponse: MeResponse = {
@@ -45,11 +46,89 @@ export const mockMeResponse: MeResponse = {
   cityId: null,
   cityName: null,
   status: UserStatus.ENABLED,
+  mustChangePassword: false,
 };
 
 export const mockLoginResponse: LoginResponse = {
   token: 'mock-jwt-token-admin-2026',
   user: mockUserBrief,
+};
+export interface MockLoginAccount {
+  username: string;
+  password: string;
+  loginResponse: LoginResponse;
+  meResponse: MeResponse;
+}
+
+export const mockLoginAccounts: Record<string, MockLoginAccount> = {
+  'oa-admin': {
+    username: 'oa-admin',
+    password: 'oa-admin-2026',
+    loginResponse: {
+      token: 'mock-jwt-token-oa-admin-2026',
+      user: { id: 1, role: Role.SYSTEM_ADMIN, name: '\u7cfb\u7edf\u7ba1\u7406\u5458', cityId: null, mustChangePassword: false },
+    },
+    meResponse: {
+      id: 1,
+      role: Role.SYSTEM_ADMIN,
+      name: '\u7cfb\u7edf\u7ba1\u7406\u5458',
+      cityId: null,
+      cityName: null,
+      status: UserStatus.ENABLED,
+      mustChangePassword: false,
+    },
+  },
+  'city-zibo': {
+    username: 'city-zibo',
+    password: 'city-zibo-2026',
+    loginResponse: {
+      token: 'mock-jwt-token-city-zibo-2026',
+      user: { id: 2, role: Role.CITY_USER, name: '\u6dc4\u535a\u586b\u62a5\u5458', cityId: 1, mustChangePassword: false },
+    },
+    meResponse: {
+      id: 2,
+      role: Role.CITY_USER,
+      name: '\u6dc4\u535a\u586b\u62a5\u5458',
+      cityId: 1,
+      cityName: '\u6dc4\u535a',
+      status: UserStatus.ENABLED,
+      mustChangePassword: false,
+    },
+  },
+  'city-jinan': {
+    username: 'city-jinan',
+    password: 'city-jinan-2026',
+    loginResponse: {
+      token: 'mock-jwt-token-city-jinan-2026',
+      user: { id: 3, role: Role.CITY_USER, name: '\u6d4e\u5357\u586b\u62a5\u5458', cityId: 2, mustChangePassword: false },
+    },
+    meResponse: {
+      id: 3,
+      role: Role.CITY_USER,
+      name: '\u6d4e\u5357\u586b\u62a5\u5458',
+      cityId: 2,
+      cityName: '\u6d4e\u5357',
+      status: UserStatus.ENABLED,
+      mustChangePassword: false,
+    },
+  },
+  'city-disabled': {
+    username: 'city-disabled',
+    password: 'city-disabled-2026',
+    loginResponse: {
+      token: 'mock-jwt-token-city-disabled-2026',
+      user: { id: 4, role: Role.CITY_USER, name: '\u5fb7\u5dde\u586b\u62a5\u5458', cityId: 3, mustChangePassword: false },
+    },
+    meResponse: {
+      id: 4,
+      role: Role.CITY_USER,
+      name: '\u5fb7\u5dde\u586b\u62a5\u5458',
+      cityId: 3,
+      cityName: '\u5fb7\u5dde',
+      status: UserStatus.DISABLED,
+      mustChangePassword: false,
+    },
+  },
 };
 
 /* ============================================================
@@ -212,32 +291,32 @@ export const mockUserList: UserListItem[] = [
   {
     id: 1, role: Role.SYSTEM_ADMIN, name: '系统管理员',
     cityId: null, cityName: null, status: UserStatus.ENABLED,
-    registerAt: '2025-01-01T00:00:00Z', lastLoginAt: now,
+    registerAt: '2025-01-01T00:00:00Z', lastLoginAt: now, mustChangePassword: false,
   },
   {
     id: 2, role: Role.CITY_USER, name: '淄博填报员',
     cityId: 1, cityName: '淄博', status: UserStatus.ENABLED,
-    registerAt: '2026-01-10T08:30:00Z', lastLoginAt: '2026-06-10T08:15:00Z',
+    registerAt: '2026-01-10T08:30:00Z', lastLoginAt: '2026-06-10T08:15:00Z', mustChangePassword: false,
   },
   {
     id: 3, role: Role.CITY_USER, name: '菏泽填报员',
     cityId: 2, cityName: '菏泽', status: UserStatus.ENABLED,
-    registerAt: '2026-01-12T09:00:00Z', lastLoginAt: '2026-06-09T17:40:00Z',
+    registerAt: '2026-01-12T09:00:00Z', lastLoginAt: '2026-06-09T17:40:00Z', mustChangePassword: false,
   },
   {
     id: 4, role: Role.CITY_USER, name: '德州填报员',
     cityId: 3, cityName: '德州', status: UserStatus.ENABLED,
-    registerAt: '2026-02-01T10:00:00Z', lastLoginAt: '2026-06-10T07:30:00Z',
+    registerAt: '2026-02-01T10:00:00Z', lastLoginAt: '2026-06-10T07:30:00Z', mustChangePassword: false,
   },
   {
     id: 5, role: Role.CITY_USER, name: '泰安填报员',
     cityId: 4, cityName: '泰安', status: UserStatus.DISABLED,
-    registerAt: '2026-03-05T14:00:00Z', lastLoginAt: '2026-05-20T11:20:00Z',
+    registerAt: '2026-03-05T14:00:00Z', lastLoginAt: '2026-05-20T11:20:00Z', mustChangePassword: false,
   },
   {
     id: 6, role: Role.CITY_USER, name: '临沂填报员',
     cityId: 5, cityName: '临沂', status: UserStatus.ENABLED,
-    registerAt: '2026-04-10T08:00:00Z', lastLoginAt: '2026-06-08T16:45:00Z',
+    registerAt: '2026-04-10T08:00:00Z', lastLoginAt: '2026-06-08T16:45:00Z', mustChangePassword: false,
   },
 ];
 
@@ -251,10 +330,16 @@ export const mockUserListResponse: UserListResponse = {
    ============================================================ */
 
 export const mockDashboardStats: DashboardStats = {
-  totalCities: 10,
-  totalContracts: 7,
-  reportedThisMonth: 3,
-  overdueNotSubmitted: 4,
+  cityCount: 10,
+  contractCount: 7,
+  completionAmount: 0,
+  acceptanceAmount: 0,
+  invoiceAmount: 0,
+  orderAmount: 0,
+  actualCost: 0,
+  grossProfit: 0,
+  actualNetProfit: 0,
+  formulaVersion: 'facts-v1',
 };
 
 /* ============================================================

@@ -5,13 +5,14 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserEntity } from '../users/user.entity';
-import { JWT_CONFIG } from '@biz-reporting/shared-constants';
+import { requireJwtAudience, requireJwtIssuer, requireJwtSecret } from './jwt.config';
 
 /**
  * JWT 认证策略
  *
  * 从 Authorization: Bearer <token> 中提取并验证 JWT
- * payload 格式: { sub: userId, role: Role, cityId?: number }
+ * payload 格式: { sub: userId, role: Role, cityId?: number, authVersion: number }
+ * 签发与验证使用同一 issuer/audience（C-03 配置）；不增加旧密钥验证路径。
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -23,11 +24,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'biz-reporting-jwt-secret-change-in-production',
+      secretOrKey: requireJwtSecret(configService),
+      issuer: requireJwtIssuer(configService),
+      audience: requireJwtAudience(configService),
     });
   }
 
-  async validate(payload: { sub: number; role: string; cityId?: number }) {
+  async validate(payload: { sub: number; role: string; cityId?: number; authVersion?: number }) {
     const user = await this.userRepository.findOne({
       where: { id: payload.sub },
     });
@@ -40,10 +43,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('账号已被禁用');
     }
 
+    if (!Number.isInteger(payload.authVersion) || Number(payload.authVersion) !== Number(user.authVersion)) {
+      throw new UnauthorizedException('登录状态已失效');
+    }
+
     return {
       userId: user.id,
       role: user.role,
       cityId: user.cityId,
+      authVersion: user.authVersion,
+      mustChangePassword: Boolean(user.mustChangePassword),
     };
   }
 }

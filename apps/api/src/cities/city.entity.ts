@@ -23,6 +23,12 @@ export class CityEntity {
 
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder: number;
+  @Column({ name: 'is_deleted', type: 'tinyint', width: 1, default: 0 })
+  isDeleted: number;
+
+  @Column({ name: 'deleted_at', type: 'datetime', nullable: true })
+  deletedAt: Date | null;
+
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

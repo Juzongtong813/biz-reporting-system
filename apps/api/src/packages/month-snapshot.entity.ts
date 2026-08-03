@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 /**
  * 月度快照实体
@@ -33,16 +33,16 @@ export class MonthSnapshotEntity {
   isOverdue: number;
 
   @Column({ name: 'summary_json', type: 'json' })
-  summaryJson: any;
+  summaryJson: unknown;
 
   @Column({ name: 'contract_rows_json', type: 'json' })
-  contractRowsJson: any;
+  contractRowsJson: unknown;
 
   @Column({ name: 'cost_rows_json', type: 'json' })
-  costRowsJson: any;
+  costRowsJson: unknown;
 
   @Column({ name: 'maintenance_rows_json', type: 'json', nullable: true })
-  maintenanceRowsJson: any | null;
+  maintenanceRowsJson: unknown | null;
 
   @Column({ name: 'created_by', type: 'bigint' })
   createdBy: number;

@@ -17,6 +17,8 @@ export interface ReportContractMonthlyRow {
   monthNo: number;
   completionAmount: number;
   acceptanceAmount: number;
+  invoiceAmount: number | null;
+  orderAmount: number | null;
   isLocked: boolean;
   lockReason: string | null;
   createdAt: Date;

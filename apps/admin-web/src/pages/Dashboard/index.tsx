@@ -1,22 +1,17 @@
 /**
  * Dashboard 页面。
  *
- * 顶部：现有统计卡片。
- * 底部：按地市和年度展示经营汇总表。
- *
- * 数据来源：
- * - 统计卡片：GET /api/admin/dashboard
- * - 经营汇总：GET /api/admin/dashboard/business-summary?year=xxxx
+ * 顶部 KPI、表格和导出共同使用筛选后的经营事实汇总。
  */
 import { useState } from 'react';
-import { Button, Card, Col, DatePicker, Modal, Row, Space, Spin, Statistic, Table, Typography, message, Checkbox, InputNumber } from 'antd';
+import { Button, Card, Col, DatePicker, Modal, Row, Select, Space, Spin, Statistic, Table, Typography, message, Checkbox, InputNumber } from 'antd';
 import {
   BellOutlined,
-  CheckCircleOutlined,
   DownloadOutlined,
   FileTextOutlined,
-  HomeOutlined,
-  WarningOutlined,
+  FundOutlined,
+  PayCircleOutlined,
+  RiseOutlined,
 } from '@ant-design/icons';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -24,6 +19,7 @@ import * as XLSX from 'xlsx';
 import * as dashboardApi from '@/api/dashboard.api';
 import * as remindersApi from '@/api/reminders.api';
 import type { AdminBusinessSummaryItem, AdminBusinessSummaryResponse } from '@biz-reporting/shared-types';
+import { auditPageExport, makeExportFileName } from '@/utils/page-export';
 
 const { Title } = Typography;
 
@@ -40,21 +36,24 @@ interface SummaryColumnDef {
   type: ColumnType;
   /** rows 取值字段名 */
   dataIndex: keyof AdminBusinessSummaryItem;
-  /** totals 取值字段名 */
-  totalsKey: keyof AdminBusinessSummaryResponse['totals'];
+  /** totals 取值字段名（null = 无合计） */
+  totalsKey: keyof AdminBusinessSummaryResponse['totals'] | null;
 }
 
 const SUMMARY_COLUMNS: SummaryColumnDef[] = [
-  { key: 'cityName',          title: () => '地市',                     type: 'text',    dataIndex: 'cityName',          totalsKey: null as any },
+  { key: 'cityName',          title: () => '地市',                     type: 'text',    dataIndex: 'cityName',          totalsKey: null },
+  { key: 'dataStatus',        title: () => '数据状态',                 type: 'text',    dataIndex: 'dataStatus',        totalsKey: null },
   { key: 'completionTotal',   title: (y) => `${y}年立项完工金额`,      type: 'money',   dataIndex: 'completionTotal',   totalsKey: 'completionTotal' },
   { key: 'acceptanceTotal',   title: (y) => `${y}年验收审定金额`,      type: 'money',   dataIndex: 'acceptanceTotal',   totalsKey: 'acceptanceTotal' },
+  { key: 'invoiceTotal', title: (y) => `${y}\u5e74\u7d2f\u8ba1\u5f00\u7968\u91d1\u989d`, type: 'money', dataIndex: 'invoiceTotal', totalsKey: 'invoiceTotal' },
+  { key: 'orderTotal', title: (y) => `${y}\u5e74\u7d2f\u8ba1\u8ba2\u5355\u91d1\u989d`, type: 'money', dataIndex: 'orderTotal', totalsKey: 'orderTotal' },
   { key: 'orderGrossProfit',  title: (_, s) => `${s}年累计订单毛利`,   type: 'money',   dataIndex: 'orderGrossProfit',  totalsKey: 'orderGrossProfit' },
   { key: 'costTotal',         title: (_, s) => `${s}年累计成本`,       type: 'money',   dataIndex: 'costTotal',         totalsKey: 'costTotal' },
   { key: 'costRate',          title: () => '成本占比',                 type: 'percent', dataIndex: 'costRate',          totalsKey: 'costRate' },
   { key: 'costIncomeRate',    title: () => '成本收入占比',             type: 'percent', dataIndex: 'costIncomeRate',    totalsKey: 'costIncomeRate' },
   { key: 'netProfit',         title: () => '净利润',                   type: 'money',   dataIndex: 'netProfit',         totalsKey: 'netProfit' },
   { key: 'netProfitRate',     title: () => '净利率',                   type: 'percent', dataIndex: 'netProfitRate',     totalsKey: 'netProfitRate' },
-  { key: 'submittedMonthCount', title: () => '已提交月份',             type: 'number',  dataIndex: 'submittedMonthCount', totalsKey: 'submittedMonthCount' },
+  { key: 'submittedMonthCount', title: () => '有数据月份',             type: 'number',  dataIndex: 'submittedMonthCount', totalsKey: 'submittedMonthCount' },
   { key: 'contractCount',     title: () => '合同数',                   type: 'number',  dataIndex: 'contractCount',     totalsKey: 'contractCount' },
 ];
 
@@ -77,6 +76,10 @@ function netProfitColor(value: number): string | undefined {
   if (value < 0) return '#ff4d4f';
   if (value > 0) return '#52c41a';
   return undefined;
+}
+
+function dataStatusLabel(value: AdminBusinessSummaryItem['dataStatus']): string {
+  return value === 'current' ? '数据完整' : value === 'partial' ? '部分数据' : '暂无数据';
 }
 
 /** 安全取数（含兜底） */
@@ -111,12 +114,14 @@ function exportBusinessSummaryCsv(
   year: number,
   items: AdminBusinessSummaryItem[],
   totals: AdminBusinessSummaryResponse['totals'],
+  fileName: string,
 ): void {
   const suffix = String(year).slice(2);
   const headers = SUMMARY_COLUMNS.map((c) => csvEscape(c.title(year, suffix)));
 
   function fmt(item: AdminBusinessSummaryItem, col: SummaryColumnDef): string {
     const v = item[col.dataIndex];
+    if (col.key === 'dataStatus') return dataStatusLabel(v as AdminBusinessSummaryItem['dataStatus']);
     switch (col.type) {
       case 'money':   return rawMoney(v);
       case 'percent': return rawPercent(v);
@@ -127,6 +132,7 @@ function exportBusinessSummaryCsv(
 
   function fmtTotals(col: SummaryColumnDef): string {
     if (col.key === 'cityName') return csvEscape('合计');
+    if (col.key === 'dataStatus') return csvEscape('按事实数据汇总');
     const v = col.totalsKey ? totals[col.totalsKey] : 0;
     switch (col.type) {
       case 'money':   return rawMoney(v);
@@ -147,7 +153,7 @@ function exportBusinessSummaryCsv(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `经营汇总-${year}.csv`;
+  a.download = fileName.replace(/\.xlsx$/, '.csv');
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -161,6 +167,7 @@ function exportBusinessSummaryXlsx(
   year: number,
   items: AdminBusinessSummaryItem[],
   totals: AdminBusinessSummaryResponse['totals'],
+  fileName: string,
 ): void {
   const suffix = String(year).slice(2);
   const headers = SUMMARY_COLUMNS.map((c) => c.title(year, suffix));
@@ -192,6 +199,7 @@ function exportBusinessSummaryXlsx(
   // SheetJS 公式用 { f: 'SUM(...)' } 对象
   const totalRow: unknown[] = SUMMARY_COLUMNS.map((c, ci) => {
     if (c.key === 'cityName') return '合计';
+    if (c.key === 'dataStatus') return '按事实数据汇总';
     // 数据行从索引 2 开始（0=标题, 1=表头），到 2+items.length-1
     const rowStart = 3;        // Excel 行号：标题=1, 表头=2, 第一条数据=3
     const rowEnd = rowStart + items.length - 1;
@@ -238,7 +246,30 @@ function exportBusinessSummaryXlsx(
   }
 
   XLSX.utils.book_append_sheet(wb, ws, `经营汇总-${year}`);
-  XLSX.writeFile(wb, `经营汇总-${year}.xlsx`);
+  XLSX.writeFile(wb, fileName);
+}
+
+export function calculateSummaryTotals(items: AdminBusinessSummaryItem[]): AdminBusinessSummaryResponse['totals'] {
+  const sum = (key: keyof AdminBusinessSummaryItem) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
+  const completionTotal = sum('completionTotal');
+  const orderGrossProfit = sum('orderGrossProfit');
+  const costTotal = sum('costTotal');
+  const netProfit = sum('netProfit');
+  return {
+    completionTotal,
+    acceptanceTotal: sum('acceptanceTotal'),
+    invoiceTotal: sum('invoiceTotal'),
+    orderTotal: sum('orderTotal'),
+    orderGrossProfit,
+    costTotal,
+    netProfit,
+    costRate: completionTotal ? costTotal / completionTotal : 0,
+    costIncomeRate: orderGrossProfit ? costTotal / orderGrossProfit : 0,
+    netProfitRate: completionTotal ? netProfit / completionTotal : 0,
+    cityCount: items.length,
+    submittedMonthCount: sum('submittedMonthCount'),
+    contractCount: sum('contractCount'),
+  };
 }
 
 // ============================================================
@@ -251,12 +282,9 @@ export default function Dashboard() {
   const [reminderYear, setReminderYear] = useState(new Date().getFullYear());
   const [reminderMonth, setReminderMonth] = useState(new Date().getMonth() + 1);
   const [selectedCityIds, setSelectedCityIds] = useState<number[]>([]);
+  const [filterCityIds, setFilterCityIds] = useState<number[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [selectAll, setSelectAll] = useState(false);
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: dashboardApi.getDashboard,
-  });
 
   const {
     data: businessSummary,
@@ -264,6 +292,7 @@ export default function Dashboard() {
   } = useQuery({
     queryKey: ['business-summary', year],
     queryFn: () => dashboardApi.getBusinessSummary(year),
+    refetchInterval: 60000,
   });
 
   const sendReminderMutation = useMutation({
@@ -281,7 +310,7 @@ export default function Dashboard() {
     },
   });
 
-  if (isLoading) {
+  if (businessSummaryLoading) {
     return (
       <div style={{ textAlign: 'center', padding: 80 }}>
         <Spin size="large" />
@@ -289,38 +318,26 @@ export default function Dashboard() {
     );
   }
 
-  const stats = [
-    {
-      title: '地市总数',
-      value: data?.totalCities ?? '-',
-      icon: <HomeOutlined style={{ fontSize: 36, color: '#1890ff' }} />,
-      color: '#e6f7ff',
-    },
-    {
-      title: '合同总数',
-      value: data?.totalContracts ?? '-',
-      icon: <FileTextOutlined style={{ fontSize: 36, color: '#52c41a' }} />,
-      color: '#f6ffed',
-    },
-    {
-      title: '本月已填报',
-      value: data?.reportedThisMonth ?? '-',
-      icon: <CheckCircleOutlined style={{ fontSize: 36, color: '#722ed1' }} />,
-      color: '#f9f0ff',
-    },
-    {
-      title: '逾期未提交',
-      value: data?.overdueNotSubmitted ?? '-',
-      icon: <WarningOutlined style={{ fontSize: 36, color: '#faad14' }} />,
-      color: '#fffbe6',
-    },
-  ];
-
   const suffix = String(year).slice(2);
+  const filteredItems = (businessSummary?.items ?? []).filter((item) => filterCityIds.length === 0 || filterCityIds.includes(item.cityId));
+  const filteredTotals = calculateSummaryTotals(filteredItems);
+  const stats = [
+    { title: '立项完工', value: formatMoney(filteredTotals.completionTotal), icon: <FileTextOutlined style={{ fontSize: 32, color: '#1677ff' }} />, color: '#e6f4ff' },
+    { title: '验收审定', value: formatMoney(filteredTotals.acceptanceTotal), icon: <FundOutlined style={{ fontSize: 32, color: '#389e0d' }} />, color: '#f6ffed' },
+    { title: '实际成本', value: formatMoney(filteredTotals.costTotal), icon: <PayCircleOutlined style={{ fontSize: 32, color: '#d46b08' }} />, color: '#fff7e6' },
+    { title: '实际净利润', value: formatMoney(filteredTotals.netProfit), icon: <RiseOutlined style={{ fontSize: 32, color: filteredTotals.netProfit < 0 ? '#cf1322' : '#08979c' }} />, color: filteredTotals.netProfit < 0 ? '#fff1f0' : '#e6fffb' },
+  ];
 
   // 从共享列定义生成 Table columns
   const summaryColumns = SUMMARY_COLUMNS.map((c) => {
-    const col: any = {
+    const col: {
+      title: string;
+      dataIndex: keyof AdminBusinessSummaryItem;
+      key: string;
+      width: number;
+      align: 'left' | 'right';
+      render?: (v: unknown) => React.ReactNode;
+    } = {
       title: c.title(year, suffix),
       dataIndex: c.dataIndex,
       key: c.key,
@@ -328,16 +345,18 @@ export default function Dashboard() {
       align: c.type === 'text' ? 'left' as const : 'right' as const,
     };
 
-    if (c.key === 'netProfit' || c.key === 'netProfitRate') {
-      col.render = (v: number) => (
-        <span style={{ color: netProfitColor(v) }}>
-          {c.type === 'percent' ? formatPercent(v) : formatMoney(v)}
+    if (c.key === 'dataStatus') {
+      col.render = (v: unknown) => dataStatusLabel(v as AdminBusinessSummaryItem['dataStatus']);
+    } else if (c.key === 'netProfit' || c.key === 'netProfitRate') {
+      col.render = (v: unknown) => (
+        <span style={{ color: netProfitColor(v as number) }}>
+          {c.type === 'percent' ? formatPercent(v as number) : formatMoney(v as number)}
         </span>
       );
     } else if (c.type === 'money') {
-      col.render = (v: number) => formatMoney(v);
+      col.render = (v: unknown) => formatMoney(v as number);
     } else if (c.type === 'percent') {
-      col.render = (v: number) => formatPercent(v);
+      col.render = (v: unknown) => formatPercent(v as number);
     }
 
     return col;
@@ -345,7 +364,7 @@ export default function Dashboard() {
 
   function summaryTableSummary() {
     if (!businessSummary) return null;
-    const t = businessSummary.totals;
+    const t = filteredTotals;
 
     function cell(index: number, content: React.ReactNode, align?: 'right') {
       return (
@@ -359,6 +378,7 @@ export default function Dashboard() {
       <Table.Summary.Row>
         {SUMMARY_COLUMNS.map((c, i) => {
           if (c.key === 'cityName') return cell(i, '合计');
+          if (c.key === 'dataStatus') return cell(i, '按事实数据汇总');
           const v = c.totalsKey ? t[c.totalsKey] : 0;
           const styled = (c.key === 'netProfit' || c.key === 'netProfitRate')
             ? <span style={{ color: netProfitColor(v as number) }}>{c.type === 'percent' ? formatPercent(v as number) : formatMoney(v as number)}</span>
@@ -371,13 +391,24 @@ export default function Dashboard() {
 
   function handleExportCsv() {
     if (businessSummary) {
-      exportBusinessSummaryCsv(year, businessSummary.items, businessSummary.totals);
+      const scope = filterCityIds.length === 0 ? '全省' : filteredItems.map((item) => item.cityName).join('_');
+      exportBusinessSummaryCsv(year, filteredItems, filteredTotals, makeExportFileName('经营仪表盘', scope, `${year}年`));
     }
   }
 
-  function handleExportXlsx() {
-    if (businessSummary) {
-      exportBusinessSummaryXlsx(year, businessSummary.items, businessSummary.totals);
+  async function handleExportXlsx() {
+    if (!businessSummary || exporting) return;
+    const scope = filterCityIds.length === 0 ? '全省' : filteredItems.map((item) => item.cityName).join('_');
+    const fileName = makeExportFileName('经营仪表盘', scope, `${year}年`);
+    setExporting(true);
+    try {
+      exportBusinessSummaryXlsx(year, filteredItems, filteredTotals, fileName);
+      await auditPageExport({ pageName: '经营仪表盘', scopeLabel: scope, filters: { year, cityIds: filterCityIds.join(',') }, rowCount: filteredItems.length, result: 'success', fileName });
+    } catch {
+      await auditPageExport({ pageName: '经营仪表盘', scopeLabel: scope, filters: { year, cityIds: filterCityIds.join(',') }, rowCount: filteredItems.length, result: 'failed', fileName, errorCode: 'CLIENT_EXPORT_FAILED' }).catch(() => undefined);
+      message.error('导出失败，请稍后重试');
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -391,7 +422,7 @@ export default function Dashboard() {
     setReminderModalOpen(true);
   }
 
-  const hasData = Boolean(businessSummary && businessSummary.items.length > 0);
+  const hasData = filteredItems.length > 0;
 
   return (
     <div>
@@ -433,23 +464,33 @@ export default function Dashboard() {
             经营汇总总览
           </Title>
           <Space>
+            <Select
+              mode="multiple"
+              allowClear
+              maxTagCount="responsive"
+              placeholder="全部地市"
+              value={filterCityIds}
+              onChange={setFilterCityIds}
+              style={{ minWidth: 220 }}
+              options={(businessSummary?.items ?? []).map((item) => ({ value: item.cityId, label: item.cityName }))}
+            />
             <Button
               icon={<DownloadOutlined />}
               size="small"
               disabled={!hasData}
-              loading={businessSummaryLoading}
+              loading={businessSummaryLoading || exporting}
               onClick={handleExportCsv}
             >
-              导出 CSV
+              导出文本表格
             </Button>
             <Button
-              icon={<FileTextOutlined />}
+              icon={<DownloadOutlined />}
               size="small"
               disabled={!hasData}
-              loading={businessSummaryLoading}
+              loading={businessSummaryLoading || exporting}
               onClick={handleExportXlsx}
             >
-              导出 Excel
+              导出本页
             </Button>
             <Button
               icon={<BellOutlined />}
@@ -473,7 +514,7 @@ export default function Dashboard() {
         <Table<AdminBusinessSummaryItem>
           rowKey="cityId"
           columns={summaryColumns}
-          dataSource={businessSummary?.items ?? []}
+          dataSource={filteredItems}
           loading={businessSummaryLoading}
           size="small"
           pagination={false}

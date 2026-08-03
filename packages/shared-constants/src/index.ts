@@ -77,7 +77,7 @@ export const API_PREFIX = '/api' as const;
 export const API_PATHS = {
   // Auth
   AUTH_ADMIN_LOGIN: `${API_PREFIX}/auth/admin/login`,
-  AUTH_WECHAT_REGISTER: `${API_PREFIX}/auth/wechat/register`,
+  AUTH_WECHAT_BIND: `${API_PREFIX}/auth/wechat/bind`,
   AUTH_WECHAT_LOGIN: `${API_PREFIX}/auth/wechat/login`,
 
   // Me

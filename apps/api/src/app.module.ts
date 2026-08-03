@@ -1,10 +1,11 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { UsersService } from './users/users.service';
 
 // 核心业务模块
 import { AuthModule } from './auth/auth.module';
@@ -16,16 +17,33 @@ import { CityConfigsModule } from './city-configs/city-configs.module';
 import { OperationLogsModule } from './operation-logs/operation-logs.module';
 import { CitiesModule } from './cities/cities.module';
 import { RemindersModule } from './reminders/reminders.module';
+import { AiModule } from './ai/ai.module';
 import { Ws6Module } from './ws6/ws6.module';
+import { FactsModule } from './facts/facts.module';
+import { validateRuntimeEnvironment } from './runtime.config';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { PermissionsGuard } from './common/guards/permissions.guard';
+import { RolesGuard } from './common/guards/roles.guard';
+import { RequestIdMiddleware } from './common/http/request-id.middleware';
+import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
 
 @Module({
   imports: [
     // 定时任务
     ScheduleModule.forRoot(),
 
+    // 全局 IP 限流（默认 120/min；登录端点后续 C-05 覆盖 5/min）。
+    // 注意：默认内存存储只支持单实例限流，P0 MaxNum=1 前不得声称多实例全局限流。
+    ThrottlerModule.forRoot([{
+      name: 'default',
+      ttl: 60_000,
+      limit: 120,
+    }]),
+
     // 环境变量配置
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateRuntimeEnvironment,
       envFilePath:
         process.env.NODE_ENV === 'production'
           ? ['.env']
@@ -36,14 +54,20 @@ import { Ws6Module } from './ws6/ws6.module';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
+      useFactory: (config: ConfigService): TypeOrmModuleOptions => {
         const nodeEnv = config.get<string>('NODE_ENV', 'development');
         const isProduction = nodeEnv === 'production';
         const dbType = config.get<string>('DB_TYPE', 'mysql');
+        const dbPoolConnectionLimit = Number(
+          config.get<string>('DB_POOL_CONNECTION_LIMIT', '10'),
+        );
+        const dbPoolQueueLimit = Number(
+          config.get<string>('DB_POOL_QUEUE_LIMIT', '0'),
+        );
 
         if (dbType === 'sqlite') {
           return {
-            type: 'better-sqlite3' as any,
+            type: 'better-sqlite3',
             database: config.get<string>('DB_DATABASE', './data/dev.sqlite'),
             entities: [__dirname + '/**/*.entity.ts', __dirname + '/**/*.entity.js'],
             synchronize: isProduction ? false : config.get<boolean>('DB_SYNC', true),
@@ -52,7 +76,7 @@ import { Ws6Module } from './ws6/ws6.module';
         }
 
         return {
-          type: 'mysql' as any,
+          type: 'mysql',
           host: config.get<string>('DB_HOST', 'localhost'),
           port: config.get<number>('DB_PORT', 3306),
           username: config.get<string>('DB_USERNAME', 'root'),
@@ -65,13 +89,13 @@ import { Ws6Module } from './ws6/ws6.module';
           retryAttempts: 3,
           retryDelay: 3000,
           extra: {
-            connectionLimit: 3,
+            connectionLimit: dbPoolConnectionLimit,
             waitForConnections: true,
             enableKeepAlive: true,
             keepAliveInitialDelay: 10000,
             connectTimeout: 10000,
             maxIdle: 1,
-            queueLimit: 10,
+            queueLimit: dbPoolQueueLimit,
           },
         };
       },
@@ -85,17 +109,27 @@ import { Ws6Module } from './ws6/ws6.module';
     DashboardModule,
     CityConfigsModule,
     OperationLogsModule,
+    AiModule,
     CitiesModule,
     RemindersModule,
     Ws6Module,
+    FactsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
+  ],
 })
-export class AppModule implements OnModuleInit {
-  constructor(private readonly usersService: UsersService) {}
-
-  async onModuleInit() {
-    await this.usersService.seedAdminIfNeeded();
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // E-03：全路由注入 request ID 中间件（响应回传 X-Request-Id）
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
   }
 }
+
+

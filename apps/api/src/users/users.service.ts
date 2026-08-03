@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as bcrypt from 'bcryptjs';
 import { UserEntity } from './user.entity';
 import { CityEntity } from '../cities/city.entity';
 import { OperationLogEntity } from '../common/entities/operation-log.entity';
@@ -14,8 +13,15 @@ import type {
 
 export interface CreateCityUserInput {
   name: string;
-  openid: string;
+  openid: string | null;
   cityId: number;
+  username?: string | null;
+  passwordHash?: string | null;
+}
+
+export interface MigrateUserRoleInput {
+  targetRole: Role;
+  cityId?: number | null;
 }
 
 export interface UserWithCityName extends Omit<UserEntity, 'passwordHash'> {
@@ -54,7 +60,7 @@ export class UsersService {
     return this.withTransientDbRetry(
       () => this.userRepository.findOne({
         where: { username },
-        select: ['id', 'role', 'name', 'cityId', 'username', 'passwordHash', 'status'],
+        select: ['id', 'role', 'name', 'cityId', 'username', 'passwordHash', 'status', 'authVersion', 'mustChangePassword'],
       }),
       `find user by username: ${username}`,
     );
@@ -64,18 +70,166 @@ export class UsersService {
     return this.userRepository.findOne({ where: { openid } });
   }
 
+  async findCityUsersByName(name: string): Promise<UserEntity[]> {
+    return this.userRepository.find({
+      where: { role: Role.CITY_USER, name },
+      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
+      order: { id: 'ASC' },
+    });
+  }
+
+  async setWebCredentials(
+    userId: number,
+    username: string,
+    passwordHash: string,
+  ): Promise<UserEntity> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const beforeDataJson = {
+      username: user.username,
+      passwordConfigured: Boolean(user.passwordHash),
+    };
+    await this.userRepository.update(userId, { username, passwordHash });
+    await this.operationLogRepo.save(
+      this.operationLogRepo.create({
+        operatorUserId: userId,
+        operatorCityId: user.cityId,
+        actionType: 'city_web_credentials_register',
+        targetType: 'user',
+        targetId: String(userId),
+        summaryText: 'City user Web credentials registered',
+        beforeDataJson,
+        afterDataJson: { username, passwordConfigured: true },
+        resultStatus: 'success',
+      }),
+    );
+
+    const updated = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
+    });
+    if (!updated) throw new NotFoundException('User not found after credential update');
+    return updated;
+  }
+
+  async bindWechatOpenid(userId: number, openid: string): Promise<UserEntity> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.openid && user.openid !== openid) {
+      throw new BadRequestException('该用户已绑定其他小程序账号');
+    }
+
+    if (!user.openid) {
+      await this.userRepository.update(userId, { openid });
+      await this.operationLogRepo.save(
+        this.operationLogRepo.create({
+          operatorUserId: userId,
+          operatorCityId: user.cityId,
+          actionType: 'wechat_openid_bind',
+          targetType: 'user',
+          targetId: String(userId),
+          summaryText: 'City user WeChat identity bound',
+          beforeDataJson: { openidBound: false },
+          afterDataJson: { openidBound: true },
+          resultStatus: 'success',
+        }),
+      );
+    }
+
+    const updated = await this.userRepository.findOne({
+      where: { id: userId },
+      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
+    });
+    if (!updated) throw new NotFoundException('User not found after WeChat binding');
+    return updated;
+  }
   async createCityUser(input: CreateCityUserInput): Promise<UserEntity> {
+    const city = await this.cityRepository.findOne({
+      where: { id: input.cityId, isDeleted: 0 },
+    });
+    if (!city) throw new BadRequestException('Target city not found');
+
     const user = this.userRepository.create({
       role: Role.CITY_USER,
       name: input.name,
       openid: input.openid,
+      username: input.username ?? null,
+      passwordHash: input.passwordHash ?? null,
       cityId: input.cityId,
       status: UserStatus.ENABLED,
     });
 
     return this.userRepository.save(user);
   }
+  async migrateLegacyRole(
+    userId: number,
+    input: MigrateUserRoleInput,
+    operatorUserId: number,
+  ): Promise<UserListItem> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
 
+    const legacyRole = String(user.role).toLowerCase();
+    if (legacyRole !== 'reviewer' && legacyRole !== 'auditor') {
+      throw new BadRequestException('Only reviewer or auditor accounts can be migrated');
+    }
+    if (input.targetRole !== Role.SYSTEM_ADMIN && input.targetRole !== Role.CITY_USER) {
+      throw new BadRequestException('Target role must be system_admin or city_user');
+    }
+
+    let cityId: number | null = null;
+    if (input.targetRole === Role.CITY_USER) {
+      cityId = input.cityId ?? user.cityId;
+      if (cityId === null) {
+        throw new BadRequestException('A city is required when migrating to city_user');
+      }
+      const city = await this.cityRepository.findOne({ where: { id: cityId } });
+      if (!city) throw new BadRequestException('Target city not found');
+    }
+
+    const beforeRole = user.role;
+    const beforeCityId = user.cityId;
+    await this.userRepository.update(userId, {
+      role: input.targetRole,
+      cityId,
+    });
+
+    await this.operationLogRepo.save(
+      this.operationLogRepo.create({
+        operatorUserId,
+        operatorCityId: null,
+        actionType: 'user_role_migration',
+        targetType: 'user',
+        targetId: String(userId),
+        summaryText: 'Legacy user role migrated',
+        beforeDataJson: { role: beforeRole, cityId: beforeCityId },
+        afterDataJson: { role: input.targetRole, cityId },
+        resultStatus: 'success',
+      }),
+    );
+
+    const updated = await this.findById(userId);
+    if (!updated) throw new NotFoundException('Migrated user not found');
+    return {
+      id: updated.id,
+      role: updated.role,
+      name: updated.name,
+      cityId: updated.cityId,
+      cityName: updated.cityName,
+      status: updated.status,
+      registerAt: updated.registerAt.toISOString(),
+      lastLoginAt: updated.lastLoginAt?.toISOString() ?? null,
+      mustChangePassword: Boolean(updated.mustChangePassword),
+    };
+  }
   async updateLastLogin(userId: number): Promise<void> {
     await this.withTransientDbRetry(
       () => this.userRepository.update(userId, {
@@ -83,26 +237,6 @@ export class UsersService {
       }),
       `update last login: ${userId}`,
     );
-  }
-
-  async seedAdminIfNeeded(): Promise<void> {
-    const adminCount = await this.userRepository.count({
-      where: { role: Role.SYSTEM_ADMIN },
-    });
-
-    if (adminCount > 0) return;
-
-    const hashedPassword = await bcrypt.hash('admin123456', 10);
-
-    const admin = this.userRepository.create({
-      role: Role.SYSTEM_ADMIN,
-      name: '系统管理员',
-      username: 'admin',
-      passwordHash: hashedPassword,
-      status: UserStatus.ENABLED,
-    });
-
-    await this.userRepository.save(admin);
   }
 
   async list(params: PaginationParams): Promise<UserListResponse> {
@@ -134,6 +268,7 @@ export class UsersService {
           status: u.status,
           registerAt: u.registerAt.toISOString(),
           lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+          mustChangePassword: Boolean(u.mustChangePassword),
         };
       }),
     );
@@ -157,6 +292,7 @@ export class UsersService {
       status: user.status,
       registerAt: user.registerAt.toISOString(),
       lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+      mustChangePassword: Boolean(user.mustChangePassword),
     };
   }
 
@@ -200,6 +336,7 @@ export class UsersService {
       status: updated.status,
       registerAt: updated.registerAt.toISOString(),
       lastLoginAt: updated.lastLoginAt?.toISOString() ?? null,
+      mustChangePassword: Boolean(updated.mustChangePassword),
     };
   }
 

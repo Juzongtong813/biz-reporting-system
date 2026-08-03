@@ -39,16 +39,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LoginResponse'
-  /api/auth/wechat/register:
+  /api/auth/wechat/bind:
     post:
       tags: [Auth]
-      summary: WeChat register for city user
+      summary: Bind a pre-created city user with a one-time root_admin invitation
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WechatRegisterRequest'
+              $ref: '#/components/schemas/WechatBindRequest'
       responses:
         '200':
           description: Success
@@ -688,16 +688,14 @@ components:
           type: string
         password:
           type: string
-    WechatRegisterRequest:
+    WechatBindRequest:
       type: object
-      required: [code, name, cityId]
+      required: [code, invitationToken]
       properties:
         code:
           type: string
-        name:
+        invitationToken:
           type: string
-        cityId:
-          type: integer
     WechatLoginRequest:
       type: object
       required: [code]
@@ -970,4 +968,3 @@ components:
         retryMode:
           type: string
           enum: [full, failed_only]
-

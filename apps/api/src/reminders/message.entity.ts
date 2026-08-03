@@ -1,5 +1,4 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
-import { MessageType } from '@biz-reporting/shared-types';
 
 /**
  * 消息实体

@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const requireFromApi = createRequire(path.join(repoRoot, 'apps', 'api', 'package.json'));
+const Database = requireFromApi('better-sqlite3');
+const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-migration-ledger-'));
+const database = path.join(testRoot, 'ledger.sqlite');
+const env = { ...process.env, NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false' };
+
+try {
+  execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'precheck'], { cwd: repoRoot, env, stdio: 'inherit' });
+  execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env, stdio: 'inherit' });
+
+  const db = new Database(database, { readonly: true });
+  const firstLedger = db.prepare('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version').all();
+  const batchColumns = new Set(db.prepare("PRAGMA table_info('fact_import_batches')").all().map((row) => row.name));
+  const versionColumns = new Set(db.prepare("PRAGMA table_info('fact_versions')").all().map((row) => row.name));
+  const batchIndexes = new Set(db.prepare("PRAGMA index_list('fact_import_batches')").all().map((row) => row.name));
+  const versionIndexes = new Set(db.prepare("PRAGMA index_list('fact_versions')").all().map((row) => row.name));
+  const importJobColumns = new Set(db.prepare("PRAGMA table_info('import_jobs')").all().map((row) => row.name));
+  const importJobIndexes = new Set(db.prepare("PRAGMA index_list('import_jobs')").all().map((row) => row.name));
+  const rateLimitColumns = new Set(db.prepare("PRAGMA table_info('auth_login_rate_limits')").all().map((row) => row.name));
+  const securityEventColumns = new Set(db.prepare("PRAGMA table_info('auth_security_events')").all().map((row) => row.name));
+  db.close();
+
+  assert.equal(firstLedger.length, 10, 'expected ten migration ledger rows');
+  assert.equal(firstLedger.find((row) => row.version === '002_add_contract_month_invoice_order_amount')?.execution_mode, 'executed');
+  assert.equal(firstLedger.find((row) => row.version === '008_v3_fact_lifecycle')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '009_production_governance')?.status, 'applied');
+  for (const column of ['lifecycle_status', 'warning_count', 'blocking_error_count', 'effective_at']) assert.ok(batchColumns.has(column), `008 batch column missing: ${column}`);
+  for (const column of ['city_id', 'contract_id', 'period_year', 'period_month', 'lifecycle_status', 'supersedes_version_id', 'superseded_by_version_id', 'changed_fields_json', 'warning_summary_json']) assert.ok(versionColumns.has(column), `008 version column missing: ${column}`);
+  assert.ok(batchIndexes.has('idx_fact_batch_lifecycle'));
+  assert.ok(versionIndexes.has('idx_fact_version_scope_status'));
+  assert.ok(versionIndexes.has('idx_fact_version_fact_chain'));
+  for (const column of ['source_file_storage_key', 'source_file_sha256', 'source_file_size', 'source_file_stored_at', 'attempt_count', 'processing_started_at', 'failure_code']) assert.ok(importJobColumns.has(column), `009 import_jobs column missing: ${column}`);
+  assert.ok(importJobIndexes.has('idx_import_jobs_status_started'), '009 import_jobs status_started index missing');
+  assert.ok(importJobIndexes.has('idx_import_jobs_storage_key'), '009 import_jobs storage_key index missing');
+  for (const column of ['route_key', 'subject_hash', 'window_started_at', 'attempt_count', 'blocked_until']) assert.ok(rateLimitColumns.has(column), `009 auth_login_rate_limits column missing: ${column}`);
+  for (const column of ['event_type', 'outcome', 'route_key', 'subject_hash', 'ip_hash', 'reason_code', 'request_id']) assert.ok(securityEventColumns.has(column), `009 auth_security_events column missing: ${column}`);
+
+  execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env, stdio: 'inherit' });
+  const secondDb = new Database(database, { readonly: true });
+  const secondLedger = secondDb.prepare('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version').all();
+  secondDb.close();
+  assert.deepEqual(secondLedger, firstLedger, 'second migration run changed the ledger');
+  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=10 v3_lifecycle=true governance009=true idempotent=true');
+} finally {
+  rmSync(testRoot, { recursive: true, force: true });
+  console.log(`MIGRATION_LEDGER_CONTRACT_CLEANUP_OK root=${testRoot}`);
+}

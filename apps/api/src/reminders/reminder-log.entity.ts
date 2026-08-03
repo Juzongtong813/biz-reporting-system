@@ -1,5 +1,4 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
-import { ReminderTriggerType, ReminderSendStatus } from '@biz-reporting/shared-types';
 
 /**
  * 提醒日志实体

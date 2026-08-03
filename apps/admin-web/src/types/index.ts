@@ -17,10 +17,11 @@ export interface MenuItem {
 /** 当前登录用户（前端缓存用，来自 /api/me 响应） */
 export interface CurrentUser {
   id: number;
-  role: Role;
+  role: Role | string;
   name: string;
   cityId: number | null;
   cityName: string | null;
+  mustChangePassword: boolean;
 }
 
 /** 表格分页参数（前端状态用） */

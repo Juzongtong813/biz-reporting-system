@@ -8,20 +8,12 @@ import './App.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-      staleTime: 30_000,
-    },
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 },
   },
 });
 
 async function bootstrap() {
-  // MSW 条件启动（仅在开发环境 + VITE_ENABLE_MSW=true 时生效）
-  if (
-    import.meta.env.DEV &&
-    import.meta.env.VITE_ENABLE_MSW === 'true'
-  ) {
+  if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_MSW === 'true') {
     const { worker } = await import('./mocks/browser');
     await worker.start({ onUnhandledRequest: 'bypass' });
     console.log('[MSW] Mock Service Worker 已启动');
@@ -30,7 +22,21 @@ async function bootstrap() {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
-        <ConfigProvider locale={zhCN}>
+        <ConfigProvider
+          locale={zhCN}
+          theme={{
+            token: {
+              colorPrimary: '#2f9e62', colorInfo: '#2878b8', colorSuccess: '#2f9e62', colorWarning: '#c47b20', colorError: '#c64b4b',
+              colorText: '#293238', colorTextSecondary: '#68737b', colorBorder: '#dfe4e7', colorBgLayout: '#f6f8f9',
+              borderRadius: 4, fontFamily: "Inter, 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif",
+            },
+            components: {
+              Button: { controlHeight: 34 },
+              Card: { headerHeight: 44, bodyPadding: 16 },
+              Table: { cellPaddingBlock: 10, cellPaddingInline: 12, headerBg: '#f7f9fa' },
+            },
+          }}
+        >
           <App />
         </ConfigProvider>
       </QueryClientProvider>
@@ -38,4 +44,4 @@ async function bootstrap() {
   );
 }
 
-bootstrap();
+void bootstrap();

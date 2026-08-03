@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Role, UserStatus } from '@biz-reporting/shared-types';
 
 /**
@@ -20,7 +20,7 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 100 })
   name: string;
 
-  @Column({ type: 'bigint', nullable: true })
+  @Column({ name: 'city_id', type: 'bigint', nullable: true })
   cityId: number | null;
 
   @Column({ type: 'varchar', length: 128, unique: true, nullable: true })
@@ -34,6 +34,12 @@ export class UserEntity {
 
   @Column({ type: 'varchar', length: 32, default: UserStatus.ENABLED })
   status: UserStatus;
+
+  @Column({ name: 'auth_version', type: 'int', default: 1 })
+  authVersion: number;
+
+  @Column({ name: 'must_change_password', type: 'boolean', default: false })
+  mustChangePassword: boolean;
 
   @Column({ name: 'register_at', type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   registerAt: Date;

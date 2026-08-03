@@ -1,15 +1,21 @@
 import {
-  Controller, Post, Request, UseGuards, UseInterceptors,
-  UploadedFile, BadRequestException,
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  Request,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ImportJobType, Role } from '@biz-reporting/shared-types';
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { Role, ImportJobType } from '@biz-reporting/shared-types';
 import { Ws6Service } from './ws6.service';
+import { importUploadOptions } from './import-upload.config';
 
 interface AuthenticatedRequest extends Express.Request {
   user: { userId: number; role: string; cityId: number | null };
@@ -24,28 +30,46 @@ export class AdminImportsController {
   constructor(private readonly ws6Service: Ws6Service) {}
 
   @Post('contracts/upload')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
-  }))
+  @UseInterceptors(FileInterceptor('file', importUploadOptions()))
   @ApiOperation({ summary: '上传合同导入文件' })
   async uploadContracts(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Request() req: AuthenticatedRequest,
   ) {
+    return this.createFileJob(file, req, ImportJobType.CONTRACT, null);
+  }
+
+  @Post('reporting/upload')
+  @UseInterceptors(FileInterceptor('file', importUploadOptions()))
+  @ApiOperation({ summary: '上传全地市报表导入文件' })
+  async uploadReporting(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Request() req: AuthenticatedRequest,
+    @Body('cityId') cityId?: string,
+  ) {
+    return this.createFileJob(file, req, ImportJobType.CITY_REPORTING, cityId ? Number(cityId) : null);
+  }
+
+  private async createFileJob(
+    file: Express.Multer.File | undefined,
+    req: AuthenticatedRequest,
+    jobType: ImportJobType,
+    cityId: number | null,
+  ) {
     if (!file) throw new BadRequestException('请上传文件');
-
-    // 将文件内容转为 Base64 持久化到数据库
-    const fileBuffer = file.buffer;
-    const base64 = fileBuffer.toString('base64');
-
+    const fileName = Buffer.from(file.originalname, 'latin1').toString('utf8');
     const job = await this.ws6Service.createImportJob({
-      jobType: ImportJobType.CONTRACT,
+      jobType,
       operatorUserId: req.user.userId,
-      cityId: null,
-      sourceFileName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
-      sourceFileBase64: base64,
+      cityId,
+      sourceFileName: fileName,
+      sourceFileBuffer: file.buffer,
     });
-    return { jobId: job.id, status: job.status, filename: file.originalname, sourceFileUrl: job.sourceFileUrl };
+    return {
+      jobId: job.id,
+      status: job.status,
+      filename: fileName,
+      sourceFileUrl: job.sourceFileUrl,
+    };
   }
 }

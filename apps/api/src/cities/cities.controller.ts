@@ -3,11 +3,12 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CityEntity } from './city.entity';
-import { Public } from '../common/decorators/public.decorator';
+import { Permission } from '@biz-reporting/shared-types';
+import { Permissions } from '../common/decorators/permissions.decorator';
 
 @ApiTags('Cities')
-@Public()
 @Controller('cities')
+@Permissions(Permission.CITIES_READ)
 export class CitiesController {
   constructor(
     @InjectRepository(CityEntity)
@@ -15,9 +16,9 @@ export class CitiesController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: '获取城市列表（公开，无需认证）' })
+  @ApiOperation({ summary: '获取城市列表' })
   async list() {
-    const cities = await this.repo.find({ order: { sortOrder: 'ASC' } });
+    const cities = await this.repo.find({ where: { isDeleted: 0 }, order: { sortOrder: 'ASC' } });
     return cities.map((c) => ({ id: c.id, name: c.name }));
   }
 }

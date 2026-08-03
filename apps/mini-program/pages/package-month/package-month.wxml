@@ -17,6 +17,8 @@
         <view class="row-fields">
           <text class="row-value">完工 {{item.completionAmount}}</text>
           <text class="row-value">审定 {{item.acceptanceAmount}}</text>
+          <text class="row-value">开票 {{item.invoiceAmount}}</text>
+          <text class="row-value">订单 {{item.orderAmount}}</text>
         </view>
       </view>
       <view wx:if="{{contractRows.length === 0}}" class="empty-hint">暂无合同数据</view>
@@ -58,6 +60,7 @@
       <view class="section-title">合同行</view>
       <view class="contract-row" wx:for="{{contractRows}}" wx:key="contractId" wx:for-index="idx">
         <text class="contract-name">{{item.contractName || '合同 #'+item.contractId}}</text>
+        <text wx:if="{{item.contractCode}}" class="contract-name">合同号：{{item.contractCode}}</text>
         <view class="field-group">
           <view class="field">
             <text class="field-label">完工金额</text>
@@ -66,6 +69,14 @@
           <view class="field">
             <text class="field-label">审定金额</text>
             <input class="field-input" type="digit" value="{{item.acceptanceAmount}}" data-index="{{idx}}" bindinput="onContractAcceptanceInput" />
+          </view>
+          <view class="field">
+            <text class="field-label">开票金额</text>
+            <input class="field-input" type="digit" value="{{item.invoiceAmount}}" data-index="{{idx}}" bindinput="onContractInvoiceInput" placeholder="0" />
+          </view>
+          <view class="field">
+            <text class="field-label">订单金额</text>
+            <input class="field-input" type="digit" value="{{item.orderAmount}}" data-index="{{idx}}" bindinput="onContractOrderInput" placeholder="0" />
           </view>
         </view>
       </view>

@@ -4,6 +4,7 @@
  */
 
 const TOKEN_KEY = 'admin_token';
+const REMEMBERED_USERNAME_KEY = 'remembered_login_username';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -19,4 +20,17 @@ export function clearToken(): void {
 
 export function isAuthenticated(): boolean {
   return !!getToken();
+}
+
+export function getRememberedUsername(): string {
+  return localStorage.getItem(REMEMBERED_USERNAME_KEY) || '';
+}
+
+export function setRememberedUsername(username: string | null): void {
+  const normalized = username?.trim();
+  if (normalized) {
+    localStorage.setItem(REMEMBERED_USERNAME_KEY, normalized);
+  } else {
+    localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+  }
 }

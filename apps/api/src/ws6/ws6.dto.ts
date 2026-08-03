@@ -1,19 +1,21 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ExportMode, ExportScopeType, SnapshotRange, RecalcRetryMode } from '@biz-reporting/shared-types';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  ExportMode,
+  ExportScopeType,
+  RecalcRetryMode,
+  SnapshotRange,
+} from '@biz-reporting/shared-types';
 
-/** 确认导入请求校验 */
 export class ConfirmImportRequestDto {
   @IsBoolean()
   confirmOverwrite!: boolean;
 
-  /** 城市报表导入专用：目标城市 ID */
   @IsOptional()
   @IsInt()
   @Type(() => Number)
   cityId?: number | null;
 
-  /** 城市报表导入专用：目标年份 */
   @IsOptional()
   @IsInt()
   @Min(2000)
@@ -22,7 +24,6 @@ export class ConfirmImportRequestDto {
   reportYear?: number | null;
 }
 
-/** 创建导出任务请求校验 */
 export class CreateExportJobRequestDto {
   @IsEnum(ExportMode)
   exportMode!: ExportMode;
@@ -53,8 +54,52 @@ export class CreateExportJobRequestDto {
   snapshotRange?: SnapshotRange | null;
 }
 
-/** 重试重算任务请求校验 */
 export class RetryRecalcTaskRequestDto {
   @IsEnum(RecalcRetryMode)
   retryMode!: RecalcRetryMode;
+}
+
+const IMPORT_JOB_TYPES = ['contract', 'city_reporting', 'city_cost'] as const;
+const IMPORT_JOB_STATUSES = [
+  'pending',
+  'processing',
+  'previewed',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
+
+export class ImportJobListQueryDto {
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  cityId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2000)
+  @Max(2100)
+  @Type(() => Number)
+  reportYear?: number;
+
+  @IsOptional()
+  @IsIn(IMPORT_JOB_TYPES)
+  jobType?: string;
+
+  @IsOptional()
+  @IsIn(IMPORT_JOB_STATUSES)
+  status?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  page = 1;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @Type(() => Number)
+  pageSize = 20;
 }

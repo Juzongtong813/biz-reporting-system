@@ -10,18 +10,20 @@ import {
   Request,
   UseGuards,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '@biz-reporting/shared-types';
+import { Permission, Role } from '@biz-reporting/shared-types';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { ContractsService } from './contracts.service';
 import type { Express } from 'express';
 import type {
   CreateContractRequest,
+  CreateAllocationRequest,
   UpdateContractRequest,
-  PaginatedResponse,
   PaginationParams,
 } from '@biz-reporting/shared-types';
 
@@ -39,6 +41,7 @@ interface AuthenticatedRequest extends Express.Request {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SYSTEM_ADMIN)
 @Controller('admin/contracts')
+@Permissions(Permission.CONTRACTS_READ)
 export class ContractsController {
   constructor(private readonly contractsService: ContractsService) {}
 
@@ -49,7 +52,7 @@ export class ContractsController {
   @ApiOperation({ summary: '分页获取合同列表' })
   async list(
     @Query() params: PaginationParams,
-  ): Promise<PaginatedResponse<any>> {
+  ): Promise<Awaited<ReturnType<ContractsService['list']>>> {
     return this.contractsService.list(params);
   }
 
@@ -66,6 +69,7 @@ export class ContractsController {
    * 创建新合同
    */
   @Post()
+  @Permissions(Permission.CONTRACTS_CREATE)
   @ApiOperation({ summary: '创建合同' })
   @ApiResponse({ status: 201, description: '创建成功' })
   async create(
@@ -79,6 +83,7 @@ export class ContractsController {
    * 更新合同信息（OpenAPI 规定用 PATCH）
    */
   @Patch(':contractId')
+  @Permissions(Permission.CONTRACTS_UPDATE)
   @ApiOperation({ summary: '更新合同' })
   async update(
     @Param('contractId') id: number,
@@ -92,6 +97,7 @@ export class ContractsController {
    * 软删除合同（标记 is_deleted=1）
    */
   @Delete(':contractId')
+  @Permissions(Permission.CONTRACTS_SOFT_DELETE)
   @ApiOperation({ summary: '软删除合同' })
   @ApiResponse({ status: 200, description: '已软删除，快照数据不受影响' })
   async softDelete(
@@ -102,12 +108,17 @@ export class ContractsController {
   }
 
   @Delete('all/purge')
+  @Permissions(Permission.CONTRACTS_PURGE)
   @ApiOperation({ summary: '[危险] 物理清除所有合同及相关分配数据' })
   async purgeAll() {
+    throw new ForbiddenException('Physical deletion endpoint is disabled');
     try {
       return await this.contractsService.purgeAll();
-    } catch (err: any) {
-      throw new BadRequestException(err.message || '清除失败');
+    } catch (err: unknown) {
+      const errorObj: { message?: unknown } = (err && typeof err === 'object' && err !== null) ? err as { message?: unknown } : {};
+      const raw = errorObj.message;
+      const errorMessage = typeof raw === 'string' ? raw : null;
+      throw new BadRequestException(errorMessage || '清除失败');
     }
   }
 
@@ -119,14 +130,15 @@ export class ContractsController {
    * 为合同添加城市分配（OpenAPI: POST /admin/contracts/{contractId}/allocations）
    */
   @Post(':contractId/allocations')
+  @Permissions(Permission.CONTRACT_ALLOCATIONS_CREATE)
   @ApiOperation({ summary: '新增城市分配' })
   @ApiResponse({ status: 201, description: '创建成功' })
   async createAllocation(
     @Param('contractId') contractId: number,
-    @Body() dto: any, // CreateAllocationRequest
+    @Body() dto: CreateAllocationRequest,
   ) {
     // 确保 contractId 一致性
-    dto.contractId = parseInt(contractId as any, 10);
+    dto.contractId = Number(contractId);
     return this.contractsService.createAllocation(dto);
   }
 }

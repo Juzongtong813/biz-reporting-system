@@ -31,10 +31,10 @@ export class OperationLogEntity {
   summaryText: string;
 
   @Column({ name: 'before_data_json', type: 'json', nullable: true })
-  beforeDataJson: any;
+  beforeDataJson: unknown;
 
   @Column({ name: 'after_data_json', type: 'json', nullable: true })
-  afterDataJson: any;
+  afterDataJson: unknown;
 
   @Column({ name: 'result_status', type: 'varchar', length: 32 })
   resultStatus: string;

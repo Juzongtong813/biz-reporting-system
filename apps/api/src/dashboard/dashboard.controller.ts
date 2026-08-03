@@ -3,7 +3,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '@biz-reporting/shared-types';
+import { Permission, Role } from '@biz-reporting/shared-types';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import type { DashboardStats, AdminBusinessSummaryResponse } from '@biz-reporting/shared-types';
 import { DashboardService } from './dashboard.service';
 
@@ -12,6 +13,7 @@ import { DashboardService } from './dashboard.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SYSTEM_ADMIN)
 @Controller('admin/dashboard')
+@Permissions(Permission.DASHBOARD_READ)
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 

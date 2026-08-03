@@ -1,64 +1,72 @@
+import { Body, Controller, Get, Param, Patch, Post, Query, Request } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
-  Controller,
-  Get,
-  Patch,
-  Param,
-  Body,
-  Query,
-  UseGuards,
-  Request,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '@biz-reporting/shared-types';
-import type {
+  CreateManagedUserRequest,
+  CreateManagedUserResponse,
+  CreateWechatInvitationResponse,
+  PaginationParams,
+  Permission,
+  RebindUserCityRequest,
+  ResetManagedUserPasswordResponse,
+  UpdateManagedUserRoleRequest,
+  UpdateUserStatusRequest,
   UserListItem,
   UserListResponse,
-  UpdateUserStatusRequest,
-  RebindUserCityRequest,
-  PaginationParams,
 } from '@biz-reporting/shared-types';
-import type { Request as ExpressRequest } from 'express';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { AccountSecurityService, SecurityActor } from './account-security.service';
 import { UsersService } from './users.service';
 
-interface AuthenticatedRequest extends ExpressRequest {
-  user: { userId: number; role: string; cityId: number | null };
-}
+interface AuthenticatedRequest extends Express.Request { user: SecurityActor }
 
 @ApiTags('Admin - 用户管理')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SYSTEM_ADMIN)
 @Controller('admin/users')
+@Permissions(Permission.ACCOUNTS_READ)
 export class AdminUsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly security: AccountSecurityService,
+  ) {}
 
   @Get()
-  @ApiOperation({ summary: '获取用户列表' })
-  async list(@Query() params: PaginationParams): Promise<UserListResponse> {
+  list(@Query() params: PaginationParams): Promise<UserListResponse> {
     return this.usersService.list(params);
   }
 
+  @Post()
+  @Permissions(Permission.ACCOUNTS_CREATE)
+  create(@Request() req: AuthenticatedRequest, @Body() dto: CreateManagedUserRequest): Promise<CreateManagedUserResponse> {
+    return this.security.createAccount(dto, req.user);
+  }
+
   @Patch(':userId/status')
-  @ApiOperation({ summary: '启用/禁用用户' })
-  @ApiResponse({ status: 200, description: '状态更新成功' })
-  async updateStatus(
-    @Param('userId') userId: number,
-    @Body() dto: UpdateUserStatusRequest,
-  ): Promise<UserListItem> {
-    return this.usersService.updateStatus(userId, dto.status);
+  @Permissions(Permission.ACCOUNTS_UPDATE)
+  updateStatus(@Request() req: AuthenticatedRequest, @Param('userId') userId: string, @Body() dto: UpdateUserStatusRequest): Promise<UserListItem> {
+    return this.security.updateStatus(Number(userId), dto.status, req.user);
+  }
+
+  @Patch(':userId/role')
+  @Permissions(Permission.ACCOUNTS_UPDATE)
+  updateRole(@Request() req: AuthenticatedRequest, @Param('userId') userId: string, @Body() dto: UpdateManagedUserRoleRequest): Promise<UserListItem> {
+    return this.security.updateRole(Number(userId), dto, req.user);
   }
 
   @Patch(':userId/city')
-  @ApiOperation({ summary: '重新绑定城市用户到其他城市' })
-  @ApiResponse({ status: 200, description: '绑定成功' })
-  async rebindCity(
-    @Request() req: AuthenticatedRequest,
-    @Param('userId') userId: number,
-    @Body() dto: RebindUserCityRequest,
-  ): Promise<UserListItem> {
-    return this.usersService.rebindCity(userId, dto.cityId, req.user.userId);
+  @Permissions(Permission.ACCOUNTS_UPDATE)
+  updateCity(@Request() req: AuthenticatedRequest, @Param('userId') userId: string, @Body() dto: RebindUserCityRequest): Promise<UserListItem> {
+    return this.security.updateCity(Number(userId), dto.cityId, req.user);
+  }
+
+  @Post(':userId/reset-password')
+  @Permissions(Permission.ACCOUNTS_RESET_PASSWORD)
+  resetPassword(@Request() req: AuthenticatedRequest, @Param('userId') userId: string): Promise<ResetManagedUserPasswordResponse> {
+    return this.security.resetPassword(Number(userId), req.user);
+  }
+
+  @Post(':userId/wechat-invitations')
+  @Permissions(Permission.ACCOUNTS_INVITE_WECHAT)
+  createWechatInvitation(@Request() req: AuthenticatedRequest, @Param('userId') userId: string): Promise<CreateWechatInvitationResponse> {
+    return this.security.createWechatInvitation(Number(userId), req.user);
   }
 }

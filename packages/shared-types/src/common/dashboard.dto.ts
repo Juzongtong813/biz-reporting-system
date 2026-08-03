@@ -1,58 +1,58 @@
-﻿/**
- * DashboardStats - real business aggregation for admin overview cards.
- *
- * Field definitions:
- * - totalCities: cities with an annual_report_packages record for the selected year.
- * - totalContracts: non-deleted contracts.
- * - reportedThisMonth: distinct cities with a snapshot in the selected month.
- * - overdueNotSubmitted: totalCities - reportedThisMonth.
- */
+/** Dashboard cards use the same filtered fact aggregation as the business summary. */
 export interface DashboardStats {
-  /** Cities that have an annual report package for the selected year. */
-  totalCities: number;
-  /** Non-deleted contract count. */
-  totalContracts: number;
-  /** Cities that have submitted the selected month. */
-  reportedThisMonth: number;
-  /** Cities overdue and not submitted for the selected month. */
-  overdueNotSubmitted: number;
+  cityCount: number;
+  contractCount: number;
+  completionAmount: number;
+  acceptanceAmount: number;
+  invoiceAmount: number;
+  orderAmount: number;
+  actualCost: number;
+  grossProfit: number;
+  actualNetProfit: number;
+  formulaVersion: string;
 }
 
-export interface AdminBusinessSummaryQuery {
-  year: number;
-}
+export interface AdminBusinessSummaryQuery { year: number }
+
+export type AdminBusinessSummaryDataStatus = 'empty' | 'partial' | 'current';
 
 export interface AdminBusinessSummaryItem {
   cityId: number;
   cityName: string;
-  /** Annual completion amount filled by city users. */
+  dataStatus: AdminBusinessSummaryDataStatus;
   completionTotal: number;
-  /** Annual acceptance amount filled by city users. */
   acceptanceTotal: number;
-  /** Annual order gross profit calculated from completion amount and allocation rate. */
+  invoiceTotal: number;
+  orderTotal: number;
   orderGrossProfit: number;
-  /** Annual submitted cost total. */
   costTotal: number;
-  /** costTotal / completionTotal. */
   costRate: number;
-  /** costTotal / orderGrossProfit. */
   costIncomeRate: number;
-  /** orderGrossProfit - costTotal. */
   netProfit: number;
-  /** netProfit / completionTotal. */
   netProfitRate: number;
-  /** Submitted month count. */
+  /** Compatibility field name; value is the number of months with effective fact data. */
   submittedMonthCount: number;
-  /** Active contract allocation count for the city. */
   contractCount: number;
 }
 
 export interface AdminBusinessSummaryResponse {
   year: number;
+  formulaVersion: string;
+  dataSources: {
+    completionAmount: string;
+    acceptanceAmount: string;
+    invoiceAmount: string;
+    orderAmount: string;
+    actualCost: string;
+    grossProfit: string;
+    actualNetProfit: string;
+  };
   items: AdminBusinessSummaryItem[];
   totals: {
     completionTotal: number;
     acceptanceTotal: number;
+    invoiceTotal: number;
+    orderTotal: number;
     orderGrossProfit: number;
     costTotal: number;
     netProfit: number;

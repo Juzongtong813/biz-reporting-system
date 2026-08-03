@@ -1,12 +1,15 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Unique } from 'typeorm';
 
 /**
  * 维保月度填报行实体
  * 对应 DDL report_maintenance_monthly_rows 表
  *
  * 按城市配置启用（city_config.enable_maintenance = 1 时显示）
+ * 唯一约束: package_id + month_no
+ * （F-01 纠偏令 IMP-1：与 001 DDL uk_maintenance_rows_pkg_month 完全一致）
  */
 @Entity('report_maintenance_monthly_rows')
+@Unique('uk_maintenance_rows_pkg_month', ['packageId', 'monthNo'])
 export class MaintenanceMonthRowEntity {
   @PrimaryGeneratedColumn()
   id: number;

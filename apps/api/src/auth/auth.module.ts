@@ -6,22 +6,32 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserEntity } from '../users/user.entity';
 import { AuthController } from './auth.controller';
+import { AuthLoginRateLimitEntity } from './auth-login-rate-limit.entity';
+import { AuthSecurityEventEntity } from './auth-security-event.entity';
 import { AuthService } from './auth.service';
+import { LoginSecurityService } from './login-security.service';
 import { WechatService } from './wechat.service';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { requireJwtAudience, requireJwtIssuer, requireJwtSecret } from './jwt.config';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity]),
+    TypeOrmModule.forFeature([UserEntity, AuthLoginRateLimitEntity, AuthSecurityEventEntity]),
     UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') || 'biz-reporting-jwt-secret-change-in-production',
-        signOptions: { expiresIn: config.get<string>('JWT_EXPIRES_IN') || '8h' },
+        secret: requireJwtSecret(config),
+        signOptions: {
+          expiresIn: config.get<string>('JWT_EXPIRES_IN') || '8h',
+          // C-05：签发与 JwtStrategy 验证使用同一 issuer/audience（C-03 校验必填），
+          // 否则 strategy 验证 issuer/audience 而签发不带会导致所有 token 验证失败。
+          issuer: requireJwtIssuer(config),
+          audience: requireJwtAudience(config),
+        },
       }),
     }),
     HttpModule.register({
@@ -30,7 +40,7 @@ import { UsersModule } from '../users/users.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, WechatService, JwtStrategy],
-  exports: [AuthService, WechatService, JwtModule, PassportModule],
+  providers: [AuthService, WechatService, JwtStrategy, LoginSecurityService],
+  exports: [AuthService, WechatService, LoginSecurityService, JwtModule, PassportModule],
 })
 export class AuthModule {}

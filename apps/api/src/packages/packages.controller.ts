@@ -11,7 +11,7 @@ import {
   Request,
   BadRequestException,
 } from '@nestjs/common';
-import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
+import type { Request as ExpressRequest } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -26,10 +26,9 @@ import {
 /** 扩展 Express.Request，挂载 JWT 认证后的用户信息 */
 interface AuthenticatedRequest extends ExpressRequest {
   user: {
-    sub: number;
+    userId: number;
     role: string;
-    cityId?: number | null;
-    name?: string;
+    cityId: number | null;
   };
 }
 

@@ -9,7 +9,7 @@
  * - 软删除操作（确认后执行）
  * - 城市分配管理：新增/编辑/删除（含 estimatedOrderAmount2026 等 4 字段）
  */
-import { useState, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Table,
   Button,
@@ -26,7 +26,6 @@ import {
   message,
   Card,
   Divider,
-  Select,
 } from 'antd';
 import {
   PlusOutlined,
@@ -38,13 +37,12 @@ import {
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as contractsApi from '@/api/contracts.api';
-import type { Contract, ContractCityAllocation, CreateContractRequest } from '@biz-reporting/shared-types';
+import type { Contract, ContractCityAllocation, CreateContractRequest, CreateAllocationRequest, UpdateContractRequest, UpdateAllocationRequest } from '@biz-reporting/shared-types';
 import type { TablePagination } from '@/types';
 import dayjs from 'dayjs';
 
-const { RangePicker } = DatePicker;
 
-export default function Contracts() {
+export default function Contracts({ readOnly = false }: { readOnly?: boolean }) {
   const queryClient = useQueryClient();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [pagination, setPagination] = useState<TablePagination>({
@@ -104,7 +102,7 @@ export default function Contracts() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<CreateContractRequest> }) =>
-      contractsApi.updateContract(id, data as any),
+      contractsApi.updateContract(id, data as UpdateContractRequest),
     onSuccess: () => {
       message.success('合同更新成功');
       setContractModalOpen(false);
@@ -124,7 +122,7 @@ export default function Contracts() {
 
   // ---- 分配 Mutation ----
   const createAllocMutation = useMutation({
-    mutationFn: ({ contractId, data }: { contractId: number; data: any }) =>
+    mutationFn: ({ contractId, data }: { contractId: number; data: Omit<CreateAllocationRequest, 'contractId'> }) =>
       contractsApi.createAllocation(contractId, data),
     onSuccess: () => {
       message.success('分配创建成功');
@@ -135,7 +133,7 @@ export default function Contracts() {
   });
 
   const updateAllocMutation = useMutation({
-    mutationFn: ({ allocId, data }: { allocId: number; data: any }) =>
+    mutationFn: ({ allocId, data }: { allocId: number; data: UpdateAllocationRequest }) =>
       contractsApi.updateAllocation(allocId, data),
     onSuccess: () => {
       message.success('分配更新成功');
@@ -151,18 +149,6 @@ export default function Contracts() {
     onSuccess: () => {
       message.success('分配已删除');
       if (detailContract) loadContractDetail(detailContract.id);
-    },
-  });
-
-  // ---- 清空所有合同 ----
-  const purgeMutation = useMutation({
-    mutationFn: () => contractsApi.purgeContracts(),
-    onSuccess: () => {
-      message.success('所有合同已清除');
-      queryClient.invalidateQueries({ queryKey: ['contracts'] });
-    },
-    onError: (e: any) => {
-      message.error(e?.response?.data?.message || '清除失败');
     },
   });
 
@@ -194,8 +180,8 @@ export default function Contracts() {
       contractName: contract.contractName,
       contractAmount: contract.contractAmount,
       rate: contract.rate,
-      signDate: contract.signDate ? dayjs(contract.signDate as any) : undefined,
-      expireDate: contract.expireDate ? dayjs(contract.expireDate as any) : undefined,
+      signDate: contract.signDate ? dayjs(contract.signDate) : undefined,
+      expireDate: contract.expireDate ? dayjs(contract.expireDate) : undefined,
     });
     setContractModalOpen(true);
   }
@@ -256,20 +242,20 @@ export default function Contracts() {
 
   function handleAllocModalOk() {
     allocForm.validateFields().then((values) => {
-      const allocData = {
-        cityId: values.cityId,
-        cityContractAmount: values.cityContractAmount || 0,
-        rate: values.rate || 0,
-        estimatedOrderAmount2026: values.estimatedOrderAmount2026,
-        estimatedIncomeAmount2026: values.estimatedIncomeAmount2026,
+      const baseAllocData = {
+        cityId: Number(values.cityId),
+        cityContractAmount: Number(values.cityContractAmount || 0),
+        rate: Number(values.rate || 0),
+        estimatedOrderAmount2026: values.estimatedOrderAmount2026 != null ? Number(values.estimatedOrderAmount2026) : undefined,
+        estimatedIncomeAmount2026: values.estimatedIncomeAmount2026 != null ? Number(values.estimatedIncomeAmount2026) : undefined,
         remark: values.remark || null,
         sourceCityName: values.sourceCityName || null,
       };
 
       if (editingAllocation) {
-        updateAllocMutation.mutate({ allocId: editingAllocation.id, data: allocData });
+        updateAllocMutation.mutate({ allocId: editingAllocation.id, data: { ...baseAllocData, contractId: editingAllocation.contractId } });
       } else if (detailContract) {
-        createAllocMutation.mutate({ contractId: detailContract.id, data: allocData });
+        createAllocMutation.mutate({ contractId: detailContract.id, data: baseAllocData });
       }
     });
   }
@@ -315,8 +301,8 @@ export default function Contracts() {
       title: '分配城市',
       key: 'cities',
       width: 200,
-      render: (_: unknown, record: any) => {
-        const cities = record.cities as Array<{ cityId: number; cityName: string }> | undefined;
+      render: (_: unknown, record: Contract) => {
+        const cities = (record as Contract & { cities?: Array<{ cityId: number; cityName: string }> }).cities;
         if (!cities || cities.length === 0) {
           return <Tag color="default">未分配</Tag>;
         }
@@ -343,7 +329,7 @@ export default function Contracts() {
       title: '状态',
       key: 'status',
       width: 80,
-      render: (_: any, record: Contract) =>
+      render: (_: unknown, record: Contract) =>
         record.isDeleted ? (
           <Tag color="red">已删除</Tag>
         ) : (
@@ -354,7 +340,7 @@ export default function Contracts() {
       title: '操作',
       key: 'actions',
       width: 200,
-      render: (_: any, record: Contract) => (
+      render: (_: unknown, record: Contract) => (
         <Space size="small">
           <Button
             type="link"
@@ -364,7 +350,7 @@ export default function Contracts() {
           >
             详情
           </Button>
-          {!record.isDeleted && (
+          {!readOnly && !record.isDeleted && (
             <>
               <Button
                 type="link"
@@ -395,7 +381,7 @@ export default function Contracts() {
   // ---- 分配表格列 ----
   const allocationColumns = [
     {
-      title: '城市ID',
+      title: '地市编号',
       dataIndex: 'cityId',
       key: 'cityId',
       width: 80,
@@ -450,7 +436,7 @@ export default function Contracts() {
       title: '操作',
       key: 'allocActions',
       width: 140,
-      render: (_: any, record: ContractCityAllocation) => (
+      render: (_: unknown, record: ContractCityAllocation) => readOnly ? null : (
         <Space size="small">
           <Button
             type="link"
@@ -491,21 +477,9 @@ export default function Contracts() {
           <Button icon={<ReloadOutlined />} onClick={() => refetch()} loading={isLoading}>
             刷新
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          {!readOnly && <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
             新建合同
-          </Button>
-          <Popconfirm
-            title="确定清空所有合同？"
-            description="此操作不可恢复！合同、城市分配、经营测算指标将全部物理删除。"
-            onConfirm={() => purgeMutation.mutate()}
-            okText="确认清除"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-          >
-            <Button danger loading={purgeMutation.isPending}>
-              清空所有合同
-            </Button>
-          </Popconfirm>
+          </Button>}
         </Space>
       </Card>
 
@@ -617,12 +591,12 @@ export default function Contracts() {
               </Descriptions.Item>
               <Descriptions.Item label="签订日期">
                 {detailContract.signDate
-                  ? new Date(detailContract.signDate as any).toLocaleDateString('zh-CN')
+                  ? new Date(detailContract.signDate).toLocaleDateString('zh-CN')
                   : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="到期日期">
                 {detailContract.expireDate
-                  ? new Date(detailContract.expireDate as any).toLocaleDateString('zh-CN')
+                  ? new Date(detailContract.expireDate).toLocaleDateString('zh-CN')
                   : '-'}
               </Descriptions.Item>
               <Descriptions.Item label="状态">
@@ -639,7 +613,7 @@ export default function Contracts() {
             {/* 城市分配列表 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h4 style={{ margin: 0 }}>城市分配与经营测算</h4>
-              <Button
+              {!readOnly && <Button
                 type="primary"
                 size="small"
                 icon={<PlusOutlined />}
@@ -647,7 +621,7 @@ export default function Contracts() {
                 disabled={!!detailContract.isDeleted}
               >
                 新增分配
-              </Button>
+              </Button>}
             </div>
             <Table
               rowKey="id"
@@ -680,10 +654,10 @@ export default function Contracts() {
         <Form form={allocForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
             name="cityId"
-            label="城市ID"
-            rules={[{ required: true, message: '请输入城市ID' }]}
+            label="地市编号"
+            rules={[{ required: true, message: '请输入地市编号' }]}
           >
-            <InputNumber min={1} style={{ width: '100%' }} placeholder="城市ID" disabled={!!editingAllocation} />
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="地市编号" disabled={!!editingAllocation} />
           </Form.Item>
           <Form.Item
             name="cityContractAmount"

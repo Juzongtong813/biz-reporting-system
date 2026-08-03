@@ -7,10 +7,10 @@
  * 所有 handler 名称以 handle 前缀命名，便于识别。
  */
 import { http, HttpResponse } from 'msw';
-import { UserStatus } from '@biz-reporting/shared-types';
+import { Role, UserStatus } from '@biz-reporting/shared-types';
 import type { CreateContractRequest, UpdateContractRequest } from '@biz-reporting/shared-types';
 import {
-  mockLoginResponse,
+  mockLoginResponse, mockLoginAccounts,
   mockMeResponse,
   mockContracts,
   mockUserList,
@@ -20,9 +20,9 @@ import {
 } from './data';
 
 // 内存态状态（支持简单 CRUD 操作）
-let contracts = [...mockContracts];
+const contracts = [...mockContracts];
 let nextContractId = mockContracts.length + 1;
-let users = [...mockUserList];
+const users = [...mockUserList];
 
 export const handlers = [
   // ----------------------------------------------------------
@@ -32,6 +32,18 @@ export const handlers = [
   /** POST /api/auth/admin/login */
   http.post('/api/auth/admin/login', async ({ request }) => {
     const body = (await request.json()) as { username: string; password: string };
+    if (body.username !== 'admin' || body.password !== 'admin123456') {
+      const account = Object.values(mockLoginAccounts).find((item) =>
+        item.username === body.username && item.password === body.password,
+      );
+      if (!account) {
+        return HttpResponse.json({ code: 401, message: '账号或密码错误' }, { status: 401 });
+      }
+      if (account.meResponse.status === UserStatus.DISABLED) {
+        return HttpResponse.json({ code: 403, message: '账号已停用' }, { status: 403 });
+      }
+      return HttpResponse.json(account.loginResponse);
+    }
     // Mock 模式下接受任意用户名密码
     if (!body.username || !body.password) {
       return HttpResponse.json(
@@ -42,9 +54,43 @@ export const handlers = [
     return HttpResponse.json(mockLoginResponse);
   }),
 
+  /** POST /api/auth/city/login */
+  http.post('/api/auth/city/login', async ({ request }) => {
+    const body = (await request.json()) as { username: string; password: string };
+    const account = Object.values(mockLoginAccounts).find((item) =>
+      item.meResponse.role === Role.CITY_USER &&
+      item.username === body.username &&
+      item.password === body.password,
+    );
+    if (!account) {
+      return HttpResponse.json({ code: 401, message: '地市账号或密码错误' }, { status: 401 });
+    }
+    if (account.meResponse.status === UserStatus.DISABLED) {
+      return HttpResponse.json({ code: 403, message: '地市账号已停用' }, { status: 403 });
+    }
+    return HttpResponse.json(account.loginResponse);
+  }),
+
+  /** GET /api/cities */
+  http.get('/api/cities', () => {
+    return HttpResponse.json([
+      { id: 1, name: '淄博' },
+      { id: 2, name: '济南' },
+      { id: 3, name: '德州' },
+    ]);
+  }),
   /** GET /api/me */
-  http.get('/api/me', () => {
-    return HttpResponse.json(mockMeResponse);
+  http.get('/api/me', ({ request }) => {
+    const authorization = request.headers.get('authorization') ?? '';
+    if (authorization.includes(mockLoginResponse.token)) {
+      return HttpResponse.json(mockMeResponse);
+    }
+    const account = Object.values(mockLoginAccounts).find((item) =>
+      authorization.includes(item.loginResponse.token),
+    );
+    return account
+      ? HttpResponse.json(account.meResponse)
+      : HttpResponse.json({ code: 401, message: '模拟登录状态已失效' }, { status: 401 });
   }),
 
   // ----------------------------------------------------------

@@ -1,153 +1,145 @@
-/**
- * AdminLayout — 后台标准布局框架
- *
- * 左侧菜单 + 顶部面包屑&用户区 + 右侧内容区
- * 使用 Ant Design Layout 组件，手写轻量版（不引入 pro-components）。
- */
-import { useState } from 'react';
-import { Layout, Menu, Button, Breadcrumb, Dropdown, Space, Typography } from 'antd';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Button, Dropdown } from 'antd';
 import {
+  AuditOutlined,
+  BarChartOutlined,
+  CloudUploadOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
+  FileSearchOutlined,
   FileTextOutlined,
-  SnippetsOutlined,
-  TeamOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  UserOutlined,
   LogoutOutlined,
-  ExperimentOutlined,
+  MenuOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  SwapOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { clearToken } from '@/utils/auth';
-import type { MenuItem } from '@/types';
+import { logout } from '@/api/auth.api';
+import { isCityRole, isContractManagerRole, isRootRole } from '@/auth/role-routing';
+import type { CurrentUser } from '@/types';
+import { navigateWithV3Context } from '@/utils/v3-context';
+import V3ContextBar from '@/components/V3ContextBar';
 
-const { Header, Sider, Content } = Layout;
-const { Text } = Typography;
-
-const menuItems: MenuItem[] = [
-  { key: '/admin/dashboard', label: '仪表盘', icon: <DashboardOutlined />, path: '/admin/dashboard' },
-  { key: '/admin/contracts', label: '合同管理', icon: <FileTextOutlined />, path: '/admin/contracts' },
-  { key: '/admin/packages', label: '报表包管理', icon: <SnippetsOutlined />, path: '/admin/packages' },
-  { key: '/admin/users', label: '用户管理', icon: <TeamOutlined />, path: '/admin/users' },
-  { key: '/admin/ws6-tasks', label: '任务中心', icon: <ExperimentOutlined />, path: '/admin/ws6-tasks' },
-];
-
-interface AdminLayoutProps {
-  children: React.ReactNode;
+interface NavItem {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  path: string;
+  query?: string;
 }
 
-export default function AdminLayout({ children }: AdminLayoutProps) {
-  const [collapsed, setCollapsed] = useState(false);
+const adminItems: NavItem[] = [
+  { key: '/admin/dashboard', label: '经营仪表盘', icon: <DashboardOutlined />, path: '/admin/dashboard' },
+  { key: '/admin/overview', label: '工作总览', icon: <BarChartOutlined />, path: '/admin/overview' },
+  { key: '/admin/city-compare', label: '地市测算', icon: <SwapOutlined />, path: '/admin/city-compare' },
+  { key: '/admin/city-data', label: '地市数据', icon: <DatabaseOutlined />, path: '/admin/city-data' },
+  { key: '/admin/contracts', label: '合同管理', icon: <FileTextOutlined />, path: '/admin/contracts' },
+  { key: '/admin/data-intake', label: '数据接入', icon: <CloudUploadOutlined />, path: '/admin/data-intake' },
+  { key: '/admin/versions', label: '版本与审计', icon: <AuditOutlined />, path: '/admin/versions' },
+  { key: '/system/access-control', label: '账号与权限', icon: <SafetyCertificateOutlined />, path: '/system/access-control' },
+  { key: '/admin/settings', label: '系统设置', icon: <SettingOutlined />, path: '/admin/settings' },
+];
+
+const cityItems: NavItem[] = [
+  { key: '/city/overview', label: '本地市总览', icon: <DashboardOutlined />, path: '/city/overview' },
+  { key: '/city/data?view=summary', label: '本地市数据', icon: <DatabaseOutlined />, path: '/city/data', query: 'view=summary' },
+  { key: '/city/data?view=contracts', label: '本地合同', icon: <FileTextOutlined />, path: '/city/data', query: 'view=contracts' },
+  { key: '/city/data?view=costs', label: '本地市成本', icon: <FileSearchOutlined />, path: '/city/data', query: 'view=costs' },
+  { key: '/city/data?view=orders', label: '本地市订单', icon: <SwapOutlined />, path: '/city/data', query: 'view=orders' },
+  { key: '/city/upload', label: '数据接入与历史', icon: <CloudUploadOutlined />, path: '/city/upload' },
+  { key: '/city/versions', label: '版本与审计', icon: <AuditOutlined />, path: '/city/versions' },
+  { key: '/city/settings', label: '用户设置', icon: <SettingOutlined />, path: '/city/settings' },
+];
+
+const contractItems: NavItem[] = [
+  { key: '/admin/contracts', label: '合同管理', icon: <FileTextOutlined />, path: '/admin/contracts' },
+  { key: '/admin/settings', label: '用户设置', icon: <SettingOutlined />, path: '/admin/settings' },
+];
+
+function isSelected(item: NavItem, pathname: string, search: string): boolean {
+  if (pathname !== item.path) return false;
+  if (!item.query) return true;
+  return new URLSearchParams(search).get('view') === new URLSearchParams(item.query).get('view');
+}
+
+export default function AdminLayout({ children, currentUser }: { children: ReactNode; currentUser: CurrentUser }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const items = isCityRole(currentUser.role) ? cityItems : isContractManagerRole(currentUser.role) ? contractItems : adminItems.filter((item) => isRootRole(currentUser.role) || item.key !== '/system/access-control');
+  const allItems = useMemo(() => [...adminItems, ...cityItems, ...contractItems], []);
+  const currentItem = allItems.find((item) => isSelected(item, location.pathname, location.search));
 
-  // 根据当前路径高亮菜单
-  const selectedKey = menuItems.find((item) =>
-    location.pathname.startsWith(item.key),
-  )?.key;
+  const handleLogout = () => {
+    void logout().finally(() => {
+      clearToken();
+      navigate('/login', { replace: true });
+    });
+  };
 
-  // 面包屑：从路径中解析
-  const pathParts = location.pathname.split('/').filter(Boolean);
-  const breadcrumbItems = [
-    { title: '首页' },
-    ...pathParts.slice(1).map((part) => ({
-      title: menuItems.find((m) => m.key.includes(part))?.label || part,
-    })),
-  ];
-
-  function handleMenuClick({ key }: { key: string }) {
-    navigate(key);
-  }
-
-  function handleLogout() {
-    clearToken();
-    navigate('/login', { replace: true });
-  }
-
-  const userMenuItems = [
-    {
-      key: 'logout',
-      icon: <LogoutOutlined />,
-      label: '退出登录',
-      onClick: handleLogout,
-    },
-  ];
+  const navigateMenu = (item: NavItem) => {
+    const target = item.query ? `${item.path}?${item.query}` : item.path;
+    navigate(navigateWithV3Context(target, location.search));
+    setMobileOpen(false);
+  };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      {/* 左侧边栏 */}
-      <Sider
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        theme="dark"
-        width={220}
-      >
-        <div
-          style={{
-            height: 48,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '8px 0',
-          }}
-        >
-          <Text
-            strong
-            style={{
-              color: '#fff',
-              fontSize: collapsed ? 14 : 16,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {collapsed ? '经营' : '经营单元上报系统'}
-          </Text>
+    <div className="v3-shell">
+      <aside className={`v3-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
+        <div className="v3-brand">
+          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术有限公司" />
+          <div className="v3-brand-copy">
+            <strong>经营数据中台</strong>
+            <span>{isCityRole(currentUser.role) ? '地市经营工作台' : '经营协同 · 数据治理'}</span>
+          </div>
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={selectedKey ? [selectedKey] : []}
-          items={menuItems.map((item) => ({
-            key: item.key,
-            icon: item.icon,
-            label: item.label,
-          }))}
-          onClick={handleMenuClick}
-        />
-      </Sider>
-
-      <Layout>
-        {/* 顶部栏 */}
-        <Header
-          style={{
-            background: '#fff',
-            padding: '0 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            borderBottom: '1px solid #f0f0f0',
-          }}
-        >
-          <Space>
-            <Button
-              type="text"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setCollapsed(!collapsed)}
-            />
-            <Breadcrumb items={breadcrumbItems} />
-          </Space>
-
-          <Dropdown menu={{ items: userMenuItems }} trigger={['click']}>
-            <Space style={{ cursor: 'pointer' }}>
+        <nav className="v3-nav">
+          <div className="v3-nav-group">
+            <div className="v3-nav-heading">工作台</div>
+            {items.slice(0, isCityRole(currentUser.role) ? 6 : items.length).map((item) => (
+              <button key={item.key} className={`v3-nav-link${isSelected(item, location.pathname, location.search) ? ' is-active' : ''}`} onClick={() => navigateMenu(item)} type="button">
+                {item.icon}<span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+          {isCityRole(currentUser.role) && (
+            <div className="v3-nav-group">
+              <div className="v3-nav-heading">系统</div>
+              {items.slice(6).map((item) => (
+                <button key={item.key} className={`v3-nav-link${isSelected(item, location.pathname, location.search) ? ' is-active' : ''}`} onClick={() => navigateMenu(item)} type="button">
+                  {item.icon}<span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </nav>
+        <div className="v3-sidebar-footer">
+          <div className="v3-user-badge"><UserOutlined /></div>
+          <div className="v3-sidebar-user"><strong>{currentUser.name}</strong><span>{isCityRole(currentUser.role) ? currentUser.cityName || '地市账号' : '平台管理员'}</span></div>
+          <Button className="v3-sidebar-logout" type="text" icon={<LogoutOutlined />} aria-label="退出登录" onClick={handleLogout} />
+        </div>
+      </aside>
+      {mobileOpen && <button className="v3-sidebar-backdrop" aria-label="关闭导航" type="button" onClick={() => setMobileOpen(false)} />}
+      <div className="v3-main">
+        <header className="v3-topbar">
+          <div className="v3-topbar-left">
+            <Button className="v3-menu-toggle" type="text" icon={<MenuOutlined />} aria-label="打开导航" onClick={() => setMobileOpen(true)} />
+            <div className="v3-topbar-title"><span className="v3-topbar-scope">{isCityRole(currentUser.role) ? '地市工作区' : '省级工作区'}</span><span className="v3-topbar-divider"> / </span><span className="v3-topbar-page">{currentItem?.label || '工作台'}</span></div>
+          </div>
+          <Dropdown menu={{ items: [{ key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: handleLogout }] }} trigger={['click']}>
+            <button className="v3-topbar-user" type="button" aria-label="打开用户菜单">
+              <span className="v3-role-tag">{isCityRole(currentUser.role) ? currentUser.cityName || '地市账号' : '平台管理员'}</span>
               <UserOutlined />
-              <Text>管理员</Text>
-            </Space>
+              <span className="v3-topbar-name">{currentUser.name}</span>
+            </button>
           </Dropdown>
-        </Header>
-
-        {/* 内容区 */}
-        <Content style={{ margin: 16, minHeight: 280 }}>{children}</Content>
-      </Layout>
-    </Layout>
+        </header>
+        <div className="v3-context-wrap"><V3ContextBar currentUser={currentUser} /></div>
+        <main className="v3-content">{children}</main>
+      </div>
+    </div>
   );
 }

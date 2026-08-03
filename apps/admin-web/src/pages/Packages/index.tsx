@@ -30,6 +30,12 @@ export default function Packages() {
   const [unlockMonths, setUnlockMonths] = useState<number[]>([]);
   const [unlockExpire, setUnlockExpire] = useState<string>('');
 
+  const [bulkUnlockModalOpen, setBulkUnlockModalOpen] = useState(false);
+  const [bulkUnlockYear, setBulkUnlockYear] = useState<number>(new Date().getFullYear());
+  const [bulkUnlockMonths, setBulkUnlockMonths] = useState<number[]>([]);
+  const [bulkUnlockExpire, setBulkUnlockExpire] = useState<string>('');
+  const [bulkUnlockReason, setBulkUnlockReason] = useState<string>('');
+
   const [openContractModal, setOpenContractModal] = useState<{
     open: boolean;
     pkg: AdminPackageItem | null;
@@ -86,9 +92,35 @@ export default function Packages() {
       .catch(() => undefined);
   };
 
+  const handleBulkUnlock = () => {
+    if (!bulkUnlockYear || bulkUnlockMonths.length === 0 || !bulkUnlockExpire) {
+      message.warning('请填写年度、解锁月份和过期时间');
+      return;
+    }
+
+    packagesApi
+      .bulkUnlockMonths({
+        year: bulkUnlockYear,
+        months: bulkUnlockMonths,
+        expiresAt: bulkUnlockExpire,
+        reason: bulkUnlockReason.trim() || undefined,
+      })
+      .then((res) => {
+        message.success(
+          `已处理 ${res.packageCount} 个报表包，新增 ${res.createdGrantCount} 条授权，跳过 ${res.skippedActiveGrantCount} 条未过期授权`,
+        );
+        setBulkUnlockModalOpen(false);
+        setBulkUnlockMonths([]);
+        setBulkUnlockExpire('');
+        setBulkUnlockReason('');
+        fetchData();
+      })
+      .catch(() => undefined);
+  };
+
   const handleOpenContract = () => {
     if (!openContractModal.pkg || !openMonth || !openContractId) {
-      message.warning('请填写月份和合同 ID');
+      message.warning('请填写月份和合同编号');
       return;
     }
 
@@ -109,11 +141,25 @@ export default function Packages() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          报表包管理
-        </Typography.Title>
-        <Text type="secondary">查看地市年度报表包状态，并处理退回、解锁和合同开放。</Text>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            报表包管理
+          </Typography.Title>
+          <Text type="secondary">查看地市年度报表包状态，并处理退回、解锁和合同开放。</Text>
+        </div>
+        <Button
+          icon={<UnlockOutlined />}
+          onClick={() => {
+            setBulkUnlockYear(new Date().getFullYear());
+            setBulkUnlockMonths([]);
+            setBulkUnlockExpire('');
+            setBulkUnlockReason('');
+            setBulkUnlockModalOpen(true);
+          }}
+        >
+          批量解锁全部地市
+        </Button>
       </div>
 
       <Table<AdminPackageItem>
@@ -267,6 +313,50 @@ export default function Packages() {
       </Modal>
 
       <Modal
+        title="批量解锁全部地市"
+        open={bulkUnlockModalOpen}
+        onOk={handleBulkUnlock}
+        onCancel={() => setBulkUnlockModalOpen(false)}
+        okText="确认批量解锁"
+        cancelText="取消"
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Text type="secondary">对所选年度下所有已有报表包批量开放指定月份的编辑权限。</Text>
+          <Input
+            type="number"
+            min={2000}
+            max={2100}
+            placeholder="年度，例如 2026"
+            value={bulkUnlockYear || undefined}
+            onChange={(e) => setBulkUnlockYear(Number(e.target.value))}
+          />
+          <Input
+            placeholder="月份，逗号分隔，例如 1,2,5"
+            value={bulkUnlockMonths.join(',')}
+            onChange={(e) =>
+              setBulkUnlockMonths(
+                e.target.value
+                  .split(',')
+                  .map((item) => Number(item.trim()))
+                  .filter((month) => month >= 1 && month <= 12),
+              )
+            }
+          />
+          <DatePicker
+            showTime
+            style={{ width: '100%' }}
+            value={bulkUnlockExpire ? dayjs(bulkUnlockExpire) : null}
+            onChange={(date) => setBulkUnlockExpire(date?.toISOString() ?? '')}
+          />
+          <Input.TextArea
+            rows={3}
+            placeholder="解锁原因（可选）"
+            value={bulkUnlockReason}
+            onChange={(e) => setBulkUnlockReason(e.target.value)}
+          />
+        </Space>
+      </Modal>
+      <Modal
         title="开放合同填报权限"
         open={openContractModal.open}
         onOk={handleOpenContract}
@@ -276,6 +366,7 @@ export default function Packages() {
       >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           <Text>城市：{openContractModal.pkg?.cityName ?? '-'}</Text>
+          <Text type="secondary">用于给指定月份补开放合同；若该月已提交，请先用「解锁月份」。</Text>
           <Input
             type="number"
             min={1}
@@ -286,7 +377,7 @@ export default function Packages() {
           />
           <Input
             type="number"
-            placeholder="合同 ID"
+            placeholder="合同编号"
             value={openContractId || undefined}
             onChange={(e) => setOpenContractId(Number(e.target.value))}
           />

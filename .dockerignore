@@ -18,3 +18,22 @@ packages/**/src/**/*.js
 packages/**/src/**/*.d.ts
 packages/**/src/**/*.js.map
 packages/**/src/**/*.d.ts.map
+
+
+# Deployment-preflight exclusions
+.cloudrun-deploy-*/
+analysis-output/
+apps/api/.tmp-security-test/
+apps/api/data/
+apps/api/cloudbaserc.json
+cloudbaserc.json
+.cloudbaserc
+db-cleanup-backups/
+db-import-backups/
+db-import-logs/
+deploy-flat/
+deploy-output/
+deploy-test/
+scripts/oneoff/
+**/*.bak
+

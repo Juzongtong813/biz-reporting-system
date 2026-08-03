@@ -3,12 +3,14 @@ import { ApiTags, ApiBearerAuth, ApiQuery, ApiOperation } from '@nestjs/swagger'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '@biz-reporting/shared-types';
+import { Permission, Role } from '@biz-reporting/shared-types';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { OperationLogsService } from './operation-logs.service';
 import { OperationLogListRequest } from '@biz-reporting/shared-types';
 
 @ApiTags('OperationLogs')
 @Controller('admin/operation-logs')
+@Permissions(Permission.OPERATION_LOGS_READ)
 export class OperationLogsController {
   constructor(private readonly service: OperationLogsService) {}
 

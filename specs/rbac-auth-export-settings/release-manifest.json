@@ -1,0 +1,103 @@
+{
+    "version":  "checkpoint-source-v2-2026-08-03",
+    "immutableMigrationManifest":  "scripts/db/migration-checksums.json",
+    "sourceList":  "specs/rbac-auth-export-settings/release-source-files.txt",
+    "forbiddenCandidateList":  "specs/rbac-auth-export-settings/release-forbidden-files.txt",
+    "generatedArtifacts":  [
+                               {
+                                   "id":  "shared-types",
+                                   "producer":  "pnpm --filter @biz-reporting/shared-types build",
+                                   "outputDirectory":  "packages/shared-types/dist",
+                                   "requiredFiles":  [
+                                                         "packages/shared-types/dist/index.js",
+                                                         "packages/shared-types/dist/index.d.ts"
+                                                     ],
+                                   "mustBeIgnored":  true,
+                                   "mustBeUntracked":  true,
+                                   "sourceDirectory":  "packages/shared-types/src",
+                                   "forbiddenSourceExtensions":  [
+                                                                     ".js",
+                                                                     ".js.map",
+                                                                     ".d.ts",
+                                                                     ".d.ts.map"
+                                                                 ]
+                               },
+                               {
+                                   "id":  "shared-constants",
+                                   "producer":  "pnpm --filter @biz-reporting/shared-constants build",
+                                   "outputDirectory":  "packages/shared-constants/dist",
+                                   "requiredFiles":  [
+                                                         "packages/shared-constants/dist/index.js"
+                                                     ],
+                                   "mustBeIgnored":  true,
+                                   "mustBeUntracked":  true
+                               },
+                               {
+                                   "id":  "api",
+                                   "producer":  "pnpm --filter @biz-reporting/api build",
+                                   "outputDirectory":  "apps/api/dist",
+                                   "requiredFiles":  [
+                                                         "apps/api/dist/main.js"
+                                                     ],
+                                   "mustBeIgnored":  true,
+                                   "mustBeUntracked":  true
+                               },
+                               {
+                                   "id":  "admin",
+                                   "producer":  "pnpm --filter @biz-reporting/admin-web build",
+                                   "outputDirectory":  "apps/admin-web/dist",
+                                   "requiredFiles":  [
+                                                         "apps/admin-web/dist/index.html"
+                                                     ],
+                                   "mustBeIgnored":  true,
+                                   "mustBeUntracked":  true
+                               },
+                               {
+                                   "id":  "hosting-bundle",
+                                   "producer":  "pnpm release:hosting-bundle",
+                                   "outputDirectory":  "scripts/release/out",
+                                   "requiredFiles":  [
+
+                                                     ],
+                                   "mustBeIgnored":  true,
+                                   "mustBeUntracked":  true,
+                                   "requiredForCheckpoint":  false,
+                                   "verifier":  "pnpm test:hosting-bundle"
+                               }
+                           ],
+    "releaseEvidence":  {
+                            "governanceDirectory":  "evidence/governance",
+                            "includedInSourceDigest":  false,
+                            "requiredForCheckpoint":  false,
+                            "requiredForRelease":  true
+                        },
+    "publicConfiguration":  [
+                                {
+                                    "path":  "apps/admin-web/.env.production",
+                                    "classification":  "PUBLIC_FRONTEND_BUILD_CONFIG",
+                                    "allowedKeys":  [
+                                                        "VITE_ENABLE_MSW",
+                                                        "VITE_API_BASE_URL"
+                                                    ]
+                                },
+                                {
+                                    "path":  "cloudbaserc.json",
+                                    "classification":  "PUBLIC_RESOURCE_IDENTIFIER_CONFIG",
+                                    "allowedJsonPaths":  [
+                                                             "envId",
+                                                             "cloudrun.name"
+                                                         ]
+                                }
+                            ],
+    "nonReleasePaths":  [
+                            "body-detail.json",
+                            "project.private.config.json",
+                            "apps/mini-program/project.private.config.json",
+                            "workspace-recovery-inventory.json",
+                            "workspace-recovery-include.txt",
+                            "workspace-recovery-exclude.txt",
+                            "workspace-recovery-hold.txt",
+                            "workspace-recovery-report.md",
+                            "workspace-recovery-removal-evidence.json"
+                        ]
+}

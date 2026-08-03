@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
 
@@ -33,7 +33,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     try {
       const result = await super.canActivate(context);
       return result as boolean;
-    } catch (err) {
+    } catch {
       throw new UnauthorizedException('未登录或登录已过期');
     }
   }
