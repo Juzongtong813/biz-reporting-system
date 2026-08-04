@@ -364,3 +364,30 @@ test('D-7d COS 未授权：403 → 韧性层不重试并映射为存储错误', 
   }
   assert.ok(threw, '未授权必须抛错');
 });
+
+// ─────────── D 纠偏补强（Codex PG-20260805-COS-D-CORRECTION 令四）───────────
+
+test('D-8a production 无 STS 形态 → EnvCredentialProvider 明确失败（BLOCKED_STS_ISSUER_UNDEFINED）', async () => {
+  const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const ConfigError = compiled('facts/storage/fact-source-storage.error.js').FactSourceStorageConfigError;
+  const prod = new EnvCredentialProviderC({ NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y' });
+  await assert.rejects(() => prod.getCredentials(), (err) => err instanceof ConfigError && err.message.includes('BLOCKED_STS_ISSUER_UNDEFINED'),
+    '生产装配禁止静默退回永久环境变量密钥');
+});
+
+test('D-8b production + STS 形态 → 通过且 sessionToken 保留', async () => {
+  const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const prodSts = new EnvCredentialProviderC({
+    NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y',
+    COS_SESSION_TOKEN: 'sts-token', COS_CREDENTIAL_EXPIRES_AT: '4102444800',
+  });
+  const c = await prodSts.getCredentials();
+  assert.equal(c.sessionToken, 'sts-token', 'STS 形态应保留 sessionToken');
+});
+
+test('D-8c 非 production 长期密钥形态仍可用（local 联调路径）', async () => {
+  const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const dev = new EnvCredentialProviderC({ COS_SECRET_ID: 'dev-id', COS_SECRET_KEY: 'dev-key' });
+  const d = await dev.getCredentials();
+  assert.ok(d.expiredAt > 0, '非生产应可用（长期密钥仅限本地联调）');
+});

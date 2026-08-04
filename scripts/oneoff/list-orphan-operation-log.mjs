@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 /**
- * C-4：孤儿源文件对象盘点脚本（只读对账，绝不执行删除）
+ * D5（Codex PG-20260805-COS-D-CORRECTION）：孤儿标记 **operation-log 离线盘点**（只读对账，绝不执行删除）
  *
  * 依据：设计 §6.4 / 任务 D5 / 裁决 Q-02。
+ *
+ * ⚠️ 定位声明（D5 修正）：
+ *  本脚本是 **orphan operation-log 离线盘点**，仅读取本地 SQLite（operation_logs 表）中的
+ *  补偿标记与本地文件系统存在性判定，**未核对真实 COS 桶**，不得宣称已核对真实 COS 对象。
+ *  真实 COS 只读对账（list/head）需等 F 阶段桶与 STS 凭据就绪后另行实现。
  *
  * 背景：
  *  - 补偿删除（C1/C2）删除失败时会在 operation_logs 写入
@@ -17,8 +22,8 @@
  *  - 输出不含任何密钥；仅 storageKey / sha256 / size / reason / createdAt / 存在性。
  *
  * 用法：
- *   node scripts/oneoff/list-orphan-cos-objects.mjs --db <sqlite路径> [--storage-root <本地根目录>]
- *   示例：node scripts/oneoff/list-orphan-cos-objects.mjs --db ./data/dev.sqlite --storage-root ./data/fact-source-files
+ *   node scripts/oneoff/list-orphan-operation-log.mjs --db <sqlite路径> [--storage-root <本地根目录>]
+ *   示例：node scripts/oneoff/list-orphan-operation-log.mjs --db ./data/dev.sqlite --storage-root ./data/fact-source-files
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -121,7 +126,9 @@ function main() {
       storageRoot,
       orphanMarkerCount: orphans.length,
       items: orphans,
-      note: 'READONLY_INVENTORY: 本报告仅供人工复核；请勿直接删除生产对象（tasks.md §0.4 / 设计 §6.4）。',
+      scope: 'ORPHAN_OPERATION_LOG_OFFLINE_INVENTORY',
+      cosVerification: 'NOT_VERIFIED',
+      note: 'D5 定位声明：本报告仅为 operation_logs 离线盘点，未核对真实 COS 桶；真实 COS 对账需 F 阶段桶与 STS 凭据就绪后执行。只读报告仅供人工复核，请勿直接删除生产对象（tasks.md §0.4 / 设计 §6.4）。',
     };
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } finally {
