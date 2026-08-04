@@ -201,19 +201,43 @@ test('E-01 下载响应头：no-store + attachment（源码结构断言）', () 
   assert.match(src, /StreamableFile/, 'E-01: download 应使用 StreamableFile 流式返回');
 });
 
-test('E-01 公开对象扫描：仓库无 COS 公网 export 写入代码', () => {
+test('E-01 公开对象扫描：仓库无 COS 公网 export 写入代码（AR-R7-c 语义）', () => {
+  // C-5（裁决 D-1 / 任务 D3 AR-R7-c）：
+  // B 阶段在 apps/api/src/facts/storage/ 下引入了 COS SDK 适配层（唯一允许位置）。
+  // 因此把该目录设为白名单；对其余 src 仍强制"零公网导出字面量"语义：
+  //   - getObjectUrl / getAuth(   —— 预签名/临时 URL 生成
+  //   - myqcloud.com / cos.ap-    —— 公开桶域名
+  // 保留"运行时代码不应存在 COS 公网 export 写入代码"的原始断言意图。
   const srcRoot = path.join(REPO_ROOT, 'apps/api/src');
+  const storageWhitelist = path.join(srcRoot, 'facts', 'storage');
   const hits = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.ts')) {
+      if (entry.isDirectory()) {
+        if (full === storageWhitelist) continue;
+        walk(full);
+      } else if (entry.name.endsWith('.ts')) {
         const content = fs.readFileSync(full, 'utf8');
-        if (/cos-\w+-sdk|@cloudbase\/storage|getTempFileURL|putObject\s*\(/.test(content)) hits.push(full);
+        if (/getObjectUrl|getAuth\(|myqcloud\.com|cos\.ap-/.test(content)) hits.push(full);
       }
     }
   };
   walk(srcRoot);
-  assert.equal(hits.length, 0, 'E-01: 运行时代码不应存在 COS 公网导出写入（长期签名 URL/公开桶），命中=' + JSON.stringify(hits));
+  assert.equal(hits.length, 0, 'E-01: 运行时代码（除 facts/storage/ COS 适配层外）不应存在 COS 公网导出写入（长期签名 URL/公开桶），命中=' + JSON.stringify(hits));
+
+  // 白名单目录自身必须仍满足零 URL 生成（仅注释提及禁止项，正文不得调用）
+  const storageDir = fs.readdirSync(storageWhitelist, { withFileTypes: true });
+  for (const entry of storageDir) {
+    if (!entry.name.endsWith('.ts')) continue;
+    const full = path.join(storageWhitelist, entry.name);
+    const content = fs.readFileSync(full, 'utf8');
+    // 允许注释出现 `getObjectUrl`（说明禁止项），但不允许正文出现调用形态
+    const codeOnly = content.split('\n').filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//') && !line.trim().startsWith('/*'));
+    assert.equal(
+      codeOnly.some((line) => /\.getObjectUrl\(|getAuth\(|myqcloud\.com|cos\.ap-/.test(line)),
+      false,
+      `E-01: facts/storage/ 适配层正文不得调用公网导出 API（${full}）`,
+    );
+  }
 });

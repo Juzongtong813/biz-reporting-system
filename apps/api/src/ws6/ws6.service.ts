@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import * as XLSX from 'xlsx';
 import { WORKBOOK_LIMITS } from '../common/files/workbook-policy';
 import { ExportScopeType, ImportJobType, JobStatus, Role } from '@biz-reporting/shared-types';
@@ -26,7 +26,7 @@ import {
   RetryRecalcTaskRequestDto,
 } from './ws6.dto';
 import { ExportJobEntity } from './export-job.entity';
-import { FactSourceFileStorageService } from '../facts/fact-source-file-storage.service';
+import { FactSourceFileStorageService, StoredFactSourceFile } from '../facts/fact-source-file-storage.service';
 import { createHash } from 'node:crypto';
 import { AnnualPackageEntity } from '../packages/annual-package.entity';
 import { ContractMonthRowEntity } from '../packages/contract-month-row.entity';
@@ -110,14 +110,23 @@ export class Ws6Service {
   }): Promise<ImportJobEntity> {
     // D-01：buffer 优先（新任务持久存储），hash → store → metadata → DB。
     // 存储失败抛错（不创建有效 job）；base64 仅 legacy 调用方回退。
+    // C-2（§5.2b）：应用层幂等——同幂等键（sha256+jobType+operatorUserId+cityId+reportYear）
+    // 已存在 job → 返回同一 jobId，不重复创建、不重复存储。
     let storageKey: string | null = null;
     let sha256: string | null = null;
     let sourceSize: number | null = null;
     let storedAt: Date | null = null;
+    let storedEvidence: StoredFactSourceFile | null = null;
 
     if (data.sourceFileBuffer && data.sourceFileBuffer.length > 0) {
       sha256 = createHash('sha256').update(data.sourceFileBuffer).digest('hex');
       sourceSize = data.sourceFileBuffer.length;
+      const idempotent = await this.findIdempotentImportJob(data, sha256);
+      if (idempotent) {
+        idempotent.sourceFileUrl = `/api/imports/${idempotent.id}/source-file`;
+        await this.recordImportOperation(idempotent, 'import_upload', 'success', `幂等命中：返回既有导入任务 #${idempotent.id}`);
+        return idempotent;
+      }
       const stored = await this.sourceFileStorage.store(
         data.sourceFileBuffer,
         data.sourceFileName ?? 'import.xlsx',
@@ -125,6 +134,7 @@ export class Ws6Service {
       );
       storageKey = stored.storageKey;
       storedAt = stored.storedAt;
+      storedEvidence = stored;
     }
 
     const job = this.importJobRepo.create({
@@ -145,11 +155,132 @@ export class Ws6Service {
       errorSummaryJson: null,
     });
 
-    const saved = await this.importJobRepo.save(job);
-    saved.sourceFileUrl = `/api/imports/${saved.id}/source-file`;
-    const persisted = await this.importJobRepo.save(saved);
-    await this.recordImportOperation(persisted, 'import_upload', 'success', `创建导入任务 #${persisted.id}`);
-    return persisted;
+    try {
+      const saved = await this.importJobRepo.save(job);
+      saved.sourceFileUrl = `/api/imports/${saved.id}/source-file`;
+      const persisted = await this.importJobRepo.save(saved);
+      await this.recordImportOperation(persisted, 'import_upload', 'success', `创建导入任务 #${persisted.id}`);
+      return persisted;
+    } catch (error) {
+      // C-2（§6.3）：store 成功 + save 失败 → 受限补偿删除孤儿对象（deduplicated=false 且无 DB 引用）
+      if (storedEvidence) {
+        await this.compensateImportJobSourceFileOrphan(storedEvidence, data, error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * C-2 / §5.2b 应用层幂等：按 sha256 + 业务键查既有 job。
+   * 命中 → 返回同一 jobId（幂等成功语义，不创建新行、不报错）。
+   * ⚠️ 已知残留风险（设计 §11 R4）：极端并发下存在"先查后写"竞态窗口，根治需 T-010 唯一约束。
+   */
+  private async findIdempotentImportJob(
+    data: {
+      jobType: SupportedImportJobType;
+      operatorUserId: number;
+      cityId: number | null;
+      reportYear?: number | null;
+    },
+    sha256: string,
+  ): Promise<ImportJobEntity | null> {
+    return this.importJobRepo.findOne({
+      where: {
+        jobType: data.jobType,
+        operatorUserId: data.operatorUserId,
+        cityId: data.cityId ?? IsNull(),
+        reportYear: data.reportYear ?? IsNull(),
+        sourceFileSha256: sha256,
+      },
+    });
+  }
+
+  /**
+   * C-2 / §6.3 补偿删除：save 失败时受限删除孤儿对象。
+   * 规则与 C1 一致：deduplicated=true 不删；删前复查 DB 引用（D-5 护栏）；
+   * 删除失败写 orphan operation_log；不吞原始错误。
+   */
+  private async compensateImportJobSourceFileOrphan(
+    evidence: StoredFactSourceFile,
+    data: {
+      jobType: SupportedImportJobType;
+      operatorUserId: number;
+      cityId: number | null;
+      reportYear?: number | null;
+    },
+    _cause: unknown,
+  ): Promise<void> {
+    if (evidence.deduplicated === true) {
+      await this.logCompensationOrphanForJob(data, evidence, 'skipped_deduplicated', null);
+      return;
+    }
+    const stillReferenced = await this.anyImportJobReferences(evidence.sha256);
+    if (stillReferenced) {
+      await this.logCompensationOrphanForJob(data, evidence, 'skipped_still_referenced', null);
+      return;
+    }
+    try {
+      await this.sourceFileStorage.delete(evidence.storageKey);
+      await this.logCompensationOrphanForJob(data, evidence, 'deleted', null);
+    } catch (deleteError) {
+      await this.logCompensationOrphanForJob(data, evidence, 'failed', deleteError);
+    }
+  }
+
+  /** D-5 护栏：删除前复查 import_jobs 是否仍有行引用该 sha256。查询失败保守返回 true。 */
+  private async anyImportJobReferences(sha256: string): Promise<boolean> {
+    try {
+      const ref = await this.importJobRepo.findOne({ where: { sourceFileSha256: sha256 }, select: { id: true } });
+      return Boolean(ref);
+    } catch {
+      return true;
+    }
+  }
+
+  /** 补偿删除结果落盘证据（operation_log 载体）。result='failed' 即 orphan 标记。 */
+  private async logCompensationOrphanForJob(
+    data: {
+      jobType: SupportedImportJobType;
+      operatorUserId: number;
+      cityId: number | null;
+      reportYear?: number | null;
+    },
+    evidence: StoredFactSourceFile,
+    result: 'deleted' | 'failed' | 'skipped_deduplicated' | 'skipped_still_referenced',
+    cause: unknown,
+  ): Promise<void> {
+    const isFailed = result === 'failed';
+    const isSkipped = result.startsWith('skipped_');
+    const actionType = isFailed
+      ? 'fact_source_object_orphaned'
+      : isSkipped
+        ? 'fact_source_object_compensation_skipped'
+        : 'fact_source_object_compensated';
+    const summaryText = isFailed
+      ? 'SOURCE_FILE_ORPHAN_OBJECT'
+      : isSkipped
+        ? `SOURCE_FILE_COMPENSATION_${result === 'skipped_deduplicated' ? 'SKIPPED_DEDUPLICATED' : 'SKIPPED_STILL_REFERENCED'}`
+        : 'SOURCE_FILE_COMPENSATION_DELETED';
+    try {
+      await this.operationLogRepo.save(this.operationLogRepo.create({
+        operatorUserId: data.operatorUserId,
+        operatorCityId: data.cityId === null ? null : Number(data.cityId),
+        actionType,
+        targetType: 'import_job',
+        targetId: '0',
+        summaryText,
+        beforeDataJson: null,
+        afterDataJson: {
+          storageKey: evidence.storageKey,
+          sha256: evidence.sha256,
+          size: evidence.size,
+          reason: isFailed ? this.errorMessage(cause) : null,
+        },
+        resultStatus: isFailed ? 'failed' : isSkipped ? 'skipped' : 'success',
+      }));
+    } catch {
+      // 补偿日志写入失败不掩盖原始业务错误
+    }
   }
 
   async listImportJobs(

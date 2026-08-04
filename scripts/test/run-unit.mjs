@@ -35,6 +35,8 @@ const localTests = [
   'apps/api/test/storage/fact-source-driver.local.test.mjs',
   'apps/api/test/storage/fact-source-driver.cos.test.mjs',
   'apps/api/test/storage/storage-driver.config.test.mjs',
+  // C6（业务流程迁移）：补偿删除四场景 + 应用层幂等
+  'apps/api/test/storage/fact-import-compensation.test.mjs',
   'scripts/test/migrate-import-job-files.test.mjs',
 ];
 

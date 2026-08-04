@@ -118,7 +118,12 @@ export class FactImportService {
       }
       return await this.persistCostBatch(file, actor, detected, hash, parsed, issues, evidence);
     } catch (error) {
-      return this.recordUnparsedFailure(file, actor, 'cost', detected || 'unknown', hash, evidence, error);
+      // 解析/校验错误（BadRequestException）→ COMMIT 失败批次、证据保留；
+      // DB 写库异常（已在 persistCostBatch 内完成 §6.3 补偿删除）→ 原样上抛，不创建批次行
+      if (error instanceof BadRequestException) {
+        return this.recordUnparsedFailure(file, actor, 'cost', detected || 'unknown', hash, evidence, error);
+      }
+      throw error;
     }
   }
 
@@ -136,7 +141,12 @@ export class FactImportService {
       const parsed = this.parseOrders(this.readWorkbook(file.buffer), issues);
       return await this.persistOrderBatch(file, actor, hash, parsed, issues, evidence);
     } catch (error) {
-      return this.recordUnparsedFailure(file, actor, 'order', 'ecommerce_order_34', hash, evidence, error);
+      // 解析/校验错误（BadRequestException）→ COMMIT 失败批次、证据保留；
+      // DB 写库异常（已在 persistOrderBatch 内完成 §6.3 补偿删除）→ 原样上抛，不创建批次行
+      if (error instanceof BadRequestException) {
+        return this.recordUnparsedFailure(file, actor, 'order', 'ecommerce_order_34', hash, evidence, error);
+      }
+      throw error;
     }
   }
 
@@ -158,108 +168,114 @@ export class FactImportService {
     const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');
     const warnings = issues.filter((issue) => issue.severity === 'warning');
 
-    return this.dataSource.transaction(async (manager) => {
-      const batchRepo = manager.getRepository(FactImportBatchEntity);
-      const sourceRepo = manager.getRepository(FactSourceRowEntity);
-      const factRepo = manager.getRepository(CostFactEntity);
-      const versionRepo = manager.getRepository(FactVersionEntity);
-      const logRepo = manager.getRepository(OperationLogEntity);
-      let batch = await batchRepo.findOne({ where: { cityId, factKind: 'cost', fileSha256: hash } });
-      if (batch) await sourceRepo.delete({ importBatchId: batch.id });
-      batch = batch ?? batchRepo.create({ factKind: 'cost', cityId, operatorUserId: actor.userId, fileSha256: hash } as FactImportBatchEntity);
-      Object.assign(batch, {
-        templateType,
-        sourceFileName: this.decodeFileName(file.originalname),
-        sourceFileStorageKey: evidence.storageKey,
-        sourceFileSize: evidence.size,
-        sourceFileStoredAt: evidence.storedAt,
-        status: blockingIssues.length ? 'failed' : 'processing',
-        lifecycleStatus: blockingIssues.length ? 'validation_failed' : 'processing',
-        totalRows: rows.length, successRows: 0,
-        errorRows: blockingIssues.length ? new Set(blockingIssues.map((issue) => issue.rowNumber)).size : 0,
-        warningCount: warnings.length, blockingErrorCount: blockingIssues.length,
-        errorSummaryJson: issues.length ? issues : null, completedAt: blockingIssues.length ? new Date() : null, effectiveAt: null,
-      });
-      batch = await batchRepo.save(batch);
-      const sourceRows = await sourceRepo.save(rows.map((row) => sourceRepo.create({
-        importBatchId: batch.id,
-        sheetName: row.sheetName,
-        rowNumber: row.rowNumber,
-        rowHash: this.hashJson(row.raw),
-        businessKey: null,
-        rawJson: row.raw,
-        normalizedJson: row.normalized as unknown as Record<string, unknown>,
-        status: blockingIssues.some((issue) => issue.rowNumber === row.rowNumber) ? 'invalid'
-          : warnings.some((issue) => issue.rowNumber === row.rowNumber) ? 'warning' : 'valid',
-        errorsJson: issues.filter((issue) => issue.rowNumber === row.rowNumber),
-      })));
-      if (blockingIssues.length) {
+    // C-1（§6.2/§6.3）：对象先落定（store 早于事务），事务写库失败 → 受限补偿删除孤儿对象
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const batchRepo = manager.getRepository(FactImportBatchEntity);
+        const sourceRepo = manager.getRepository(FactSourceRowEntity);
+        const factRepo = manager.getRepository(CostFactEntity);
+        const versionRepo = manager.getRepository(FactVersionEntity);
+        const logRepo = manager.getRepository(OperationLogEntity);
+        let batch = await batchRepo.findOne({ where: { cityId, factKind: 'cost', fileSha256: hash } });
+        if (batch) await sourceRepo.delete({ importBatchId: batch.id });
+        batch = batch ?? batchRepo.create({ factKind: 'cost', cityId, operatorUserId: actor.userId, fileSha256: hash } as FactImportBatchEntity);
+        Object.assign(batch, {
+          templateType,
+          sourceFileName: this.decodeFileName(file.originalname),
+          sourceFileStorageKey: evidence.storageKey,
+          sourceFileSize: evidence.size,
+          sourceFileStoredAt: evidence.storedAt,
+          status: blockingIssues.length ? 'failed' : 'processing',
+          lifecycleStatus: blockingIssues.length ? 'validation_failed' : 'processing',
+          totalRows: rows.length, successRows: 0,
+          errorRows: blockingIssues.length ? new Set(blockingIssues.map((issue) => issue.rowNumber)).size : 0,
+          warningCount: warnings.length, blockingErrorCount: blockingIssues.length,
+          errorSummaryJson: issues.length ? issues : null, completedAt: blockingIssues.length ? new Date() : null, effectiveAt: null,
+        });
+        batch = await batchRepo.save(batch);
+        const sourceRows = await sourceRepo.save(rows.map((row) => sourceRepo.create({
+          importBatchId: batch.id,
+          sheetName: row.sheetName,
+          rowNumber: row.rowNumber,
+          rowHash: this.hashJson(row.raw),
+          businessKey: null,
+          rawJson: row.raw,
+          normalizedJson: row.normalized as unknown as Record<string, unknown>,
+          status: blockingIssues.some((issue) => issue.rowNumber === row.rowNumber) ? 'invalid'
+            : warnings.some((issue) => issue.rowNumber === row.rowNumber) ? 'warning' : 'valid',
+          errorsJson: issues.filter((issue) => issue.rowNumber === row.rowNumber),
+        })));
+        if (blockingIssues.length) {
+          await logRepo.save(logRepo.create({
+            operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'cost_import', targetType: 'fact_import_batch',
+            targetId: String(batch.id), summaryText: `成本导入校验失败，共 ${blockingIssues.length} 个阻塞问题`, beforeDataJson: null,
+            afterDataJson: { batchId: batch.id, fileSha256: hash, storageKey: evidence.storageKey }, resultStatus: 'failed',
+          }));
+          return this.toResult(batch, false);
+        }
+
+        const facts = await factRepo.save(rows.map((row, index) => {
+          const value = row.normalized;
+          const contract = contracts.get(value.contractCode)!;
+          const date = new Date(`${value.occurredOn}T00:00:00`);
+          return factRepo.create({
+            cityId,
+            contractId: contract.id,
+            occurredOn: value.occurredOn,
+            periodYear: date.getFullYear(),
+            periodMonth: date.getMonth() + 1,
+            costCategoryCode: value.categoryCode,
+            costSubtype: value.subtype,
+            description: value.description,
+            amount: value.amount,
+            actualSpender: value.actualSpender,
+            advancePayer: value.advancePayer,
+            receiptType: value.receiptType,
+            approvalNumber: value.approvalNumber,
+            approvalStatus: value.approvalStatus,
+            dingTalkDataId: value.dingTalkDataId,
+            mileage: value.mileage,
+            locationsJson: value.locations,
+            attachmentsJson: value.attachments,
+            rawPayloadJson: row.raw,
+            sourceType: value.sourceType,
+            importBatchId: batch.id,
+            sourceRowId: sourceRows[index].id,
+            reversedFactId: null,
+            isReversed: 0,
+            versionNo: 1,
+            createdBy: actor.userId,
+            updatedBy: actor.userId,
+          });
+        }));
+        await sourceRepo.update({ importBatchId: batch.id }, { status: 'written' });
+        await versionRepo.save(facts.map((fact, index) => {
+          const rowWarnings = warnings.filter((issue) => issue.rowNumber === rows[index].rowNumber);
+          return versionRepo.create({
+            factType: 'cost', factId: fact.id, cityId: fact.cityId, contractId: fact.contractId,
+            periodYear: fact.periodYear, periodMonth: fact.periodMonth, versionNo: 1, changeType: 'create',
+            lifecycleStatus: rowWarnings.length ? 'effective_with_warning' : 'current_effective',
+            supersedesVersionId: null, supersededByVersionId: null, beforeDataJson: null, afterDataJson: fact,
+            changedFieldsJson: Object.keys(fact), warningSummaryJson: rowWarnings, reason: 'Excel 导入',
+            operatorUserId: actor.userId, sourceType: fact.sourceType, importBatchId: batch.id,
+          });
+        }));
         await logRepo.save(logRepo.create({
           operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'cost_import', targetType: 'fact_import_batch',
-          targetId: String(batch.id), summaryText: `成本导入校验失败，共 ${blockingIssues.length} 个阻塞问题`, beforeDataJson: null,
-          afterDataJson: { batchId: batch.id, fileSha256: hash, storageKey: evidence.storageKey }, resultStatus: 'failed',
+          targetId: String(batch.id), summaryText: `导入成本事实 ${facts.length} 行`, beforeDataJson: null,
+          afterDataJson: { batchId: batch.id, rows: facts.length, fileSha256: hash }, resultStatus: 'success',
         }));
+        const effectiveAt = new Date();
+        Object.assign(batch, { status: 'completed', lifecycleStatus: warnings.length ? 'effective_with_warning' : 'current_effective',
+          successRows: facts.length, errorRows: 0, warningCount: warnings.length, blockingErrorCount: 0,
+          resultSummaryJson: { rows: facts.length, warnings: warnings.length }, completedAt: effectiveAt, effectiveAt });
+        await batchRepo.save(batch);
         return this.toResult(batch, false);
-      }
-
-      const facts = await factRepo.save(rows.map((row, index) => {
-        const value = row.normalized;
-        const contract = contracts.get(value.contractCode)!;
-        const date = new Date(`${value.occurredOn}T00:00:00`);
-        return factRepo.create({
-          cityId,
-          contractId: contract.id,
-          occurredOn: value.occurredOn,
-          periodYear: date.getFullYear(),
-          periodMonth: date.getMonth() + 1,
-          costCategoryCode: value.categoryCode,
-          costSubtype: value.subtype,
-          description: value.description,
-          amount: value.amount,
-          actualSpender: value.actualSpender,
-          advancePayer: value.advancePayer,
-          receiptType: value.receiptType,
-          approvalNumber: value.approvalNumber,
-          approvalStatus: value.approvalStatus,
-          dingTalkDataId: value.dingTalkDataId,
-          mileage: value.mileage,
-          locationsJson: value.locations,
-          attachmentsJson: value.attachments,
-          rawPayloadJson: row.raw,
-          sourceType: value.sourceType,
-          importBatchId: batch.id,
-          sourceRowId: sourceRows[index].id,
-          reversedFactId: null,
-          isReversed: 0,
-          versionNo: 1,
-          createdBy: actor.userId,
-          updatedBy: actor.userId,
-        });
-      }));
-      await sourceRepo.update({ importBatchId: batch.id }, { status: 'written' });
-      await versionRepo.save(facts.map((fact, index) => {
-        const rowWarnings = warnings.filter((issue) => issue.rowNumber === rows[index].rowNumber);
-        return versionRepo.create({
-          factType: 'cost', factId: fact.id, cityId: fact.cityId, contractId: fact.contractId,
-          periodYear: fact.periodYear, periodMonth: fact.periodMonth, versionNo: 1, changeType: 'create',
-          lifecycleStatus: rowWarnings.length ? 'effective_with_warning' : 'current_effective',
-          supersedesVersionId: null, supersededByVersionId: null, beforeDataJson: null, afterDataJson: fact,
-          changedFieldsJson: Object.keys(fact), warningSummaryJson: rowWarnings, reason: 'Excel 导入',
-          operatorUserId: actor.userId, sourceType: fact.sourceType, importBatchId: batch.id,
-        });
-      }));
-      await logRepo.save(logRepo.create({
-        operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'cost_import', targetType: 'fact_import_batch',
-        targetId: String(batch.id), summaryText: `导入成本事实 ${facts.length} 行`, beforeDataJson: null,
-        afterDataJson: { batchId: batch.id, rows: facts.length, fileSha256: hash }, resultStatus: 'success',
-      }));
-      const effectiveAt = new Date();
-      Object.assign(batch, { status: 'completed', lifecycleStatus: warnings.length ? 'effective_with_warning' : 'current_effective',
-        successRows: facts.length, errorRows: 0, warningCount: warnings.length, blockingErrorCount: 0,
-        resultSummaryJson: { rows: facts.length, warnings: warnings.length }, completedAt: effectiveAt, effectiveAt });
-      await batchRepo.save(batch);
-      return this.toResult(batch, false);
-    });
+      });
+    } catch (error) {
+      await this.compensateSourceFileOrphan(evidence, hash, actor, cityId);
+      throw error;
+    }
   }
 
   private async persistOrderBatch(
@@ -292,79 +308,85 @@ export class FactImportService {
     const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');
     const warnings = issues.filter((issue) => issue.severity === 'warning');
 
-    return this.dataSource.transaction(async (manager) => {
-      const batchRepo = manager.getRepository(FactImportBatchEntity);
-      const sourceRepo = manager.getRepository(FactSourceRowEntity);
-      const factRepo = manager.getRepository(OrderFactEntity);
-      const versionRepo = manager.getRepository(FactVersionEntity);
-      const logRepo = manager.getRepository(OperationLogEntity);
-      let batch = await batchRepo.findOne({ where: { cityId, factKind: 'order', fileSha256: hash } });
-      if (batch) await sourceRepo.delete({ importBatchId: batch.id });
-      batch = batch ?? batchRepo.create({ factKind: 'order', cityId, operatorUserId: actor.userId, fileSha256: hash } as FactImportBatchEntity);
-      Object.assign(batch, {
-        templateType: 'ecommerce_order_34', sourceFileName: this.decodeFileName(file.originalname),
-        sourceFileStorageKey: evidence.storageKey, sourceFileSize: evidence.size, sourceFileStoredAt: evidence.storedAt,
-        status: blockingIssues.length ? 'failed' : 'processing', lifecycleStatus: blockingIssues.length ? 'validation_failed' : 'processing',
-        totalRows: rows.length, successRows: 0, errorRows: blockingIssues.length ? new Set(blockingIssues.map((issue) => issue.rowNumber)).size : 0,
-        warningCount: warnings.length, blockingErrorCount: blockingIssues.length,
-        errorSummaryJson: issues.length ? issues : null, completedAt: blockingIssues.length ? new Date() : null, effectiveAt: null,
-      });
-      batch = await batchRepo.save(batch);
-      const sourceRows = await sourceRepo.save(rows.map((row) => sourceRepo.create({
-        importBatchId: batch.id, sheetName: row.sheetName, rowNumber: row.rowNumber,
-        rowHash: this.hashJson(row.raw), businessKey: row.businessKey ?? null, rawJson: row.raw,
-        normalizedJson: row.normalized as unknown as Record<string, unknown>,
-        status: blockingIssues.some((issue) => issue.rowNumber === row.rowNumber) ? 'invalid'
-          : warnings.some((issue) => issue.rowNumber === row.rowNumber) ? 'warning' : 'valid',
-        errorsJson: issues.filter((issue) => issue.rowNumber === row.rowNumber),
-      })));
-      if (blockingIssues.length) {
+    // C-1（§6.2/§6.3）：对象先落定（store 早于事务），事务写库失败 → 受限补偿删除孤儿对象
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const batchRepo = manager.getRepository(FactImportBatchEntity);
+        const sourceRepo = manager.getRepository(FactSourceRowEntity);
+        const factRepo = manager.getRepository(OrderFactEntity);
+        const versionRepo = manager.getRepository(FactVersionEntity);
+        const logRepo = manager.getRepository(OperationLogEntity);
+        let batch = await batchRepo.findOne({ where: { cityId, factKind: 'order', fileSha256: hash } });
+        if (batch) await sourceRepo.delete({ importBatchId: batch.id });
+        batch = batch ?? batchRepo.create({ factKind: 'order', cityId, operatorUserId: actor.userId, fileSha256: hash } as FactImportBatchEntity);
+        Object.assign(batch, {
+          templateType: 'ecommerce_order_34', sourceFileName: this.decodeFileName(file.originalname),
+          sourceFileStorageKey: evidence.storageKey, sourceFileSize: evidence.size, sourceFileStoredAt: evidence.storedAt,
+          status: blockingIssues.length ? 'failed' : 'processing', lifecycleStatus: blockingIssues.length ? 'validation_failed' : 'processing',
+          totalRows: rows.length, successRows: 0, errorRows: blockingIssues.length ? new Set(blockingIssues.map((issue) => issue.rowNumber)).size : 0,
+          warningCount: warnings.length, blockingErrorCount: blockingIssues.length,
+          errorSummaryJson: issues.length ? issues : null, completedAt: blockingIssues.length ? new Date() : null, effectiveAt: null,
+        });
+        batch = await batchRepo.save(batch);
+        const sourceRows = await sourceRepo.save(rows.map((row) => sourceRepo.create({
+          importBatchId: batch.id, sheetName: row.sheetName, rowNumber: row.rowNumber,
+          rowHash: this.hashJson(row.raw), businessKey: row.businessKey ?? null, rawJson: row.raw,
+          normalizedJson: row.normalized as unknown as Record<string, unknown>,
+          status: blockingIssues.some((issue) => issue.rowNumber === row.rowNumber) ? 'invalid'
+            : warnings.some((issue) => issue.rowNumber === row.rowNumber) ? 'warning' : 'valid',
+          errorsJson: issues.filter((issue) => issue.rowNumber === row.rowNumber),
+        })));
+        if (blockingIssues.length) {
+          await logRepo.save(logRepo.create({
+            operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'order_import', targetType: 'fact_import_batch',
+            targetId: String(batch.id), summaryText: `订单导入校验失败，共 ${blockingIssues.length} 个阻塞问题`, beforeDataJson: null,
+            afterDataJson: { batchId: batch.id, fileSha256: hash, storageKey: evidence.storageKey }, resultStatus: 'failed',
+          }));
+          return this.toResult(batch, false);
+        }
+
+        const facts = await factRepo.save(rows.map((row, index) => {
+          const value = row.normalized;
+          const contract = contracts.get(value.contractCode)!;
+          return factRepo.create({
+            cityId, contractId: contract.id, purchaseOrderNo: value.purchaseOrderNo, orderStatus: value.orderStatus,
+            taxInclusiveAmount: value.taxInclusiveAmount, materialName: value.materialName, materialCode: value.materialCode,
+            projectCode: value.projectCode, projectName: value.projectName, siteCode: value.siteCode, siteName: value.siteName,
+            orderedAt: value.orderedAt, periodYear: value.orderedAt.getFullYear(), periodMonth: value.orderedAt.getMonth() + 1,
+            receiptStatus: value.receiptStatus, sourceType: value.sourceType, importBatchId: batch.id,
+            sourceRowId: sourceRows[index].id, businessKey: row.businessKey!, isReversal: value.taxInclusiveAmount < 0 ? 1 : 0,
+            isReversed: 0, reversedFactId: null, rawPayloadJson: row.raw, versionNo: 1,
+            createdBy: actor.userId, updatedBy: actor.userId,
+          });
+        }));
+        await sourceRepo.update({ importBatchId: batch.id }, { status: 'written' });
+        await versionRepo.save(facts.map((fact, index) => {
+          const rowWarnings = warnings.filter((issue) => issue.rowNumber === rows[index].rowNumber);
+          return versionRepo.create({
+            factType: 'order', factId: fact.id, cityId: fact.cityId, contractId: fact.contractId,
+            periodYear: fact.periodYear, periodMonth: fact.periodMonth, versionNo: 1, changeType: 'create',
+            lifecycleStatus: rowWarnings.length ? 'effective_with_warning' : 'current_effective',
+            supersedesVersionId: null, supersededByVersionId: null, beforeDataJson: null, afterDataJson: fact,
+            changedFieldsJson: Object.keys(fact), warningSummaryJson: rowWarnings, reason: 'Excel 导入',
+            operatorUserId: actor.userId, sourceType: fact.sourceType, importBatchId: batch.id,
+          });
+        }));
         await logRepo.save(logRepo.create({
           operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'order_import', targetType: 'fact_import_batch',
-          targetId: String(batch.id), summaryText: `订单导入校验失败，共 ${blockingIssues.length} 个阻塞问题`, beforeDataJson: null,
-          afterDataJson: { batchId: batch.id, fileSha256: hash, storageKey: evidence.storageKey }, resultStatus: 'failed',
+          targetId: String(batch.id), summaryText: `导入订单事实 ${facts.length} 行`, beforeDataJson: null,
+          afterDataJson: { batchId: batch.id, rows: facts.length, fileSha256: hash }, resultStatus: 'success',
         }));
+        const effectiveAt = new Date();
+        Object.assign(batch, { status: 'completed', lifecycleStatus: warnings.length ? 'effective_with_warning' : 'current_effective',
+          successRows: facts.length, errorRows: 0, warningCount: warnings.length, blockingErrorCount: 0,
+          resultSummaryJson: { rows: facts.length, warnings: warnings.length }, completedAt: effectiveAt, effectiveAt });
+        await batchRepo.save(batch);
         return this.toResult(batch, false);
-      }
-
-      const facts = await factRepo.save(rows.map((row, index) => {
-        const value = row.normalized;
-        const contract = contracts.get(value.contractCode)!;
-        return factRepo.create({
-          cityId, contractId: contract.id, purchaseOrderNo: value.purchaseOrderNo, orderStatus: value.orderStatus,
-          taxInclusiveAmount: value.taxInclusiveAmount, materialName: value.materialName, materialCode: value.materialCode,
-          projectCode: value.projectCode, projectName: value.projectName, siteCode: value.siteCode, siteName: value.siteName,
-          orderedAt: value.orderedAt, periodYear: value.orderedAt.getFullYear(), periodMonth: value.orderedAt.getMonth() + 1,
-          receiptStatus: value.receiptStatus, sourceType: value.sourceType, importBatchId: batch.id,
-          sourceRowId: sourceRows[index].id, businessKey: row.businessKey!, isReversal: value.taxInclusiveAmount < 0 ? 1 : 0,
-          isReversed: 0, reversedFactId: null, rawPayloadJson: row.raw, versionNo: 1,
-          createdBy: actor.userId, updatedBy: actor.userId,
-        });
-      }));
-      await sourceRepo.update({ importBatchId: batch.id }, { status: 'written' });
-      await versionRepo.save(facts.map((fact, index) => {
-        const rowWarnings = warnings.filter((issue) => issue.rowNumber === rows[index].rowNumber);
-        return versionRepo.create({
-          factType: 'order', factId: fact.id, cityId: fact.cityId, contractId: fact.contractId,
-          periodYear: fact.periodYear, periodMonth: fact.periodMonth, versionNo: 1, changeType: 'create',
-          lifecycleStatus: rowWarnings.length ? 'effective_with_warning' : 'current_effective',
-          supersedesVersionId: null, supersededByVersionId: null, beforeDataJson: null, afterDataJson: fact,
-          changedFieldsJson: Object.keys(fact), warningSummaryJson: rowWarnings, reason: 'Excel 导入',
-          operatorUserId: actor.userId, sourceType: fact.sourceType, importBatchId: batch.id,
-        });
-      }));
-      await logRepo.save(logRepo.create({
-        operatorUserId: actor.userId, operatorCityId: cityId, actionType: 'order_import', targetType: 'fact_import_batch',
-        targetId: String(batch.id), summaryText: `导入订单事实 ${facts.length} 行`, beforeDataJson: null,
-        afterDataJson: { batchId: batch.id, rows: facts.length, fileSha256: hash }, resultStatus: 'success',
-      }));
-      const effectiveAt = new Date();
-      Object.assign(batch, { status: 'completed', lifecycleStatus: warnings.length ? 'effective_with_warning' : 'current_effective',
-        successRows: facts.length, errorRows: 0, warningCount: warnings.length, blockingErrorCount: 0,
-        resultSummaryJson: { rows: facts.length, warnings: warnings.length }, completedAt: effectiveAt, effectiveAt });
-      await batchRepo.save(batch);
-      return this.toResult(batch, false);
-    });
+      });
+    } catch (error) {
+      await this.compensateSourceFileOrphan(evidence, hash, actor, cityId);
+      throw error;
+    }
   }
 
   private parseDailyCosts(workbook: XLSX.WorkBook, contractCode: string, issues: FactValidationIssue[]): ParsedRow<ParsedCost>[] {
@@ -718,6 +740,102 @@ export class FactImportService {
       }));
       return this.toResult(batch, false);
     });
+  }
+
+  /**
+   * C-1 / §6.3 补偿删除：COS 上传成功但 MySQL 写入失败（事务回滚）时，
+   * 受限删除孤儿对象。规则：
+   * - `deduplicated === true` → 对象在本次请求之前已存在，可能被其它批次引用 → **绝不删除**；
+   * - `deduplicated === false` → 删前复查 DB 引用（D-5 护栏），无引用才删除；
+   * - 删除失败 → 写 operation_log（action_type='fact_source_object_orphaned'），**不吞原始错误**。
+   */
+  private async compensateSourceFileOrphan(
+    evidence: StoredFactSourceFile,
+    hash: string,
+    actor: Actor,
+    cityId: number,
+  ): Promise<void> {
+    if (evidence.deduplicated === true) {
+      // §6.3：对象在本次请求之前已存在，可能被其它批次引用 → 绝不删除
+      await this.logCompensationOrphan(actor, cityId, evidence, hash, 'skipped_deduplicated', null);
+      return;
+    }
+    const stillReferenced = await this.anyRowReferences(hash);
+    if (stillReferenced) {
+      // §6.3 / 裁决 D-5：删前复查 DB 引用，仍有行引用 → 不删除
+      await this.logCompensationOrphan(actor, cityId, evidence, hash, 'skipped_still_referenced', null);
+      return;
+    }
+    try {
+      await this.sourceFiles.delete(evidence.storageKey);
+      await this.logCompensationOrphan(actor, cityId, evidence, hash, 'deleted', null);
+    } catch (deleteError) {
+      await this.logCompensationOrphan(actor, cityId, evidence, hash, 'failed', deleteError);
+    }
+    // 原始业务错误由调用方（persistCostBatch/persistOrderBatch 的 catch）继续上抛，不吞
+  }
+
+  /**
+   * D-5 护栏：删除前复查 DB 是否仍有行引用该 sha256。
+   * 覆盖 fact_import_batch.source_file_sha256 ∪ import_jobs.source_file_sha256 /
+   * source_file_storage_key（设计 §6.3）。查询失败时保守返回 true（不删除）。
+   */
+  private async anyRowReferences(sha256: string): Promise<boolean> {
+    const batchRef = await this.batchRepo.findOne({ where: { fileSha256: sha256 }, select: { id: true } });
+    if (batchRef) return true;
+    try {
+      const rows = await this.dataSource.query(
+        'SELECT id FROM import_jobs WHERE source_file_sha256 = ? OR source_file_storage_key = ? LIMIT 1',
+        [sha256, `${sha256.slice(0, 2)}/${sha256}`],
+      );
+      return Array.isArray(rows) && rows.length > 0;
+    } catch {
+      // 跨表查询失败：保守视为可能被引用，不删除
+      return true;
+    }
+  }
+
+  /** 补偿删除结果落盘证据（operation_log 载体）。result='failed' 即 orphan 标记。 */
+  private async logCompensationOrphan(
+    actor: Actor,
+    cityId: number,
+    evidence: StoredFactSourceFile,
+    hash: string,
+    result: 'deleted' | 'failed' | 'skipped_deduplicated' | 'skipped_still_referenced',
+    cause: unknown,
+  ): Promise<void> {
+    const isFailed = result === 'failed';
+    const isSkipped = result.startsWith('skipped_');
+    const actionType = isFailed
+      ? 'fact_source_object_orphaned'
+      : isSkipped
+        ? 'fact_source_object_compensation_skipped'
+        : 'fact_source_object_compensated';
+    const summaryText = isFailed
+      ? 'SOURCE_FILE_ORPHAN_OBJECT'
+      : isSkipped
+        ? `SOURCE_FILE_COMPENSATION_${result === 'skipped_deduplicated' ? 'SKIPPED_DEDUPLICATED' : 'SKIPPED_STILL_REFERENCED'}`
+        : 'SOURCE_FILE_COMPENSATION_DELETED';
+    try {
+      await this.operationLogRepo.save(this.operationLogRepo.create({
+        operatorUserId: actor.userId,
+        operatorCityId: cityId,
+        actionType,
+        targetType: 'fact_import_batch',
+        targetId: '0',
+        summaryText,
+        beforeDataJson: null,
+        afterDataJson: {
+          storageKey: evidence.storageKey,
+          sha256: hash,
+          size: evidence.size,
+          reason: isFailed ? this.errorMessage(cause) : null,
+        },
+        resultStatus: isFailed ? 'failed' : isSkipped ? 'skipped' : 'success',
+      }));
+    } catch {
+      // 补偿日志写入失败不掩盖原始业务错误
+    }
   }
 
   private errorMessage(error: unknown): string {
