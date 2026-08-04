@@ -37,6 +37,8 @@ const localTests = [
   'apps/api/test/storage/storage-driver.config.test.mjs',
   // C6（业务流程迁移）：补偿删除四场景 + 应用层幂等
   'apps/api/test/storage/fact-import-compensation.test.mjs',
+  // D（QA 验收）：7 类用例 — hash/size、幂等、并发、失败补偿、orphan、重启恢复、鉴权
+  'apps/api/test/storage/fact-source-driver.dstage.test.mjs',
   'scripts/test/migrate-import-job-files.test.mjs',
 ];
 
