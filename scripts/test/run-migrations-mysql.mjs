@@ -41,6 +41,7 @@ const expectedVersions = [
   '007_rbac_auth',
   '008_v3_fact_lifecycle',
   '009_production_governance',
+  '010_typeorm_metadata',
 ];
 
 const database = `biz_reporting_migration_test_${Date.now()}_${process.pid}`;
@@ -56,7 +57,7 @@ try {
   const verification = await mysql.createConnection({ host, port, user, password, database });
   try {
     const [firstLedger] = await verification.query('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version');
-    assert.equal(firstLedger.length, 10, 'expected 001-009 migration ledger entries, including both 002 files');
+    assert.equal(firstLedger.length, 11, 'expected 001-010 migration ledger entries, including both 002 files');
     assert.deepEqual(firstLedger.map((row) => row.version), expectedVersions, 'migration ledger versions differ from 001-008 manifest');
     assert.ok(firstLedger.every((row) => row.status === 'applied'), 'all migrations must be applied');
     assert.ok(firstLedger.every((row) => /^[a-f0-9]{64}$/.test(String(row.checksum))), 'every migration requires a SHA-256 checksum');
@@ -148,6 +149,12 @@ try {
       WHERE table_schema = DATABASE() AND table_name = 'auth_security_events'
         AND index_name IN ('idx_auth_event_created','idx_auth_event_subject','idx_auth_event_ip')`);
     assert.equal(securityEventIndexes.length, 3, '009 auth_security_events indexes missing');
+    const [typeormMetadata] = await verification.query(`SELECT column_name, data_type, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'typeorm_metadata'
+      ORDER BY ordinal_position`);
+    assert.deepEqual(typeormMetadata.map((row) => row.column_name), ['type', 'database', 'schema', 'table', 'name', 'value']);
+    assert.equal(typeormMetadata.find((row) => row.column_name === 'type')?.is_nullable, 'NO');
 
     await verification.query(`INSERT INTO users (role, name, username, status)
       VALUES ('root_admin', '迁移隔离根账号', ?, 'enabled')`, [`migration_root_${process.pid}`]);
@@ -164,7 +171,7 @@ try {
   } finally {
     await verification.end();
   }
-  console.log(`MYSQL_MIGRATION_ISOLATION_OK database=${database}`);
+  console.log(`MYSQL_MIGRATION_ISOLATION_OK database=${database} typeorm_metadata=true`);
 
   await admin.query(`CREATE DATABASE \`${failureDatabase}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   const failureEnv = {

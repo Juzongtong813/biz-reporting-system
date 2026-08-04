@@ -249,6 +249,9 @@ async function inspectState(version) {
       adapter.tableExists('auth_security_events'),
     ]);
   }
+  if (version === '010_typeorm_metadata') {
+    return await adapter.tableExists('typeorm_metadata') ? 'satisfied' : 'empty';
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 
@@ -272,7 +275,7 @@ function checkMigrationFiles() {
   const required = [
     '001_initial_tables', '002_add_contract_month_invoice_order_amount', '002_contract_city_business_metrics',
     '003_seed_cities', '004_oa_city_soft_delete', '005_fact_data_foundation', '006_fact_source_file_lineage',
-    '007_rbac_auth', '008_v3_fact_lifecycle', '009_production_governance',
+    '007_rbac_auth', '008_v3_fact_lifecycle', '009_production_governance', '010_typeorm_metadata',
   ];
   for (const version of required) if (!migrations.some((migration) => migration.version === version)) fail(`MIGRATION_MISSING version=${version}`);
   for (const migration of migrations) {

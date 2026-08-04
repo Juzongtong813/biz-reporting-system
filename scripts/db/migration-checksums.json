@@ -8,5 +8,6 @@
   "006_fact_source_file_lineage": "a6c7c7d4416eabca930707920ea0935c2c0a3b72d45092049919d34bde1ed3f1",
   "007_rbac_auth": "4b5bb379bcf0b123806d6683b9d36608558d7fa891de62548ebdfe41c61f615e",
   "008_v3_fact_lifecycle": "40b3218c36a44fddcefc52c67203e52c0fa5905f33d9312707dfc14597c64a69",
-  "009_production_governance": "18ec5bc6e071dea056d29d4346e2018e69f6aa4bdacf059d4a6b7a1e52dadb22"
+  "009_production_governance": "18ec5bc6e071dea056d29d4346e2018e69f6aa4bdacf059d4a6b7a1e52dadb22",
+  "010_typeorm_metadata": "9994857dd7311f100e7f3b1415f5399b7122e40756faf9124290c38e8542215e"
 }

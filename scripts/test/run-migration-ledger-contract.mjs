@@ -27,12 +27,15 @@ try {
   const importJobIndexes = new Set(db.prepare("PRAGMA index_list('import_jobs')").all().map((row) => row.name));
   const rateLimitColumns = new Set(db.prepare("PRAGMA table_info('auth_login_rate_limits')").all().map((row) => row.name));
   const securityEventColumns = new Set(db.prepare("PRAGMA table_info('auth_security_events')").all().map((row) => row.name));
+  const typeormMetadataColumns = new Set(db.prepare("PRAGMA table_info('typeorm_metadata')").all().map((row) => row.name));
   db.close();
 
-  assert.equal(firstLedger.length, 10, 'expected ten migration ledger rows');
+  assert.equal(firstLedger.length, 11, 'expected eleven migration ledger rows');
   assert.equal(firstLedger.find((row) => row.version === '002_add_contract_month_invoice_order_amount')?.execution_mode, 'executed');
   assert.equal(firstLedger.find((row) => row.version === '008_v3_fact_lifecycle')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '009_production_governance')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '010_typeorm_metadata')?.status, 'applied');
+  for (const column of ['type', 'database', 'schema', 'table', 'name', 'value']) assert.ok(typeormMetadataColumns.has(column), `010 typeorm_metadata column missing: ${column}`);
   for (const column of ['lifecycle_status', 'warning_count', 'blocking_error_count', 'effective_at']) assert.ok(batchColumns.has(column), `008 batch column missing: ${column}`);
   for (const column of ['city_id', 'contract_id', 'period_year', 'period_month', 'lifecycle_status', 'supersedes_version_id', 'superseded_by_version_id', 'changed_fields_json', 'warning_summary_json']) assert.ok(versionColumns.has(column), `008 version column missing: ${column}`);
   assert.ok(batchIndexes.has('idx_fact_batch_lifecycle'));
@@ -49,7 +52,7 @@ try {
   const secondLedger = secondDb.prepare('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version').all();
   secondDb.close();
   assert.deepEqual(secondLedger, firstLedger, 'second migration run changed the ledger');
-  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=10 v3_lifecycle=true governance009=true idempotent=true');
+  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=11 v3_lifecycle=true governance009=true typeorm010=true idempotent=true');
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
   console.log(`MIGRATION_LEDGER_CONTRACT_CLEANUP_OK root=${testRoot}`);
