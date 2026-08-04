@@ -31,6 +31,10 @@ const localTests = [
   'apps/api/test/reporting-import-atomicity.integration.mjs',
   'apps/api/test/security-headers.test.mjs',
   'apps/api/test/workbook-policy.test.cjs',
+  // B8（COS SDK 直连存储驱动层）：无凭据、无网络可跑
+  'apps/api/test/storage/fact-source-driver.local.test.mjs',
+  'apps/api/test/storage/fact-source-driver.cos.test.mjs',
+  'apps/api/test/storage/storage-driver.config.test.mjs',
   'scripts/test/migrate-import-job-files.test.mjs',
 ];
 

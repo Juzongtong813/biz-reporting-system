@@ -19,13 +19,19 @@ import { FactVersionEntity } from './fact-version.entity';
 import { AdminFactVersionsController, CityFactVersionsController } from './fact-versions.controller';
 import { FactsService } from './facts.service';
 import { OrderFactEntity } from './order-fact.entity';
+import { FactSourceDriverModule } from './storage/fact-source-driver.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([
-    FactImportBatchEntity, FactSourceRowEntity, CostFactEntity, OrderFactEntity, FactVersionEntity,
-    CityEntity, ContractEntity, AllocationEntity, OperationLogEntity,
-    AnnualPackageEntity, ContractMonthRowEntity, CostMonthRowEntity,
-  ])],
+  imports: [
+    TypeOrmModule.forFeature([
+      FactImportBatchEntity, FactSourceRowEntity, CostFactEntity, OrderFactEntity, FactVersionEntity,
+      CityEntity, ContractEntity, AllocationEntity, OperationLogEntity,
+      AnnualPackageEntity, ContractMonthRowEntity, CostMonthRowEntity,
+    ]),
+    // B7（裁决 D-1）：唯一注入点仍为 FactSourceFileStorageService，
+    // Local/COS 差异由 FactSourceDriverModule 内部按 FACT_SOURCE_STORAGE_DRIVER 装配 driver。
+    FactSourceDriverModule,
+  ],
   controllers: [CityFactsController, AdminFactsController, CityFactVersionsController, AdminFactVersionsController],
   providers: [FactsService, FactImportService, FactLifecycleService, FactSourceFileStorageService],
   exports: [FactsService, FactSourceFileStorageService],
