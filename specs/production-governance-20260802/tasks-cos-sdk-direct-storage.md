@@ -223,7 +223,7 @@
   - `resolveStorageDriver(env): 'local' | 'cos'` —— production 下缺失即抛 `FACT_SOURCE_STORAGE_DRIVER_REQUIRED`，非法值抛 `FACT_SOURCE_STORAGE_DRIVER_INVALID`，非 production 默认 `local`
   - `resolveCosConfig(env)` —— 校验 `COS_REGION`/`COS_BUCKET`/`COS_SECRET_ID`/`COS_SECRET_KEY`，bucket 正则 `^[a-z0-9-]+-\d{5,}$`
   - 可选：`COS_SESSION_TOKEN`、`COS_OBJECT_PREFIX`（默认 `fact-source-files/`，非空时必须以 `/` 结尾）、`COS_REQUEST_TIMEOUT_MS`、`COS_MAX_RETRIES`
-  - **凭据两种形态均兼容（设计 §11 R1 / PM Q-06，PENDING 不二选一）**：配置对象含可选 `sessionToken`；长期 SecretId/SecretKey 或 STS 临时凭据（含 `COS_SESSION_TOKEN`）皆可，driver 不硬编码任一种
+  - **凭据形态（设计 §11 R1 / PM Q-06，已裁定：STS 临时凭据刷新）**：配置对象含可选 `sessionToken`；**长期 SecretId/SecretKey 不得作为默认生产方案**；生产装配禁止静默退回永久环境变量密钥。真实 STS issuer 未确认 → **BLOCKED_STS_ISSUER_UNDEFINED**（F 阶段保持 BLOCKED，禁止编造 endpoint/角色/刷新协议，禁止 fake provider 冒充真实 STS）
   - **纯函数，不读 `process.env` 全局**（env 由参数传入，便于测试）
 - **⚠️ 硬性约束**：**禁止任何隐式回退**（不得"COS 配置缺失就悄悄用 local"）
 - **验收判据**：

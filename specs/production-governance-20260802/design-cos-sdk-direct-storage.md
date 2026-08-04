@@ -425,7 +425,7 @@ prefix    = COS_OBJECT_PREFIX，默认 'fact-source-files/'，必须以 '/' 结�
 | `COS_BUCKET` | driver=cos 时必填 | 必须形如 `<name>-<appid>`，正则 `^[a-z0-9-]+-\d{5,}$` |
 | `COS_SECRET_ID` | driver=cos 时必填 | **仅运行时注入** |
 | `COS_SECRET_KEY` | driver=cos 时必填 | **仅运行时注入** |
-| `COS_SESSION_TOKEN` | 可选 | 临时凭据（STS）时必填，见 §11 待决项 |
+| `COS_SESSION_TOKEN` | 可选 | STS 临时凭据形态必填；已裁定 R1=STS 刷新（Codex PG-20260805） |
 | `COS_OBJECT_PREFIX` | 可选 | 默认 `fact-source-files/` |
 | `COS_REQUEST_TIMEOUT_MS` | 可选 | 默认 `30000` |
 | `COS_MAX_RETRIES` | 可选 | 默认 `2`（即最多 3 次尝试） |
@@ -806,7 +806,7 @@ PM 用只读 `grep` 取证，在本仓库定位 **14 处**受 CFS/挂载强绑�
 
 | # | 事项 | 说明 | 影响 | 状态 |
 |---|---|---|---|---|
-| **R1** | **临时凭据 vs 长期凭据（最高优先级）** | 已核验：`tcb secrets` **只有 `get`**，返回的是**当前登录会话的临时凭据（有时效）**，不是长期运行服务的密钥注入设施。长期运行的 CloudRun 服务需要：(a) 长期 SecretId/SecretKey 经环境变量注入；或 (b) STS 临时凭据 + 服务内定时刷新 + `COS_SESSION_TOKEN`。两者实现复杂度差异显著（(b) 需额外的凭据刷新器与过期重试逻辑）。**与 PM 的 Q-06 为同一问题，两人独立指向。**<br>**设计侧已做兼容处理**：driver 内部一律从配置对象读取凭据（含可选 `sessionToken`），**不硬编码任何一种形态**；`COS_SESSION_TOKEN` 已列为可选环境变量（§4.4）。因此两种裁定结果都不需要重构 driver 结构，差异仅在于是否追加"凭据刷新器"组件 | 决定是否需实现凭据刷新器；决定 D 阶段工作量 | **PENDING（不自行选定方案）** |
+| **R1** | **临时凭据 vs 长期凭据（最高优先级）** | 已核验：`tcb secrets` **只有 `get`**，返回的是**当前登录会话的临时凭据（有时效）**，不是长期运行服务的密钥注入设施。长期运行的 CloudRun 服务需要：(a) 长期 SecretId/SecretKey 经环境变量注入；或 (b) STS 临时凭据 + 服务内定时刷新 + `COS_SESSION_TOKEN`。两者实现复杂度差异显著（(b) 需额外的凭据刷新器与过期重试逻辑）。**与 PM 的 Q-06 为同一问题，两人独立指向。**<br>**设计侧已做兼容处理**：driver 内部一律从配置对象读取凭据（含可选 `sessionToken`），**不硬编码任何一种形态**；`COS_SESSION_TOKEN` 已列为可选环境变量（§4.4）。因此两种裁定结果都不需要重构 driver 结构，差异仅在于是否追加"凭据刷新器"组件 | 决定是否需实现凭据刷新器；决定 D 阶段工作量 | **已裁定（Codex PG-20260805-COS-D-CORRECTION）**：采用 **STS 临时凭据刷新**；长期 SecretId/SecretKey **不得作为默认生产方案**。<br>**BLOCKED_STS_ISSUER_UNDEFINED**：真实 STS issuer（endpoint/角色/刷新协议）尚不可确认，不得自行编造；禁止用 fake provider 冒充真实 STS。D1-D6 不因此阻塞，F 阶段保持 BLOCKED |
 | **R2** | 无真实凭据 ⇒ F 阶段 BLOCKED | 本机 `COS_SECRET_ID/KEY/BUCKET/REGION/JWT_SECRET` 全部 UNSET（已核验） | A~E 不受阻（Local + 伪 COS 客户端可测）；F 阶段需凭据 | 已知，设计已适配 |
 | **R3** | L0 回滚的数据可见性缺口 | 切回 local 后 COS 期新对象在本地盘不存在，下载走 404（元数据不丢） | 需上游确认可接受 | **待确认** |
 | **R4** | **并发竞态（合并论述：对象层 TOCTOU + 业务层查重窗口）** | **(a) 对象层**：`deduplicated` 判定存在 TOCTOU，并发同 sha 可能都判 `false`。危害有限——删除幂等（ENOENT 静默）、内容寻址保证最终内容一致。<br>**(b) 业务层（更严重）**：ws6 侧应用层"先查后写"幂等（§5.2b）在极端并发下**会真实产生重复 `import_jobs` 行**，因 009 的 `idx_import_jobs_storage_key` 为**非唯一**索引，数据库层无兜底 | (a) 极端情况下 A 的补偿可能删掉 B 刚提交所引用的对象；(b) C-3.3 在高并发下可能不满足 | **本轮已知残留风险，接受**。<br>缓解 (a)：补偿删除前复查 DB 引用，有则不删（**已写入 §6.3 实现**）<br>缓解 (b)：无本轮内彻底方案；根治需 T-010-MIGRATION 唯一约束（**PENDING，见 §5.3**）。E 阶段的 C-3.3 并发用例若在高并发下偶发失败，应记为已知缺口而非实现缺陷 |
