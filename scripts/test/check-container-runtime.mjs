@@ -38,16 +38,21 @@ assert.match(runnerSection, /addgroup -g 10001/, 'E-06: runner 应创建 GID 100
 assert.match(runnerSection, /COPY --from=builder --chown=10001:10001/, 'E-06: COPY 应 --chown=10001:10001');
 assert.match(runnerSection, /USER 10001/, 'E-06: runner 应 USER 10001 非 root');
 
-// 3. 保留 PORT / healthcheck / 持久路径标签
+// 3. 保留 PORT / healthcheck；D4（Codex PG-20260805-COS-D-CORRECTION）：
+//    不再要求持久挂载标签与 FACT_SOURCE_STORAGE_ROOT，改为要求 driver=cos
 assert.match(rootDf, /PORT|EXPOSE 3000/, 'E-06: 应保留 PORT 暴露');
 assert.match(rootDf, /health\/live/, 'E-06: 应保留 live healthcheck');
-assert.match(rootDf, /required-persistent-mount/, 'E-06: 应保留持久路径标签');
-assert.match(rootDf, /FACT_SOURCE_STORAGE_ROOT=\/mnt\/fact-source-files/, 'E-06: 应保留存储根 env');
+assert.match(rootDf, /FACT_SOURCE_STORAGE_DRIVER=cos/, 'D4: 应声明 FACT_SOURCE_STORAGE_DRIVER=cos');
 
-// 4. 禁止项
+// 4. 禁止项（D4 增补）
 assert.ok(!/--privileged/.test(rootDf), 'E-06: 禁止 privileged');
 assert.ok(!/chmod 777/.test(rootDf), 'E-06: 禁止 chmod 777');
 assert.ok(!/USER root/.test(runnerSection), 'E-06: 禁止 root entrypoint 后降权替代');
+assert.ok(!/\/mnt\/fact-source-files/.test(rootDf), 'D4: Dockerfile 不得再创建/挂载 /mnt/fact-source-files');
+assert.ok(!/required-persistent-mount/.test(rootDf), 'D4: 不得保留 required-persistent-mount label');
+assert.ok(!/FACT_SOURCE_STORAGE_ROOT=/.test(rootDf), 'D4: 不得保留 FACT_SOURCE_STORAGE_ROOT 默认值');
+// 密钥纪律：Dockerfile 不得含任何 COS 凭据字面量/环境变量注入
+assert.ok(!/COS_SECRET|SESSION_TOKEN|COS_SECRET_ID|COS_SECRET_KEY/.test(rootDf), 'D4: Dockerfile 不得包含 COS 密钥');
 
 // docker 可用性（可选检查；本机无 docker → PENDING_DOCKER，不伪造 PASS）
 const dockerCheck = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 10_000 });

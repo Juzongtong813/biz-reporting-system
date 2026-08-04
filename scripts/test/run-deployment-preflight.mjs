@@ -33,9 +33,14 @@ try {
     AUTH_RATE_LIMIT_WINDOW_MS: '60000', AUTH_RATE_LIMIT_IP_MAX: '5',
     AUTH_ACCOUNT_WINDOW_MS: '900000', AUTH_ACCOUNT_MAX_FAILURES: '5', AUTH_ACCOUNT_BLOCK_MS: '900000',
     READINESS_CACHE_MS: '5000', READINESS_TIMEOUT_MS: '2000',
-    FACT_SOURCE_STORAGE_ROOT: '/mnt/fact-source-files', CORS_ORIGINS: 'https://staging.example.com',
+    FACT_SOURCE_STORAGE_DRIVER: 'cos', CORS_ORIGINS: 'https://staging.example.com',
   };
   assert.equal(runtime.validateRuntimeEnvironment({ ...validProduction }).DB_DATABASE, 'biz_v3');
+  // D4（Codex PG-20260805-COS-D-CORRECTION）：driver=cos 生产无需 FACT_SOURCE_STORAGE_ROOT
+  const validCosNoRoot = { ...validProduction };
+  delete validCosNoRoot.FACT_SOURCE_STORAGE_ROOT;
+  assert.equal(runtime.validateRuntimeEnvironment(validCosNoRoot).DB_DATABASE, 'biz_v3');
+  assert.throws(() => runtime.validateRuntimeEnvironment({ ...validProduction, FACT_SOURCE_STORAGE_DRIVER: 's3' }), /FACT_SOURCE_STORAGE_DRIVER_INVALID/);
   for (const [key, value, expected] of [
     ['DB_TYPE', 'sqlite', /DB_TYPE_MYSQL_REQUIRED/], ['DB_HOST', '127.0.0.1', /DB_HOST_LOCAL_FORBIDDEN/],
     ['DB_USERNAME', 'root', /DB_ROOT_USER_FORBIDDEN/], ['DB_PASSWORD', '', /DB_PASSWORD_REQUIRED/],
@@ -48,7 +53,7 @@ try {
   execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env: migrationEnv, stdio: 'inherit' });
 
   const port = 34000 + Math.floor(Math.random() * 1000);
-  const api = startApi({ NODE_ENV: 'test', PORT: String(port), DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false', FACT_SOURCE_STORAGE_ROOT: storage, JWT_SECRET: jwtSecret });
+  const api = startApi({ NODE_ENV: 'test', PORT: String(port), DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false', FACT_SOURCE_STORAGE_DRIVER: 'local', JWT_SECRET: jwtSecret });
   let output = '';
   api.stdout.on('data', (chunk) => { output += chunk; });
   api.stderr.on('data', (chunk) => { output += chunk; });
@@ -75,7 +80,7 @@ try {
 
   await assertStartupFailure('DEPLOYMENT_INVALID_PRODUCTION_STARTUP_REJECTED', {
     NODE_ENV: 'production', DEPLOY_ENV: 'staging', PORT: '0', DB_TYPE: 'sqlite', DB_DATABASE: database,
-    DB_SYNC: 'false', FACT_SOURCE_STORAGE_ROOT: storage, JWT_SECRET: jwtSecret, CORS_ORIGINS: 'https://staging.example.com',
+    DB_SYNC: 'false', FACT_SOURCE_STORAGE_DRIVER: 'cos', JWT_SECRET: jwtSecret, CORS_ORIGINS: 'https://staging.example.com',
   }, /DB_TYPE_MYSQL_REQUIRED/);
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

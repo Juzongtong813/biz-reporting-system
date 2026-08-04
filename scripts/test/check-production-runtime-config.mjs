@@ -27,9 +27,17 @@ try {
     AUTH_RATE_LIMIT_WINDOW_MS: '60000', AUTH_RATE_LIMIT_IP_MAX: '5',
     AUTH_ACCOUNT_WINDOW_MS: '900000', AUTH_ACCOUNT_MAX_FAILURES: '5', AUTH_ACCOUNT_BLOCK_MS: '900000',
     READINESS_CACHE_MS: '5000', READINESS_TIMEOUT_MS: '2000',
-    FACT_SOURCE_STORAGE_ROOT: '/mnt/fact-source-files', CORS_ORIGINS: 'https://staging.example.com',
+    FACT_SOURCE_STORAGE_DRIVER: 'cos', CORS_ORIGINS: 'https://staging.example.com',
   };
   runtime.validateRuntimeEnvironment(valid);
+  // D4（Codex PG-20260805-COS-D-CORRECTION）：driver=cos 生产无需 FACT_SOURCE_STORAGE_ROOT
+  const validCosNoRoot = { ...valid };
+  delete validCosNoRoot.FACT_SOURCE_STORAGE_ROOT;
+  runtime.validateRuntimeEnvironment(validCosNoRoot);
+  // driver=local 仍需 FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
+  runtime.validateRuntimeEnvironment({ ...valid, FACT_SOURCE_STORAGE_DRIVER: 'local', FACT_SOURCE_STORAGE_ROOT: '/mnt/fact-source-files' });
+  assert.throws(() => runtime.validateRuntimeEnvironment({ ...valid, FACT_SOURCE_STORAGE_DRIVER: 'local' , FACT_SOURCE_STORAGE_ROOT: '/var/tmp/files' }), /FACT_SOURCE_STORAGE_ROOT_INVALID/);
+  assert.throws(() => runtime.validateRuntimeEnvironment({ ...valid, FACT_SOURCE_STORAGE_DRIVER: 's3' }), /FACT_SOURCE_STORAGE_DRIVER_INVALID/);
   for (const [key, value, expected] of [
     ['DB_HOST', '127.0.0.2', /DB_HOST_LOCAL_FORBIDDEN/],
     ['DB_HOST', 'localhost.', /DB_HOST_LOCAL_FORBIDDEN/],

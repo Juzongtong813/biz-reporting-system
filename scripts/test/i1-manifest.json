@@ -54,8 +54,8 @@
       "id": "persistent-storage",
       "kind": "external-persistent-storage",
       "command": null,
-      "requiredEnvironment": ["FACT_SOURCE_STORAGE_ROOT"],
-      "status": "BLOCKED_MISSING_RUNNER",
+      "requiredEnvironment": ["FACT_SOURCE_STORAGE_DRIVER", "COS_BUCKET", "COS_REGION", "COS_OBJECT_PREFIX"],
+      "status": "BLOCKED_STS_ISSUER_UNDEFINED",
       "checkpointBlocking": false,
       "releaseBlocking": true
     }

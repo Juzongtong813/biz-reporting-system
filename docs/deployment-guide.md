@@ -25,19 +25,22 @@
 
 ## 运行配置
 
-部署候选环境必须显式设置：
+部署候选环境必须显式设置（D6：私有 COS 对象存储 + 后端 COS SDK 直连）：
 
 ```env
 NODE_ENV=production
 DEPLOY_ENV=staging
 DB_SYNC=false
 JWT_SECRET=<独立强随机值>
-FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
+FACT_SOURCE_STORAGE_DRIVER=cos
+COS_BUCKET=<私有隔离桶，形如 name-appid>
+COS_REGION=<如 ap-shanghai>
+COS_OBJECT_PREFIX=fact-source-files/
 ```
 
 - `JWT_SECRET` 缺失或为空时 API 必须在配置初始化阶段拒绝启动。
 - 生产模式强制 `synchronize=false`，新表只能由经批准的迁移创建。
-- `/mnt/fact-source-files` 必须是真实持久卷挂载点或改用已实现并验收的 COS；容器本地目录不算通过。
+- **源文件存储为私有 COS 对象存储 + 后端 COS SDK 直连**：凭据经 STS 临时凭据注入（`BLOCKED_STS_ISSUER_UNDEFINED` —— 真实 STS issuer 待 F 阶段确认），禁止在配置/镜像/仓库中写入长期密钥。`FACT_SOURCE_STORAGE_DRIVER=local` 仅为本地开发/回滚路径，生产使用 local 需同时配置 `FACT_SOURCE_STORAGE_ROOT`（历史 CFS 方案，**非当前方案**）。
 
 ## 迁移上线顺序
 
@@ -59,17 +62,17 @@ FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
 
 ## 持久存储验收
 
-必须在非生产隔离环境完成：
+必须在非生产隔离环境完成（D6：目标为私有 COS SDK 直连；F 阶段桶与 STS 凭据就绪后执行）：
 
-1. 确认 `/mnt/fact-source-files` 为平台真实挂载或切换到 COS。
+1. 确认私有 COS 桶与授权（桶名/region/prefix）已按 F 阶段核验结果配置。
 2. 上传真实格式测试文件并核对 storage key、大小、时间、批次和血缘。
 3. 重启 API 后下载并核对 SHA-256。
 4. 删除并重建运行实例后再次核对。
-5. 同周期备份数据库和文件，恢复到全新隔离环境。
+5. 同周期备份数据库和 COS 对象，恢复到全新隔离环境。
 6. 对批次、来源行、事实、版本、审计和文件 SHA-256 做联合核对。
-7. 未挂载、错误挂载、只读挂载及不同步恢复必须拒绝或报警。
+7. 未配置桶/授权/凭据及补偿失败必须拒绝或报警（当前为 `BLOCKED_STS_ISSUER_UNDEFINED`）。
 
-当前仅 `pnpm test:storage-gate` 的路径启动预检通过；真实挂载和恢复为 `BLOCKED`。
+当前本地仅完成 fake COS 客户端 + 门禁静态校验；真实 COS 桶与 STS 集成验收为 `BLOCKED`（F 阶段）。
 
 ## 浏览器验收
 

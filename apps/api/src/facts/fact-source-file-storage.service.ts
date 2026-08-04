@@ -58,11 +58,13 @@ export class FactSourceFileStorageService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    const mountInfo = process.platform === 'linux' && process.env.NODE_ENV === 'production'
+    // D1（Codex PG-20260805-COS-D-CORRECTION）：仅 driver=local 时才执行 CFS 挂载校验；
+    // driver=cos 不读 mountinfo、不要求 FACT_SOURCE_STORAGE_ROOT。
+    const driverKind = this.driverKind;
+    const mountInfo = process.platform === 'linux' && process.env.NODE_ENV === 'production' && driverKind === 'local'
       ? await readFile('/proc/self/mountinfo', 'utf8').catch(() => '')
       : undefined;
-    // D 阶段（任务 D1）将改为"仅 driver=local 时"才执行 CFS 挂载校验；B 阶段保持既有行为不变。
-    assertProductionFactSourceStorage(process.env, process.platform, mountInfo);
+    assertProductionFactSourceStorage(process.env, process.platform, mountInfo, driverKind);
     // E-02：模块初始化执行一次启动探针，后续 ready 只读
     await this.assertWritable();
   }

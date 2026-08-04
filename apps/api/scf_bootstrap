@@ -13,7 +13,9 @@
 # - DB_PASSWORD: 数据库密码
 # - DB_DATABASE: 数据库名
 # - DB_SYNC: false（生产禁止自动同步）
-# - FACT_SOURCE_STORAGE_ROOT: /mnt/fact-source-files（必须是 CloudBase COS/CFS 持久挂载点）
+# - FACT_SOURCE_STORAGE_DRIVER: cos（私有 COS 对象存储 + 后端 COS SDK 直连；
+#   凭据经 STS 临时凭据注入，禁止在配置中写入长期密钥）
+# - COS_BUCKET / COS_REGION / COS_OBJECT_PREFIX: 私有 COS 桶参数（F 阶段核验后注入）
 # - JWT_SECRET: JWT 签名密钥
 # - JWT_EXPIRES_IN: 8h
 # - CORS_ORIGINS: 允许的跨域来源，逗号分隔

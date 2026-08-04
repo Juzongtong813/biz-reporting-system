@@ -171,6 +171,15 @@ export class EnvCredentialProvider implements CredentialProvider {
     const sessionToken = String(this.env[COS_ENV_KEYS.sessionToken] ?? '').trim();
     const expiresRaw = String(this.env[COS_ENV_KEYS.credentialExpiresAt] ?? '').trim();
 
+    // R1 已裁定（Codex PG-20260805-COS-D-CORRECTION）：生产采用 STS 临时凭据刷新，
+    // 长期 SecretId/SecretKey 不得作为默认生产方案。
+    // 生产环境（NODE_ENV=production）下若无 STS 形态（sessionToken + 过期时刻）→ 明确失败，
+    // 禁止静默退回永久环境变量密钥（BLOCKED_STS_ISSUER_UNDEFINED）。
+    const isProduction = String(this.env.NODE_ENV ?? '').toLowerCase() === 'production';
+    if (isProduction && (sessionToken === '' || expiresRaw === '')) {
+      throw new FactSourceStorageConfigError('BLOCKED_STS_ISSUER_UNDEFINED');
+    }
+
     let expiredAt = PERMANENT_CREDENTIAL_EXPIRES_AT;
     if (expiresRaw !== '') {
       if (!/^\d+$/.test(expiresRaw)) {

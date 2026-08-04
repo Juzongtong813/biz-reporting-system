@@ -37,13 +37,12 @@ RUN pnpm deploy --filter=@biz-reporting/api /app/deploy
 
 FROM node:20-alpine AS runner
 
-# E-06：非 root 运行（UID/GID 10001），持久挂载点挂载前兜底可写
-RUN addgroup -g 10001 app && adduser -u 10001 -G app -S app \
-    && mkdir -p /mnt/fact-source-files && chown 10001:10001 /mnt/fact-source-files
+# 非 root 运行（UID/GID 10001）。D2（Codex PG-20260805-COS-D-CORRECTION）：
+# 存储迁移为私有 COS SDK 直连，运行镜像不再创建/挂载本地持久路径。
+RUN addgroup -g 10001 app && adduser -u 10001 -G app -S app
 
 WORKDIR /app
-ENV FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
-LABEL com.biz-reporting.required-persistent-mount="/mnt/fact-source-files"
+ENV FACT_SOURCE_STORAGE_DRIVER=cos
 COPY --from=builder --chown=10001:10001 /app/deploy ./
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

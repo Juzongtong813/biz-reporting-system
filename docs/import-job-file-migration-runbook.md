@@ -10,7 +10,7 @@
 
 - 已执行 009 迁移（`import_jobs` 含 D-01 七字段）。
 - 数据库可连接（sqlite 路径 或 MySQL 连接参数）。
-- 持久存储目录可写（`FACT_SOURCE_STORAGE_ROOT`，生产为 `/mnt/fact-source-files`）。
+- 存储可写：目标为**私有 COS 对象存储 + 后端 COS SDK 直连**（`FACT_SOURCE_STORAGE_DRIVER=cos`，经 `FactSourceFileStorageService` 写入逻辑键 `xx/<sha256>`）；`local` 驱动（`FACT_SOURCE_STORAGE_ROOT`）仅为本地开发/回滚路径（历史 CFS 方案，**非当前方案**）。
 - **本工具不实现清空 Base64**：迁移后历史 Base64 保留，回退安全。
 
 ## 2. 安全模型

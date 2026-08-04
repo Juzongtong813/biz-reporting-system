@@ -24,8 +24,15 @@ export function validateRuntimeEnvironment(
   validateOptionalInteger(config.DB_POOL_QUEUE_LIMIT, 'DB_POOL_QUEUE_LIMIT_INVALID', 0, 10000);
 
   if (normalize(config.DB_SYNC) !== 'false') fail('DB_SYNC_MUST_BE_FALSE');
-  if (normalize(config.FACT_SOURCE_STORAGE_ROOT) !== '/mnt/fact-source-files') {
-    fail('FACT_SOURCE_STORAGE_ROOT_INVALID');
+  // D1（Codex PG-20260805-COS-D-CORRECTION）：仅 driver=local 才校验 CFS 挂载根；
+  // driver=cos 不要求 FACT_SOURCE_STORAGE_ROOT（COS SDK 直连，文件落私有桶）。
+  const storageDriver = normalize(config.FACT_SOURCE_STORAGE_DRIVER);
+  if (storageDriver === 'local') {
+    if (normalize(config.FACT_SOURCE_STORAGE_ROOT) !== '/mnt/fact-source-files') {
+      fail('FACT_SOURCE_STORAGE_ROOT_INVALID');
+    }
+  } else if (storageDriver !== 'cos') {
+    fail('FACT_SOURCE_STORAGE_DRIVER_INVALID');
   }
 
   const origins = required(config.CORS_ORIGINS, 'CORS_ORIGINS_REQUIRED')

@@ -81,6 +81,79 @@ for (const f of walk(join(ROOT, "apps/admin-web/src"), [".tsx", ".ts"])) {
     violations.push(`[AR-R5-a] ${r} :: 页面层直接读写 token`);
 }
 
+// ────────────── D3（Codex PG-20260805-COS-D-CORRECTION）──────────────
+
+const COS_SDK_MODULE = "cos-nodejs-sdk-v5";
+// 唯一允许直接 import/require COS SDK 的文件（设计 §4.2 :308 / :392）。
+const COS_CLIENT_FACTORY = "apps/api/src/facts/storage/cos-client.factory.ts";
+const COS_STORAGE_DIR = "apps/api/src/facts/storage/";
+
+// AR-R7-a：业务层（apps/api/src 除 facts/storage/ 外）不得直接依赖 COS SDK
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts", ".js"])) {
+  const r = rel(f);
+  if (r.startsWith(COS_STORAGE_DIR)) continue; // 适配层允许（仅 factory 可 import，见下）
+  const src = readFileSync(f, "utf8");
+  if (new RegExp(`(from|require\\()\\s*['"]${COS_SDK_MODULE}`).test(src))
+    violations.push(`[AR-R7-a] ${r} :: 业务层直接依赖 COS SDK（仅 ${COS_CLIENT_FACTORY} 允许）`);
+}
+
+// AR-R7-b：整个 COS SDK 的 import 只允许出现在 cos-client.factory.ts
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts", ".js"])) {
+  const r = rel(f);
+  const src = readFileSync(f, "utf8");
+  if (!new RegExp(`(from|require\\()\\s*['"]${COS_SDK_MODULE}`).test(src)) continue;
+  if (r !== COS_CLIENT_FACTORY)
+    violations.push(`[AR-R7-b] ${r} :: COS SDK 仅允许在 ${COS_CLIENT_FACTORY} 引用`);
+}
+
+// AR-R7-c：禁止公开/预签名 URL 与 ACL=public（设计 §4.3 :413 / :415）
+const PUBLIC_EXPORT_LITERALS = [
+  ["getObjectUrl", "预签名/公开对象 URL 生成"],
+  ["getAuth\\(", "临时授权 URL 生成"],
+  ["myqcloud\\.com", "公开桶域名"],
+  ["cos\\.ap-", "公开桶 region 域名"],
+];
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts", ".js"])) {
+  const r = rel(f);
+  const lines = readFileSync(f, "utf8").split("\n");
+  lines.forEach((line, idx) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return; // 允许注释提及禁止项（说明用途）
+    for (const [literal, desc] of PUBLIC_EXPORT_LITERALS) {
+      if (new RegExp(literal).test(line))
+        violations.push(`[AR-R7-c] ${r}:${idx + 1} :: 禁止${desc}（${literal}）`);
+    }
+  });
+}
+// ACL=public：putObject 参数/配置不得含 public-read
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts", ".js"])) {
+  const r = rel(f);
+  const lines = readFileSync(f, "utf8").split("\n");
+  lines.forEach((line, idx) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return;
+    if (/ACL\s*[:=]\s*['"](public-read|public|private)[^'"']*['"]/.test(line))
+      violations.push(`[AR-R7-c] ${r}:${idx + 1} :: 禁止显式 ACL（含 public-read）`);
+  });
+}
+
+// AR-R7-d：禁止新增存储注入令牌（撤销 FACT_SOURCE_STORAGE Symbol 的门禁化）
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts"])) {
+  const r = rel(f);
+  const lines = readFileSync(f, "utf8").split("\n");
+  lines.forEach((line, idx) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return; // 允许注释说明已撤销令牌
+    if (/FACT_SOURCE_STORAGE\s*=\s*Symbol/.test(line))
+      violations.push(`[AR-R7-d] ${r}:${idx + 1} :: 禁止恢复 FACT_SOURCE_STORAGE Symbol 注入令牌`);
+  });
+}
+
+// AR-R7-e：禁止恢复 CFS 运行时依赖（fuse.cosfs 挂载语义不得回归）
+for (const f of walk(join(ROOT, "apps/api/src"), [".ts", ".js"])) {
+  const r = rel(f);
+  const src = readFileSync(f, "utf8");
+  if (/fuse\.cosfs|cosfs\s+.*rw/.test(src))
+    violations.push(`[AR-R7-e] ${r} :: 禁止恢复 CFS cosfs 挂载依赖`);
+}
+
 if (violations.length) {
   console.error(`架构检查失败：${violations.length} 项违规`);
   for (const v of violations) console.error("  " + v);
