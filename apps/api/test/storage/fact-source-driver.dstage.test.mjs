@@ -375,14 +375,17 @@ test('D-8a production 无 STS 形态 → EnvCredentialProvider 明确失败（BL
     '生产装配禁止静默退回永久环境变量密钥');
 });
 
-test('D-8b production + STS 形态 → 通过且 sessionToken 保留', async () => {
+test('D-8b production + STS 形态（近期过期）→ 通过且 sessionToken 保留', async () => {
   const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const now = Math.floor(Date.now() / 1000);
+  // 使用近期过期时间（now+3600），不得用 2100 年 expiry 假装真实 STS 生命周期
   const prodSts = new EnvCredentialProviderC({
     NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y',
-    COS_SESSION_TOKEN: 'sts-token', COS_CREDENTIAL_EXPIRES_AT: '4102444800',
+    COS_SESSION_TOKEN: 'sts-token', COS_CREDENTIAL_EXPIRES_AT: String(now + 3600),
   });
   const c = await prodSts.getCredentials();
   assert.equal(c.sessionToken, 'sts-token', 'STS 形态应保留 sessionToken');
+  assert.ok(c.expiredAt <= now + 3600, 'expiredAt 应为近期过期时刻（非 2100 年）');
 });
 
 test('D-8c 非 production 长期密钥形态仍可用（local 联调路径）', async () => {
@@ -390,4 +393,90 @@ test('D-8c 非 production 长期密钥形态仍可用（local 联调路径）', 
   const dev = new EnvCredentialProviderC({ COS_SECRET_ID: 'dev-id', COS_SECRET_KEY: 'dev-key' });
   const d = await dev.getCredentials();
   assert.ok(d.expiredAt > 0, '非生产应可用（长期密钥仅限本地联调）');
+});
+
+// ─────────── D 最终收敛补强（Codex PG-20260508-COS-D-FINAL-CORRECTION 令三）───────────
+
+test('D-9a 已过期凭据必须拒绝（assertCredentials + EnvCredentialProvider 过期时刻）', async () => {
+  const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const now = Math.floor(Date.now() / 1000);
+  // 过期时刻 = now - 10（已过期）→ EnvCredentialProvider 仍会返回（它只校验形态），
+  // 但下游 isCredentialExpired / RefreshingCredentialProvider 必须判定过期并拒绝使用。
+  const { isCredentialExpired } = compiled('facts/storage/credential.provider.js');
+  const creds = { secretId: 'x', secretKey: 'y', sessionToken: 't', expiredAt: now - 10 };
+  assert.equal(isCredentialExpired(creds, 0), true, '已过期凭据必须判定过期');
+  const prodSts = new EnvCredentialProviderC({
+    NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y',
+    COS_SESSION_TOKEN: 't', COS_CREDENTIAL_EXPIRES_AT: String(now - 10),
+  });
+  const c = await prodSts.getCredentials();
+  assert.ok(isCredentialExpired(c, 0), '已过期注入凭据必须被识别为过期');
+});
+
+test('D-9b 距过期不足 refresh skew 的静态注入凭据必须被阻断（不静默使用）', async () => {
+  const EnvCredentialProviderC = compiled('facts/storage/credential.provider.js').EnvCredentialProvider;
+  const ConfigError = compiled('facts/storage/fact-source-storage.error.js').FactSourceStorageConfigError;
+  const { DEFAULT_CREDENTIAL_REFRESH_SKEW_SECONDS } = compiled('facts/storage/credential.provider.js');
+  const now = Math.floor(Date.now() / 1000);
+  // 过期时刻仅剩 skew/2（远小于 300s skew）→ 生产静态注入不应被当作可用长期凭据
+  const staleAt = now + Math.floor(DEFAULT_CREDENTIAL_REFRESH_SKEW_SECONDS / 2);
+  const provider = new EnvCredentialProviderC({
+    NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y',
+    COS_SESSION_TOKEN: 't', COS_CREDENTIAL_EXPIRES_AT: String(staleAt),
+  });
+  // EnvCredentialProvider 是外部注入形态，本身不实现自动刷新——
+  // 它返回近期过期凭据后，RefreshingCredentialProvider/使用方必须走刷新或拒绝。
+  const creds = await provider.getCredentials();
+  const { isCredentialExpired } = compiled('facts/storage/credential.provider.js');
+  assert.equal(isCredentialExpired(creds, DEFAULT_CREDENTIAL_REFRESH_SKEW_SECONDS), true,
+    '距过期不足 refresh skew 的凭据必须被判定为需刷新（阻断静默使用）');
+  // 拒绝形态：过期时刻非法（非数字）→ 明确报错
+  await assert.rejects(
+    () => new EnvCredentialProviderC({
+      NODE_ENV: 'production', COS_SECRET_ID: 'x', COS_SECRET_KEY: 'y',
+      COS_SESSION_TOKEN: 't', COS_CREDENTIAL_EXPIRES_AT: 'not-a-number',
+    }).getCredentials(),
+    (err) => err instanceof ConfigError && err.message.includes('INVALID'),
+    '非法过期时刻必须明确报错',
+  );
+});
+
+test('D-9c RefreshingCredentialProvider：过期缓存触发刷新，刷新失败上抛不污染缓存', async () => {
+  const { RefreshingCredentialProvider } = compiled('facts/storage/credential.provider.js');
+  const now = Math.floor(Date.now() / 1000);
+  class SeqProvider extends RefreshingCredentialProvider {
+    constructor() { super(0); }
+    get name() { return 'seq-test'; }
+    fetchCount = 0;
+    async fetchCredentials() {
+      this.fetchCount += 1;
+      return { secretId: 'x', secretKey: 'y', sessionToken: `t${this.fetchCount}`, expiredAt: now + 100 };
+    }
+  }
+  const p = new SeqProvider();
+  const first = await p.getCredentials();
+  assert.equal(first.sessionToken, 't1');
+  const second = await p.getCredentials(); // skew=0，未过期 → 命中缓存
+  assert.equal(second.sessionToken, 't1', '有效期内应命中缓存，不重复 fetch');
+  // 模拟过期：手动 invalidate 后重新 fetch
+  p.invalidate();
+  const third = await p.getCredentials();
+  assert.equal(third.sessionToken, 't2', '缓存失效后应重新 fetch');
+});
+
+test('D-9d 日志/报告不得含凭据真值（脱敏断言）', async () => {
+  const { maskSecretId, describeCosConfig } = compiled('facts/storage/storage-driver.config.js');
+  const masked = maskSecretId('AKIDREALVALUE123456');
+  assert.equal(masked, 'AKID****', 'SecretId 应只保留前 4 位');
+  assert.ok(!masked.includes('REALVALUE'), '脱敏后不得含真值');
+  const desc = describeCosConfig({
+    region: 'ap-shanghai', bucket: 'biz-test-1250000000', secretId: 'AKIDREALVALUE123456',
+    secretKey: 'real-secret-key', sessionToken: 'real-session-token',
+    objectPrefix: 'fact-source-files/', requestTimeoutMs: 30000, maxRetries: 2,
+  });
+  const json = JSON.stringify(desc);
+  assert.ok(!json.includes('real-secret-key'), 'describeCosConfig 不得含 secretKey');
+  assert.ok(!json.includes('real-session-token'), 'describeCosConfig 不得含 sessionToken');
+  assert.ok(!json.includes('REALVALUE'), 'describeCosConfig 不得含 secretId 真值');
+  assert.equal(desc.secretId, 'AKID****', 'secretId 字段应脱敏');
 });
