@@ -154,11 +154,16 @@ export abstract class RefreshingCredentialProvider implements CredentialProvider
 }
 
 /**
- * 环境变量凭据提供者。
+ * 环境变量凭据提供者（**临时凭据形态校验**，非 issuer-backed refresher）。
  *
- * 每次调用都重新读取 env，因此支持"外部进程热轮换环境变量"的临时凭据模式；
- * `COS_CREDENTIAL_EXPIRES_AT`（epoch 秒，可选）用于声明临时凭据过期时刻，
- * 缺省视为长期密钥（`PERMANENT_CREDENTIAL_EXPIRES_AT`）。
+ * 能力边界（Codex PG-20260805-COS-D-FINAL-CORRECTION 准确表述）：
+ * - **已实现**：临时凭据形态校验（production 下必须含 `COS_SESSION_TOKEN` + `COS_CREDENTIAL_EXPIRES_AT`）；
+ * - **已实现**：禁止生产静默使用永久密钥（缺失 STS 形态即抛 `BLOCKED_STS_ISSUER_UNDEFINED`）；
+ * - **未实现**：真实 issuer-backed provider —— 本类仅**重读外部注入的环境变量**，
+ *   **不是**自动刷新；**无法证明**凭据到期后会自动续期（续期依赖外部进程重新注入）。
+ * - 不得把本类的"每次调用重新读取 env"描述为自动刷新。
+ *
+ * `COS_CREDENTIAL_EXPIRES_AT`（epoch 秒，必填于 production）声明临时凭据过期时刻。
  */
 export class EnvCredentialProvider implements CredentialProvider {
   readonly name = 'env';

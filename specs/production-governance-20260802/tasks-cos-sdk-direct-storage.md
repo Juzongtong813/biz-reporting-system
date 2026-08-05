@@ -527,7 +527,7 @@
 | C-2.2 仅本次刚上传且无引用才删 | C1、C2 | `anyRowReferences` 复查（设计 §6.3） |
 | C-2.3 补偿失败 → 孤儿登记 + 5xx | C1、C2 | `SOURCE_FILE_ORPHAN_OBJECT` + `operation_log` |
 | C-2.4 补偿审计脱敏 | C1、C2 | 设计 §2.3 / §9.2 |
-| C-2.5 获 `tasks.md` §0.4 书面豁免 | 全局（非代码任务） | **PENDING，见设计 §6.5；未豁免前 C-2.5 标记 BLOCKED 而非 PASS** |
+| C-2.5 补偿删除许可（DECIDED_COMPENSATION_REQUIRED） | C1、C2 | 已裁定 Q-02 不豁免；四条件（首次创建 deduplicated=false + 删前无 DB 引用 + MySQL 写/事务异常 + 非普通/运维删除）全成立才允许 |
 | C-3.1 对象层幂等（同内容 1 对象） | B5、B8 | head-then-put |
 | C-3.2 对象层不可变（hash 冲突抛错） | B5、B8 | `SOURCE_FILE_IMMUTABILITY_VIOLATION` |
 | C-3.3 业务层幂等（1 条记录） | C2 | 应用层查重；**并发窗口残留（设计 §11 R4），根治需 T-010** |
@@ -602,12 +602,12 @@ node scripts/test/check-container-runtime.mjs
 | 项 | 说明 | 在本任务文档的落点 |
 |---|---|---|
 | **R10（ACL 矩阵缺口，PENDING）** | `access-control-matrix.md` 缺「应用运行时身份」「匿名/终端用户」两类主体，C-6 无合规对齐落点 | C4 验收判据 #6 已标注；C-6.3 验收缺口同上。**需上游补充矩阵条目后方可判定合规对齐** |
-| **R1（凭据形态，PENDING）** | 长期密钥 vs STS 临时凭据；本轮两种形态均兼容（B6 `sessionToken` 可选），不二选一 | B6 验收 #5 |
+| **R1（凭据形态，DECIDED_STS_REQUIRED）** | 已裁定（Codex PG-20260805）：采用 **STS 临时凭据刷新**；长期 SecretId/SecretKey 不得作为默认生产方案。状态：`STS_SHAPE_GATE_IMPLEMENTED`（生产禁永久密钥门禁已实现）+ `STS_REFRESH_PROVIDER_BLOCKED_ISSUER_UNDEFINED`（真实 issuer-backed provider 未实现，无法证明到期自动续期） | B6 验收 #5；F 保持 BLOCKED_STS_ISSUER_UNDEFINED |
 | **R9（DDL 边界 / C-1.4）** | 本轮零 DDL，`contentType` 不入库 | C-1.4 映射备注；T-010 |
 | **R4（并发竞态）** | 业务层查重窗口；根治需 T-010 | C-3.3 / C-3.4 映射备注；T-010 |
 | **R11（错误码命名）** | `SOURCE_FILE_HASH_MISMATCH` vs `IMPORT_SOURCE_HASH_MISMATCH` | §2.1 + C-5.4 映射备注 |
 | **R12（前端扫描范围）** | `apps/mini-program` + `apps/miniapp` 双目录 | C-6.5 映射备注（从严覆盖两者） |
-| **C-2.5 豁免（PENDING）** | 补偿删除需 `tasks.md` §0.4 书面豁免 | 全局事项，未豁免前标记 BLOCKED |
+| **C-2.5 豁免（DECIDED_COMPENSATION_REQUIRED）** | 补偿删除已裁定（Codex PG-20260805 Q-02：不豁免）。允许条件四者全成立：①本次请求首次创建 `deduplicated=false`；②删除前 DB 无引用；③MySQL 写入/事务异常触发；④非普通业务删除、非运维批量删除。生产实际部署与执行仍需后续发布授权 | 全局事项；C 阶段已实现（C1/C2 + operation_logs 三态） |
 
 ---
 

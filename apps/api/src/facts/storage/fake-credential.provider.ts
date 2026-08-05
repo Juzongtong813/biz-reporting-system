@@ -14,6 +14,7 @@
 import {
   CosCredentials,
   DEFAULT_CREDENTIAL_REFRESH_SKEW_SECONDS,
+  PERMANENT_CREDENTIAL_EXPIRES_AT,
   RefreshingCredentialProvider,
   nowInSeconds,
 } from './credential.provider';
@@ -69,8 +70,8 @@ export class FakeCredentialProvider extends RefreshingCredentialProvider {
       return {
         secretId: FAKE_CREDENTIAL_SECRET_ID,
         secretKey: FAKE_CREDENTIAL_SECRET_KEY,
-        // 长期密钥形态：使用远期过期时间，永不触发刷新
-        expiredAt: nowInSeconds() + 315_360_000,
+        // 长期密钥形态：统一使用 PERMANENT_CREDENTIAL_EXPIRES_AT 语义（不伪装真实 STS 生命周期）
+        expiredAt: PERMANENT_CREDENTIAL_EXPIRES_AT,
       };
     }
 

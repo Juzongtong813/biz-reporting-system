@@ -2,6 +2,13 @@
 
 **适用**：biz-reporting-system 治理批次 PG-20260802 D-06
 **工具**：`scripts/oneoff/migrate-import-job-files.mjs`
+
+> ⚠️ **工具定位（Codex PG-20260805-COS-D-FINAL-CORRECTION）**：
+> 本工具当前为 **local 回滚工具，仅供本地/历史恢复**（走 `FACT_SOURCE_STORAGE_ROOT` 本地盘 + `fs` 写入）。
+> **真实 COS 迁移保持 BLOCKED**，等待专用 COS migration adapter（经统一 `FactSourceStorage` driver 写 COS，
+> 并补齐 fake COS 测试）获得授权后另行实施。
+> **不得**在没有真实 COS 验证时声称 Base64 已能迁移到 COS。
+
 **目标**：将 `import_jobs.source_file_base64` 存量数据迁移到内容寻址持久存储（`<storage_root>/<sha256 前两位>/<sha256>`），回填 `source_file_storage_key / source_file_sha256 / source_file_size / source_file_stored_at`。
 
 ---
@@ -10,7 +17,7 @@
 
 - 已执行 009 迁移（`import_jobs` 含 D-01 七字段）。
 - 数据库可连接（sqlite 路径 或 MySQL 连接参数）。
-- 存储可写：目标为**私有 COS 对象存储 + 后端 COS SDK 直连**（`FACT_SOURCE_STORAGE_DRIVER=cos`，经 `FactSourceFileStorageService` 写入逻辑键 `xx/<sha256>`）；`local` 驱动（`FACT_SOURCE_STORAGE_ROOT`）仅为本地开发/回滚路径（历史 CFS 方案，**非当前方案**）。
+- **local 回滚路径存储可写**：`--storage-root` 指向本地盘目录（`FACT_SOURCE_STORAGE_ROOT`，历史 CFS 方案，**非当前方案**）。本工具**不写 COS**。
 - **本工具不实现清空 Base64**：迁移后历史 Base64 保留，回退安全。
 
 ## 2. 安全模型
@@ -22,21 +29,22 @@
 | `--apply --env-id` 与 DB 标识不匹配 | **exit 2 拒绝写入**（防误连生产） |
 | 迁移失败（hash 不一致 / 解码失败 / 存储失败） | 保留 Base64 不动，输出脱敏 job ID + 错误码，exit 1 |
 
-## 3. 用法
+## 3. 用法（local 回滚工具，仅供本地/历史恢复）
 
 ```bash
 # 1) dry-run 评估（推荐先跑）
 node scripts/oneoff/migrate-import-job-files.mjs \
   --db /path/to/biz.sqlite \
-  --storage-root /mnt/fact-source-files
+  --storage-root /path/to/local-storage
 
 # 2) apply（隔离/生产，需 --env-id 与 DB 标识匹配）
 node scripts/oneoff/migrate-import-job-files.mjs \
   --db /path/to/biz.sqlite \
-  --storage-root /mnt/fact-source-files \
+  --storage-root /path/to/local-storage \
   --apply --env-id <数据库标识片段>
 ```
 
+> ⚠️ `--storage-root /mnt/fact-source-files` 属于 **local driver** 用法（历史 CFS 路径），**不得冒充 COS SDK 迁移**。当前仅支持本地盘回滚；真实 COS 迁移保持 **BLOCKED**，等待专用 COS migration adapter（经统一 `FactSourceStorage` driver 写 COS + fake COS 测试）。
 > 也可用环境变量：`MIGRATION_TEST_DB_DATABASE` / `FACT_SOURCE_STORAGE_ROOT`。
 > 生产 MySQL 场景：请使用隔离客户端经 SSH 隧道/跳板连接，`--db` 指向导出后的 sqlite 副本执行迁移后回写，或按生产变更流程（G-02/G-06）在窗口内执行。
 

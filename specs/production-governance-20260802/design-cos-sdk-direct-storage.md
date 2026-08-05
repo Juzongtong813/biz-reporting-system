@@ -618,14 +618,14 @@ onTransactionFailure(evidence):
 2. 删前复查 DB，**无任何行引用**该 sha256
 3. 仅在 MySQL 元数据写入失败的补偿路径触发；业务正常流程、运维脚本一律禁止调用 `delete()`
 
-**状态：待上游"受限豁免"裁定（PENDING）。** 对应 PM 的 Q-02 与验收项 **C-2.5**（"该行为已获得 `tasks.md` §0.4 的书面豁免"）。
+**状态：DECIDED_COMPENSATION_REQUIRED（Codex PG-20260805 Q-02 已裁定：不豁免，补偿删除为必需实现）。** 对应 PM 的 Q-02 与验收项 C-2.5。
 
-> **该项未获书面豁免前，C-2.5 无法判定为通过。** 本设计不自行宣告豁免成立，仅登记冲突并给出受限实现方案。E 阶段验收时若豁免仍未到位，C-2.5 应标记为 BLOCKED 而非 PASS。
+> 允许补偿删除的完整条件（四者全成立）：①本次请求首次创建（`deduplicated=false`）；②删除前数据库无引用；③MySQL 写入/事务异常触发；④非普通业务删除、非运维批量删除。生产实际部署与执行仍需后续发布授权。
 
 ### 6.4 孤儿对象清理
 
 - 补偿失败时写 `operation_log`：`action_type='fact_source_object_orphaned'`、`result_status='failed'`、`after_data_json={ storageKey, sha256, size }`
-- 提供只读盘点脚本 `scripts/oneoff/list-orphan-cos-objects.mjs`（任务 D5）：比对 COS 对象清单与 DB 中 `source_file_storage_key` 集合，输出差集报告
+- 提供只读盘点脚本 `scripts/oneoff/list-orphan-operation-log.mjs`（任务 D5）：**orphan operation-log 离线盘点**（仅基于 operation_logs 补偿标记，未核对真实 COS 桶；真实 COS 对账需 F 阶段桶与 STS 凭据就绪后执行），输出差集报告供人工复核
 - **该脚本只输出报告，不执行删除**。实际删除需人工复核后单独执行，避免误删
 
 ---
