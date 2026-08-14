@@ -1,0 +1,121 @@
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Public } from '../common/decorators/public.decorator';
+import { BizAuthGuard } from './biz-auth.guard';
+import { BizPermissionsGuard } from './biz-permissions.guard';
+import { BizPermissions } from './biz-permissions.decorator';
+import { BizAuthContext } from '../rbac/rbac.service';
+import { BizAuthUser } from './biz-auth-user.decorator';
+import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput } from './biz-admin.service';
+import { BizPermissionCode, PlatformRole } from '@biz-reporting/shared-types';
+
+/**
+ * 账号与权限管理 API（新基线，仅 super_admin；基线 02 TABLE 3）
+ * 停用/重置密码 → authVersion+1 使旧会话立即失效；权限变更在账号下次登录时生效。
+ */
+@Controller('biz/admin')
+@Public()
+@UseGuards(BizAuthGuard, BizPermissionsGuard)
+export class BizAdminController {
+  constructor(private readonly adminService: BizAdminService) {}
+
+  // ---- 用户 ----
+  @Get('users')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async listUsers(@BizAuthUser() auth: BizAuthContext) {
+    const users = await this.adminService.listUsers();
+    return {
+      items: users.map(({ passwordHash: _ph, ...user }) => user),
+    };
+  }
+
+  @Post('users')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async createUser(@BizAuthUser() auth: BizAuthContext, @Body() dto: CreateUserDto) {
+    const user = await this.adminService.createUser(auth.userId, dto);
+    const { passwordHash: _ph, ...rest } = user;
+    return rest;
+  }
+
+  @Patch('users/:id/status')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async setUserStatus(
+    @BizAuthUser() auth: BizAuthContext,
+    @Param('id') userId: string,
+    @Body() body: { status: 'enabled' | 'disabled' },
+  ) {
+    return this.adminService.setUserStatus(auth.userId, userId, body.status);
+  }
+
+  @Post('users/:id/reset-password')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async resetPassword(
+    @BizAuthUser() auth: BizAuthContext,
+    @Param('id') userId: string,
+    @Body() body: { newPassword: string },
+  ) {
+    if (!body.newPassword || body.newPassword.length < 6) {
+      return { ok: false, error: '密码最低 6 位' };
+    }
+    await this.adminService.resetPassword(auth.userId, userId, body.newPassword);
+    return { ok: true };
+  }
+
+  @Get('users/:id/permissions')
+  @BizPermissions(BizPermissionCode.OPERATION_ROLE_MANAGE)
+  async getUserPermissions(@Param('id') userId: string) {
+    return this.adminService.getUserEffectivePermissions(userId);
+  }
+
+  @Put('users/:id/permission-overrides')
+  @BizPermissions(BizPermissionCode.OPERATION_ROLE_MANAGE)
+  async setOverrides(
+    @BizAuthUser() auth: BizAuthContext,
+    @Param('id') userId: string,
+    @Body() body: { overrides: PermissionOverrideInput[] },
+  ) {
+    await this.adminService.setPermissionOverrides(auth.userId, userId, body.overrides ?? []);
+    return { ok: true };
+  }
+
+  @Put('users/:id/data-scopes')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async setDataScopes(
+    @BizAuthUser() auth: BizAuthContext,
+    @Param('id') userId: string,
+    @Body() body: { scopes: DataScopeInput[] },
+  ) {
+    await this.adminService.setDataScopes(auth.userId, userId, body.scopes ?? []);
+    return { ok: true };
+  }
+
+  // ---- 字典 ----
+  @Get('roles')
+  @BizPermissions(BizPermissionCode.OPERATION_ROLE_MANAGE)
+  async roles() {
+    return { items: await this.adminService.listRoles() };
+  }
+
+  @Get('modules')
+  @BizPermissions(BizPermissionCode.OPERATION_MODULE_MANAGE)
+  async modules() {
+    return { items: await this.adminService.listModules() };
+  }
+
+  @Get('permissions')
+  @BizPermissions(BizPermissionCode.OPERATION_ROLE_MANAGE)
+  async permissions() {
+    return { items: await this.adminService.listPermissions() };
+  }
+
+  @Get('provinces')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async provinces() {
+    return { items: await this.adminService.listProvinces() };
+  }
+
+  @Get('cities')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async cities(@Query('provinceId') provinceId?: string) {
+    return { items: await this.adminService.listCities(provinceId) };
+  }
+}

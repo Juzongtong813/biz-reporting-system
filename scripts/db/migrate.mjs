@@ -267,6 +267,14 @@ async function inspectState(version) {
       adapter.scalar("SELECT COUNT(*) FROM biz_cost_categories WHERE code IN ('labor','utilities','fuel','entertainment','rent','reimbursement','other')").then((value) => value === 7),
     ]);
   }
+  if (version === '012_biz_permission_seed') {
+    if (!await adapter.tableExists('biz_permissions') || !await adapter.tableExists('biz_role_permissions')) return 'empty';
+    return allOrNothing([
+      adapter.scalar("SELECT COUNT(*) FROM biz_permissions").then((value) => value >= 39),
+      adapter.scalar("SELECT COUNT(*) FROM biz_role_permissions").then((value) => value >= 48),
+      adapter.scalar("SELECT COUNT(*) FROM biz_role_permissions WHERE role_id = (SELECT id FROM biz_roles WHERE code = 'city_user')").then((value) => value === 16),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 

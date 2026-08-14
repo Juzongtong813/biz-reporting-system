@@ -23,6 +23,11 @@ const DataIntakeWorkspace = lazy(() => import('@/pages/V3Workspace').then((modul
 const Packages = lazy(() => import('@/pages/Packages'));
 const ImportJobs = lazy(() => import('@/pages/ImportJobs'));
 const CityReporting = lazy(() => import('@/pages/CityReporting'));
+const BizLogin = lazy(() => import('@/pages/biz/BizLogin'));
+const BizPortal = lazy(() => import('@/pages/biz/BizPortal'));
+const BizMaintenancePortal = lazy(() => import('@/pages/biz/BizMaintenancePortal'));
+const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
+const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
 
 function PageLoading() {
   return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;
@@ -97,6 +102,13 @@ export default function App() {
   const protectedRoute = <AuthGuard><ProtectedRoutes /></AuthGuard>;
   return <HashRouter><Routes>
     <Route path="/login" element={<Suspense fallback={<PageLoading />}><Login /></Suspense>} />
+    {/* 新基线（biz_）两级门户路由段：独立于旧体系，零破坏并存 */}
+    <Route path="/biz/login" element={<Suspense fallback={<PageLoading />}><BizLogin /></Suspense>} />
+    <Route path="/biz/portal" element={<Suspense fallback={<PageLoading />}><BizPortal /></Suspense>} />
+    <Route path="/biz/maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
+    <Route path="/biz/placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
+    <Route path="/biz/operation" element={<Suspense fallback={<PageLoading />}><Result status="info" title="经营管理" subTitle="M7 前端收口后接入实际业务页面" /></Suspense>} />
+    <Route path="/biz/admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
     <Route path="/*" element={protectedRoute} />
   </Routes></HashRouter>;
 }

@@ -5,7 +5,7 @@ import { DataSource } from 'typeorm';
 import { AuthLoginRateLimitEntity } from './auth-login-rate-limit.entity';
 import { AuthSecurityEventEntity } from './auth-security-event.entity';
 
-export type LoginRouteKey = 'admin_login' | 'city_login' | 'wechat_login' | 'wechat_bind';
+export type LoginRouteKey = 'admin_login' | 'city_login' | 'wechat_login' | 'wechat_bind' | 'biz_login';
 export type LoginOutcome = 'success' | 'failed' | 'blocked';
 
 export interface LoginSecurityContext {
@@ -19,7 +19,8 @@ export interface LoginAuditDetails {
   context: LoginSecurityContext;
   outcome: LoginOutcome;
   reasonCode: string;
-  userId?: number | null;
+  /** 旧体系为自增 number；biz 用户为 UUID string（M2 起） */
+  userId?: number | string | null;
   cityId?: number | null;
 }
 
@@ -162,7 +163,9 @@ export class LoginSecurityService {
           routeKey: details.route,
           subjectHash,
           ipHash,
-          userId: details.userId ?? null,
+          // 旧审计表 user_id 为 BIGINT（旧体系自增主键）；biz 用户 UUID string 不写入该列，
+          // 审计主体已由 subjectHash（HMAC 用户名哈希）保留。
+          userId: typeof details.userId === 'string' ? null : (details.userId ?? null),
           cityId: details.cityId ?? null,
           reasonCode: details.reasonCode,
           requestId: details.context.requestId,
@@ -196,7 +199,7 @@ export class LoginSecurityService {
           routeKey: details.route,
           subjectHash,
           ipHash,
-          userId: details.userId ?? null,
+          userId: typeof details.userId === 'string' ? null : (details.userId ?? null),
           cityId: details.cityId ?? null,
           reasonCode: details.reasonCode,
           requestId: details.context.requestId,
@@ -220,7 +223,7 @@ export class LoginSecurityService {
           routeKey: details.route,
           subjectHash,
           ipHash,
-          userId: details.userId ?? null,
+          userId: typeof details.userId === 'string' ? null : (details.userId ?? null),
           cityId: details.cityId ?? null,
           reasonCode: details.reasonCode || 'ACCOUNT_RATE_BLOCKED',
           requestId: details.context.requestId,

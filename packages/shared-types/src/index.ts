@@ -6,6 +6,7 @@
 export * from './enums/index';
 export * from './baseline/enums';
 export * from './baseline/order-template';
+export * from './baseline/permissions';
 export * from './auth/rbac';
 export * from './common/metric-source';
 

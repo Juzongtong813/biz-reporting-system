@@ -31,14 +31,17 @@ try {
   const roleCount = db.prepare("SELECT COUNT(*) FROM biz_roles WHERE code IN ('super_admin','admin','contract_manager','city_user')").pluck().get();
   const cityCount = db.prepare("SELECT COUNT(*) FROM biz_cities WHERE code IN ('370100','370200','370300','370400','370500','370600','370700','370800','370900','371000','371100','371300','371400','371500','371600','371700')").pluck().get();
   const categoryCount = db.prepare("SELECT COUNT(*) FROM biz_cost_categories WHERE code IN ('labor','utilities','fuel','entertainment','rent','reimbursement','other')").pluck().get();
+  const permCount = db.prepare("SELECT COUNT(*) FROM biz_permissions").pluck().get();
+  const rolePermCount = db.prepare("SELECT COUNT(*) FROM biz_role_permissions").pluck().get();
   db.close();
 
-  assert.equal(firstLedger.length, 12, 'expected twelve migration ledger rows');
+  assert.equal(firstLedger.length, 13, 'expected thirteen migration ledger rows');
   assert.equal(firstLedger.find((row) => row.version === '002_add_contract_month_invoice_order_amount')?.execution_mode, 'executed');
   assert.equal(firstLedger.find((row) => row.version === '008_v3_fact_lifecycle')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '009_production_governance')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '010_biz_baseline_tables')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '011_biz_seed_main_data')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '012_biz_permission_seed')?.status, 'applied');
   for (const column of ['lifecycle_status', 'warning_count', 'blocking_error_count', 'effective_at']) assert.ok(batchColumns.has(column), `008 batch column missing: ${column}`);
   for (const column of ['city_id', 'contract_id', 'period_year', 'period_month', 'lifecycle_status', 'supersedes_version_id', 'superseded_by_version_id', 'changed_fields_json', 'warning_summary_json']) assert.ok(versionColumns.has(column), `008 version column missing: ${column}`);
   assert.ok(batchIndexes.has('idx_fact_batch_lifecycle'));
@@ -61,7 +64,9 @@ try {
   const secondLedger = secondDb.prepare('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version').all();
   secondDb.close();
   assert.deepEqual(secondLedger, firstLedger, 'second migration run changed the ledger');
-  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=12 v3_lifecycle=true governance009=true baseline010=true seed011=true idempotent=true');
+  assert.ok(permCount >= 39, '012 seed: expected >=39 permission points');
+  assert.ok(rolePermCount >= 48, '012 seed: expected >=48 role-permission bindings');
+  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=13 v3_lifecycle=true governance009=true baseline010=true seed011=true permission012=true idempotent=true');
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
   console.log(`MIGRATION_LEDGER_CONTRACT_CLEANUP_OK root=${testRoot}`);
