@@ -210,3 +210,88 @@ export function bizOrderBatchRestore(id: string): Promise<{ ok: boolean }> {
 export function bizOrderRows(filter?: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }): Promise<{ items: Array<Record<string, unknown>> }> {
   return request.get('/biz/orders/rows', { params: filter }).then((r) => r.data);
 }
+
+// ================= 线下完工（M5） =================
+
+export interface OfflineCompletionDto {
+  contractId: string;
+  cityId: string;
+  businessMonth: string;
+  amountFen: number;
+  summary: string;
+  attachmentRef?: string | null;
+}
+
+export function bizOfflineList(params?: { cityId?: string; status?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/offline-completions', { params }).then((r) => r.data);
+}
+
+export function bizOfflineCreate(dto: OfflineCompletionDto): Promise<Record<string, unknown>> {
+  return request.post('/biz/offline-completions', dto).then((r) => r.data);
+}
+
+export function bizOfflineUpdate(id: string, dto: Partial<OfflineCompletionDto>): Promise<Record<string, unknown>> {
+  return request.patch(`/biz/offline-completions/${id}`, dto).then((r) => r.data);
+}
+
+export function bizOfflineSubmit(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/submit`).then((r) => r.data);
+}
+
+export function bizOfflineWithdraw(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/withdraw`).then((r) => r.data);
+}
+
+export function bizOfflineApprove(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/approve`).then((r) => r.data);
+}
+
+export function bizOfflineReject(id: string, comment: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/reject`, { comment }).then((r) => r.data);
+}
+
+export function bizOfflineVoid(id: string, reason: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/void`, { reason }).then((r) => r.data);
+}
+
+export function bizOfflineRestore(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/offline-completions/${id}/restore`).then((r) => r.data);
+}
+
+// ================= 地市成本（M5，不关联合同） =================
+
+export interface CostEntryDto {
+  cityId: string;
+  businessMonth: string;
+  categoryCode: string;
+  amountFen: number;
+  description?: string | null;
+}
+
+export function bizCostList(params?: { cityId?: string; status?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/costs', { params }).then((r) => r.data);
+}
+
+export function bizCostCreate(dto: CostEntryDto): Promise<Record<string, unknown>> {
+  return request.post('/biz/costs', dto).then((r) => r.data);
+}
+
+export function bizCostSubmit(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/costs/${id}/submit`).then((r) => r.data);
+}
+
+export function bizCostApprove(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/costs/${id}/approve`).then((r) => r.data);
+}
+
+export function bizCostReject(id: string, comment: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/costs/${id}/reject`, { comment }).then((r) => r.data);
+}
+
+export function bizCostVoid(id: string, reason: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/costs/${id}/void`, { reason }).then((r) => r.data);
+}
+
+export function bizCostRestore(id: string): Promise<Record<string, unknown>> {
+  return request.post(`/biz/costs/${id}/restore`).then((r) => r.data);
+}

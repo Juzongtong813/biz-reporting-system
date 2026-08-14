@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn, VersionColumn } from 'typeorm';
 
 /**
  * 线下完工（新基线 biz_offline_completions）
@@ -89,7 +89,8 @@ export class BizOfflineCompletionEntity {
   voidReason: string | null;
 
   /** 并发版本号（每次审批重新校验合同状态和分配关系） */
-  @Column({ name: 'version_no', type: 'int', default: 1 })
+  // 乐观锁版本（TypeORM @VersionColumn；列已在 010 迁移建立，无需新迁移）
+  @VersionColumn({ name: 'version_no', type: 'int', default: 1 })
   versionNo: number;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })

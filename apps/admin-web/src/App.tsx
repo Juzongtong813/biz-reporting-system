@@ -30,6 +30,8 @@ const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
 const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
 const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
 const BizOrders = lazy(() => import('@/pages/biz/BizOrders'));
+const BizOfflineCompletions = lazy(() => import('@/pages/biz/BizOfflineCompletions'));
+const BizCosts = lazy(() => import('@/pages/biz/BizCosts'));
 
 function PageLoading() {
   return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;

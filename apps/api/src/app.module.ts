@@ -23,6 +23,8 @@ import { FactsModule } from './facts/facts.module';
 import { BizAuthModule } from './biz-auth/biz-auth.module';
 import { BizContractsModule } from './biz-contracts/biz-contracts.module';
 import { BizOrdersModule } from './biz-orders/biz-orders.module';
+import { BizCompletionsModule } from './biz-completions/biz-completions.module';
+import { BizCostsModule } from './biz-costs/biz-costs.module';
 import { validateRuntimeEnvironment } from './runtime.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -120,6 +122,8 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
     BizAuthModule,
     BizContractsModule,
     BizOrdersModule,
+    BizCompletionsModule,
+    BizCostsModule,
   ],
   controllers: [AppController],
   providers: [
