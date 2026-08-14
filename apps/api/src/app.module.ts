@@ -22,6 +22,7 @@ import { Ws6Module } from './ws6/ws6.module';
 import { FactsModule } from './facts/facts.module';
 import { BizAuthModule } from './biz-auth/biz-auth.module';
 import { BizContractsModule } from './biz-contracts/biz-contracts.module';
+import { BizOrdersModule } from './biz-orders/biz-orders.module';
 import { validateRuntimeEnvironment } from './runtime.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -118,6 +119,7 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
     FactsModule,
     BizAuthModule,
     BizContractsModule,
+    BizOrdersModule,
   ],
   controllers: [AppController],
   providers: [

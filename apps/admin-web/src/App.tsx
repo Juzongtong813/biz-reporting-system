@@ -29,6 +29,7 @@ const BizMaintenancePortal = lazy(() => import('@/pages/biz/BizMaintenancePortal
 const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
 const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
 const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
+const BizOrders = lazy(() => import('@/pages/biz/BizOrders'));
 
 function PageLoading() {
   return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;
@@ -109,6 +110,7 @@ export default function App() {
     <Route path="/biz/maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
     <Route path="/biz/placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
     <Route path="/biz/operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
+    <Route path="/biz/orders" element={<Suspense fallback={<PageLoading />}><BizOrders /></Suspense>} />
     <Route path="/biz/admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
     <Route path="/*" element={protectedRoute} />
   </Routes></HashRouter>;

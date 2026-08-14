@@ -181,3 +181,32 @@ export function bizContractCancelAllocation(id: string, cityId: string): Promise
 export function bizContractAddFeeRate(id: string, cityId: string, effectiveMonth: string, rateBp: number, changeReason?: string): Promise<unknown> {
   return request.post(`/biz/contracts/${id}/fee-rates`, { cityId, effectiveMonth, rateBp, changeReason }).then((r) => r.data);
 }
+
+// ================= 订单域（M4） =================
+
+export function bizOrderUpload(file: File, idempotencyKey: string): Promise<{ batchId: string; status: string }> {
+  const form = new FormData();
+  form.append('idempotencyKey', idempotencyKey);
+  form.append('file', file);
+  return request.post('/biz/orders/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data);
+}
+
+export function bizOrderBatches(): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/orders/batches').then((r) => r.data);
+}
+
+export function bizOrderBatchDetail(id: string): Promise<{ batch: Record<string, unknown>; errors: Array<Record<string, unknown>>; rowCount: number }> {
+  return request.get(`/biz/orders/batches/${id}`).then((r) => r.data);
+}
+
+export function bizOrderBatchVoid(id: string, reason: string): Promise<{ ok: boolean }> {
+  return request.post(`/biz/orders/batches/${id}/void`, { reason }).then((r) => r.data);
+}
+
+export function bizOrderBatchRestore(id: string): Promise<{ ok: boolean }> {
+  return request.post(`/biz/orders/batches/${id}/restore`).then((r) => r.data);
+}
+
+export function bizOrderRows(filter?: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/orders/rows', { params: filter }).then((r) => r.data);
+}

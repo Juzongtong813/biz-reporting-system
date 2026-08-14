@@ -58,7 +58,7 @@ try {
   const verification = await mysql.createConnection({ host, port, user, password, database });
   try {
     const [firstLedger] = await verification.query('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version');
-    assert.equal(firstLedger.length, 13, 'expected 001-012 migration ledger entries, including both 002 files');
+    assert.equal(firstLedger.length, 14, 'expected 001-013 migration ledger entries, including both 002 files');
     assert.deepEqual(firstLedger.map((row) => row.version), expectedVersions, 'migration ledger versions differ from manifest');
     assert.ok(firstLedger.every((row) => row.status === 'applied'), 'all migrations must be applied');
     assert.ok(firstLedger.every((row) => /^[a-f0-9]{64}$/.test(String(row.checksum))), 'every migration requires a SHA-256 checksum');

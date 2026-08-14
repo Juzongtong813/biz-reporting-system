@@ -275,6 +275,12 @@ async function inspectState(version) {
       adapter.scalar("SELECT COUNT(*) FROM biz_role_permissions WHERE role_id = (SELECT id FROM biz_roles WHERE code = 'city_user')").then((value) => value === 16),
     ]);
   }
+  if (version === '013_biz_order_temp_file') {
+    if (!await adapter.tableExists('biz_order_import_batches')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('biz_order_import_batches', 'temp_file_path'),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 

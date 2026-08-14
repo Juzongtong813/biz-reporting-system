@@ -59,6 +59,10 @@ export class BizOrderImportBatchEntity {
   @Column({ name: 'failure_reason', type: 'text', nullable: true })
   failureReason: string | null;
 
+  /** 临时文件路径（异步任务结束后删除；异常残留由启动清理/运维回收） */
+  @Column({ name: 'temp_file_path', type: 'varchar', length: 500, nullable: true })
+  tempFilePath: string | null;
+
   /** 作废人 UUID */
   @Column({ name: 'voided_by', type: 'varchar', length: 36, nullable: true })
   voidedBy: string | null;
