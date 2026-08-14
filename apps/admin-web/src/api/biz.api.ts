@@ -107,3 +107,77 @@ export function bizAdminProvinces(): Promise<{ items: Array<{ id: string; code: 
 export function bizAdminCities(provinceId?: string): Promise<{ items: Array<{ id: string; code: string; name: string; provinceId: string }> }> {
   return request.get('/biz/admin/cities', { params: provinceId ? { provinceId } : {} }).then((r) => r.data);
 }
+
+// ================= 合同域（M3） =================
+
+export interface BizContractItem {
+  id: string;
+  contractNo: string;
+  contractName: string;
+  taxInclusiveAmountFen: number;
+  provinceId: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  status: string;
+  tags?: string[] | null;
+  amountLocked?: boolean;
+  parentContractId?: string | null;
+}
+
+export interface BizContractDetail {
+  contract: {
+    id: string; contractNo: string; contractName: string; taxInclusiveAmountFen: number;
+    taxExclusiveAmountFen: number | null; provinceId: string; startDate: string | null; endDate: string | null;
+    status: string; tags: string[]; amountLocked: boolean; voidSummaryChoice: string | null;
+    parentContractId: string | null; versionNo: number; createdAt: string;
+  };
+  allocations: Array<{
+    cityId: string; cityName: string; quotaFen: number; status: string; completionFen: number;
+    progress: number; overrunFen: number; orderCompletionFen: number; offlineCompletionFen: number;
+  }>;
+  feeRates: Array<{ cityId: string; effectiveMonth: string; rateBp: number; changeReason: string | null }>;
+  alerts: Array<{ alertType: string; firstTriggeredAt: string }>;
+  progress: {
+    orderCompletionFen: number; offlineCompletionFen: number; totalCompletionFen: number;
+    contractAmountFen: number; progress: number; remainingFen: number; overrunFen: number;
+  };
+}
+
+export function bizContractList(params?: { provinceId?: string; cityId?: string; status?: string }): Promise<{ items: BizContractItem[] }> {
+  return request.get('/biz/contracts', { params }).then((r) => r.data);
+}
+
+export function bizContractCreate(dto: {
+  contractNo: string; contractName: string; taxInclusiveAmountFen: number;
+  provinceId: string; startDate?: string | null; endDate?: string | null; parentContractId?: string | null;
+}): Promise<BizContractItem> {
+  return request.post('/biz/contracts', dto).then((r) => r.data);
+}
+
+export function bizContractDetail(id: string): Promise<BizContractDetail> {
+  return request.get(`/biz/contracts/${id}`).then((r) => r.data);
+}
+
+export function bizContractUpdate(id: string, dto: Record<string, unknown>): Promise<BizContractItem> {
+  return request.patch(`/biz/contracts/${id}`, dto).then((r) => r.data);
+}
+
+export function bizContractActivate(id: string): Promise<BizContractItem> {
+  return request.post(`/biz/contracts/${id}/activate`).then((r) => r.data);
+}
+
+export function bizContractVoid(id: string, summaryChoice: string, reason: string): Promise<BizContractItem> {
+  return request.post(`/biz/contracts/${id}/void`, { summaryChoice, reason }).then((r) => r.data);
+}
+
+export function bizContractUpsertAllocation(id: string, cityId: string, quotaFen: number): Promise<unknown> {
+  return request.post(`/biz/contracts/${id}/allocations`, { cityId, quotaFen }).then((r) => r.data);
+}
+
+export function bizContractCancelAllocation(id: string, cityId: string): Promise<{ ok: boolean }> {
+  return request.delete(`/biz/contracts/${id}/allocations/${cityId}`).then((r) => r.data);
+}
+
+export function bizContractAddFeeRate(id: string, cityId: string, effectiveMonth: string, rateBp: number, changeReason?: string): Promise<unknown> {
+  return request.post(`/biz/contracts/${id}/fee-rates`, { cityId, effectiveMonth, rateBp, changeReason }).then((r) => r.data);
+}

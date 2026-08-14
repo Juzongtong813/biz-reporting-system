@@ -21,6 +21,7 @@ import { AiModule } from './ai/ai.module';
 import { Ws6Module } from './ws6/ws6.module';
 import { FactsModule } from './facts/facts.module';
 import { BizAuthModule } from './biz-auth/biz-auth.module';
+import { BizContractsModule } from './biz-contracts/biz-contracts.module';
 import { validateRuntimeEnvironment } from './runtime.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -116,6 +117,7 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
     Ws6Module,
     FactsModule,
     BizAuthModule,
+    BizContractsModule,
   ],
   controllers: [AppController],
   providers: [

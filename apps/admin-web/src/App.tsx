@@ -28,6 +28,7 @@ const BizPortal = lazy(() => import('@/pages/biz/BizPortal'));
 const BizMaintenancePortal = lazy(() => import('@/pages/biz/BizMaintenancePortal'));
 const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
 const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
+const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
 
 function PageLoading() {
   return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;
@@ -107,7 +108,7 @@ export default function App() {
     <Route path="/biz/portal" element={<Suspense fallback={<PageLoading />}><BizPortal /></Suspense>} />
     <Route path="/biz/maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
     <Route path="/biz/placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
-    <Route path="/biz/operation" element={<Suspense fallback={<PageLoading />}><Result status="info" title="经营管理" subTitle="M7 前端收口后接入实际业务页面" /></Suspense>} />
+    <Route path="/biz/operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
     <Route path="/biz/admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
     <Route path="/*" element={protectedRoute} />
   </Routes></HashRouter>;

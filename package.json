@@ -43,7 +43,8 @@
     "release:hosting-bundle": "node scripts/release/build-hosting-bundle.mjs",
     "test:hosting-bundle": "node scripts/test/check-hosting-bundle.mjs",
     "test:e2e": "playwright test",
-    "governance:gates": "node scripts/release/check-governance-gates.mjs --gate && node scripts/test/check-governance-evidence.mjs --gate"
+    "governance:gates": "node scripts/release/check-governance-gates.mjs --gate && node scripts/test/check-governance-evidence.mjs --gate",
+    "test:m3-contracts": "node scripts/test/run-m3-contracts.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
