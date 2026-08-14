@@ -41,6 +41,8 @@ const expectedVersions = [
   '007_rbac_auth',
   '008_v3_fact_lifecycle',
   '009_production_governance',
+  '010_biz_baseline_tables',
+  '011_biz_seed_main_data',
 ];
 
 const database = `biz_reporting_migration_test_${Date.now()}_${process.pid}`;
@@ -56,8 +58,8 @@ try {
   const verification = await mysql.createConnection({ host, port, user, password, database });
   try {
     const [firstLedger] = await verification.query('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version');
-    assert.equal(firstLedger.length, 10, 'expected 001-009 migration ledger entries, including both 002 files');
-    assert.deepEqual(firstLedger.map((row) => row.version), expectedVersions, 'migration ledger versions differ from 001-008 manifest');
+    assert.equal(firstLedger.length, 12, 'expected 001-011 migration ledger entries, including both 002 files');
+    assert.deepEqual(firstLedger.map((row) => row.version), expectedVersions, 'migration ledger versions differ from manifest');
     assert.ok(firstLedger.every((row) => row.status === 'applied'), 'all migrations must be applied');
     assert.ok(firstLedger.every((row) => /^[a-f0-9]{64}$/.test(String(row.checksum))), 'every migration requires a SHA-256 checksum');
     assert.ok(firstLedger.every((row) => row.applied_at), 'every applied migration requires applied_at');
@@ -146,8 +148,26 @@ try {
     assert.equal(securityEventsTable.length, 1, '009 auth_security_events table missing');
     const [securityEventIndexes] = await verification.query(`SELECT DISTINCT index_name FROM information_schema.statistics
       WHERE table_schema = DATABASE() AND table_name = 'auth_security_events'
-        AND index_name IN ('idx_auth_event_created','idx_auth_event_subject','idx_auth_event_ip')`);
+      AND index_name IN ('idx_auth_event_created','idx_auth_event_subject','idx_auth_event_ip')`);
     assert.equal(securityEventIndexes.length, 3, '009 auth_security_events indexes missing');
+    const [bizTables] = await verification.query(`SELECT table_name FROM information_schema.tables
+      WHERE table_schema = DATABASE() AND table_name LIKE 'biz_%'`);
+    assert.ok(bizTables.length >= 24, '010 biz baseline tables missing');
+    const [bizContractsColumns] = await verification.query(`SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'biz_contracts'
+        AND column_name IN ('id','contract_no','tax_inclusive_amount_fen','province_id','status','parent_contract_id','version_no')`);
+    assert.equal(bizContractsColumns.length, 7, '010 biz_contracts key columns missing');
+    const [contractNoUnique] = await verification.query(`SELECT index_name FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'biz_contracts' AND index_name = 'uk_biz_contracts_no'`);
+    assert.ok(contractNoUnique.length >= 1, '010 biz_contracts unique contract_no index missing');
+    const [seedRoles] = await verification.query(`SELECT COUNT(*) AS c FROM biz_roles WHERE code IN ('super_admin','admin','contract_manager','city_user')`);
+    assert.equal(Number(seedRoles[0].c), 4, '011 seed: expected 4 roles');
+    const [seedCities] = await verification.query(`SELECT COUNT(*) AS c FROM biz_cities
+      WHERE code IN ('370100','370200','370300','370400','370500','370600','370700','370800','370900','371000','371100','371300','371400','371500','371600','371700')`);
+    assert.equal(Number(seedCities[0].c), 16, '011 seed: expected 16 shandong cities');
+    const [seedCategories] = await verification.query(`SELECT COUNT(*) AS c FROM biz_cost_categories
+      WHERE code IN ('labor','utilities','fuel','entertainment','rent','reimbursement','other')`);
+    assert.equal(Number(seedCategories[0].c), 7, '011 seed: expected 7 cost categories');
 
     await verification.query(`INSERT INTO users (role, name, username, status)
       VALUES ('root_admin', '迁移隔离根账号', ?, 'enabled')`, [`migration_root_${process.pid}`]);

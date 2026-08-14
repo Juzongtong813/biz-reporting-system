@@ -27,12 +27,18 @@ try {
   const importJobIndexes = new Set(db.prepare("PRAGMA index_list('import_jobs')").all().map((row) => row.name));
   const rateLimitColumns = new Set(db.prepare("PRAGMA table_info('auth_login_rate_limits')").all().map((row) => row.name));
   const securityEventColumns = new Set(db.prepare("PRAGMA table_info('auth_security_events')").all().map((row) => row.name));
+  const bizTables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'biz_%'").all().map((row) => row.name));
+  const roleCount = db.prepare("SELECT COUNT(*) FROM biz_roles WHERE code IN ('super_admin','admin','contract_manager','city_user')").pluck().get();
+  const cityCount = db.prepare("SELECT COUNT(*) FROM biz_cities WHERE code IN ('370100','370200','370300','370400','370500','370600','370700','370800','370900','371000','371100','371300','371400','371500','371600','371700')").pluck().get();
+  const categoryCount = db.prepare("SELECT COUNT(*) FROM biz_cost_categories WHERE code IN ('labor','utilities','fuel','entertainment','rent','reimbursement','other')").pluck().get();
   db.close();
 
-  assert.equal(firstLedger.length, 10, 'expected ten migration ledger rows');
+  assert.equal(firstLedger.length, 12, 'expected twelve migration ledger rows');
   assert.equal(firstLedger.find((row) => row.version === '002_add_contract_month_invoice_order_amount')?.execution_mode, 'executed');
   assert.equal(firstLedger.find((row) => row.version === '008_v3_fact_lifecycle')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '009_production_governance')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '010_biz_baseline_tables')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '011_biz_seed_main_data')?.status, 'applied');
   for (const column of ['lifecycle_status', 'warning_count', 'blocking_error_count', 'effective_at']) assert.ok(batchColumns.has(column), `008 batch column missing: ${column}`);
   for (const column of ['city_id', 'contract_id', 'period_year', 'period_month', 'lifecycle_status', 'supersedes_version_id', 'superseded_by_version_id', 'changed_fields_json', 'warning_summary_json']) assert.ok(versionColumns.has(column), `008 version column missing: ${column}`);
   assert.ok(batchIndexes.has('idx_fact_batch_lifecycle'));
@@ -43,13 +49,19 @@ try {
   assert.ok(importJobIndexes.has('idx_import_jobs_storage_key'), '009 import_jobs storage_key index missing');
   for (const column of ['route_key', 'subject_hash', 'window_started_at', 'attempt_count', 'blocked_until']) assert.ok(rateLimitColumns.has(column), `009 auth_login_rate_limits column missing: ${column}`);
   for (const column of ['event_type', 'outcome', 'route_key', 'subject_hash', 'ip_hash', 'reason_code', 'request_id']) assert.ok(securityEventColumns.has(column), `009 auth_security_events column missing: ${column}`);
+  for (const table of ['biz_provinces', 'biz_cities', 'biz_users', 'biz_modules', 'biz_roles', 'biz_permissions', 'biz_role_permissions', 'biz_user_permission_overrides', 'biz_user_data_scopes', 'biz_contracts', 'biz_contract_city_allocations', 'biz_contract_fee_rates', 'biz_contract_alerts', 'biz_order_import_batches', 'biz_order_rows', 'biz_order_import_errors', 'biz_offline_completions', 'biz_cost_entries', 'biz_cost_categories', 'biz_monthly_aggregates', 'biz_aggregate_failures', 'biz_recalc_tasks', 'biz_messages', 'biz_operation_logs']) {
+    assert.ok(bizTables.has(table), `010 biz table missing: ${table}`);
+  }
+  assert.equal(roleCount, 4, '011 seed: expected 4 roles');
+  assert.equal(cityCount, 16, '011 seed: expected 16 shandong cities');
+  assert.equal(categoryCount, 7, '011 seed: expected 7 cost categories');
 
   execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env, stdio: 'inherit' });
   const secondDb = new Database(database, { readonly: true });
   const secondLedger = secondDb.prepare('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version').all();
   secondDb.close();
   assert.deepEqual(secondLedger, firstLedger, 'second migration run changed the ledger');
-  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=10 v3_lifecycle=true governance009=true idempotent=true');
+  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=12 v3_lifecycle=true governance009=true baseline010=true seed011=true idempotent=true');
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
   console.log(`MIGRATION_LEDGER_CONTRACT_CLEANUP_OK root=${testRoot}`);

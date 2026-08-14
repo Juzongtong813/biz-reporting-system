@@ -249,6 +249,24 @@ async function inspectState(version) {
       adapter.tableExists('auth_security_events'),
     ]);
   }
+  if (version === '010_biz_baseline_tables') {
+    return allOrNothing([
+      'biz_provinces', 'biz_cities', 'biz_users', 'biz_modules', 'biz_roles', 'biz_permissions',
+      'biz_contracts', 'biz_contract_city_allocations', 'biz_contract_fee_rates', 'biz_contract_alerts',
+      'biz_order_import_batches', 'biz_order_rows', 'biz_order_import_errors',
+      'biz_offline_completions', 'biz_cost_entries', 'biz_cost_categories',
+      'biz_monthly_aggregates', 'biz_aggregate_failures', 'biz_recalc_tasks', 'biz_messages',
+      'biz_operation_logs',
+    ].map((table) => adapter.tableExists(table)));
+  }
+  if (version === '011_biz_seed_main_data') {
+    if (!await adapter.tableExists('biz_roles') || !await adapter.tableExists('biz_cities') || !await adapter.tableExists('biz_cost_categories')) return 'empty';
+    return allOrNothing([
+      adapter.scalar("SELECT COUNT(*) FROM biz_roles WHERE code IN ('super_admin','admin','contract_manager','city_user')").then((value) => value === 4),
+      adapter.scalar("SELECT COUNT(*) FROM biz_cities WHERE code IN ('370100','370200','370300','370400','370500','370600','370700','370800','370900','371000','371100','371300','371400','371500','371600','371700')").then((value) => value === 16),
+      adapter.scalar("SELECT COUNT(*) FROM biz_cost_categories WHERE code IN ('labor','utilities','fuel','entertainment','rent','reimbursement','other')").then((value) => value === 7),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 

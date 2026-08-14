@@ -33,6 +33,7 @@
     "test:integration": "node -e \"console.error('[AR-R6] test:integration NOT CONFIGURED: no integration test infrastructure exists in this repo (baseline gap, see docs/baseline)'); process.exit(1)\"",
     "test:architecture": "node scripts/architecture/check-dependencies.mjs",
     "test:migrations:ledger": "node scripts/test/run-migration-ledger-contract.mjs",
+    "test:baseline-smoke": "node scripts/test/run-baseline-data-smoke.mjs",
     "release:integrity:report": "node scripts/release/check-release-integrity.mjs",
     "release:integrity:gate": "node scripts/release/check-release-integrity.mjs --gate",
     "release:integrity:checkpoint": "node scripts/release/check-release-integrity.mjs --checkpoint",

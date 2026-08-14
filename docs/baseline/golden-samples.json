@@ -1,0 +1,104 @@
+{
+  "version": "1.0",
+  "source": "03-指标字典与金标准样例-v1.0-当前确认版.docx 第9-10章",
+  "purpose": "M0 脱敏金标准夹具。全部金额为文档样例虚构值，不含真实业务数据。M6 起作为自动化测试权威期望值（指标字典 MET-001~010 的断言依据）。",
+  "precision": {
+    "amount_unit": "分（整数）",
+    "rate_unit": "基点（整数，12.35% => 1235）",
+    "display": "元，两位小数，千分位"
+  },
+  "golden_sample_1": {
+    "name": "单份共享合同",
+    "contracts": [
+      {
+        "contract_no": "A",
+        "tax_inclusive_amount_fen": 100000000,
+        "allocations": [
+          { "city": "济南", "quota_fen": 60000000, "fee_rates": [ { "effective_month": "2026-01", "rate_bp": 1000 }, { "effective_month": "2026-05", "rate_bp": 1200 } ] },
+          { "city": "德州", "quota_fen": 40000000, "fee_rates": [ { "effective_month": "2026-01", "rate_bp": 800 } ] }
+        ]
+      }
+    ],
+    "2026-01": {
+      "orders": [ { "city": "济南", "amount_fen": 20000000 }, { "city": "德州", "amount_fen": 20000000 } ],
+      "offline_completions": [ { "city": "济南", "amount_fen": 10000000, "status": "approved" } ],
+      "costs": [ { "city": "济南", "amount_fen": 1200000, "status": "approved" }, { "city": "德州", "amount_fen": 700000, "status": "approved" } ],
+      "expected": {
+        "order_completion_fen": { "济南": 20000000, "德州": 20000000, "合同": 40000000 },
+        "offline_completion_fen": { "济南": 10000000, "德州": 0, "合同": 10000000 },
+        "effective_completion_fen": { "济南": 30000000, "德州": 20000000, "合同": 50000000 },
+        "city_progress": { "济南": "50.00%", "德州": "50.00%" },
+        "contract_progress": "50.00%",
+        "gross_profit_fen": { "济南": 3000000, "德州": 1600000, "合同": 4600000 },
+        "cost_fen": { "济南": 1200000, "德州": 700000, "合同": 1900000 },
+        "net_profit_fen": { "济南": 1800000, "德州": 900000, "合同": 2700000 }
+      },
+      "note": "济南毛利润=(200000+100000)*10.00%=30000元；德州=200000*8.00%=16000元；合同进度=500000/1000000=50.00%"
+    },
+    "2026-05": {
+      "orders": [ { "city": "济南", "amount_fen": 25000000, "rate_bp": 1200 } ],
+      "offline_completions": [ { "city": "德州", "amount_fen": 15000000, "status": "approved", "rate_bp": 800 } ],
+      "costs": [ { "city": "济南", "amount_fen": 1000000, "status": "approved" }, { "city": "德州", "amount_fen": 500000, "status": "approved" } ],
+      "expected": {
+        "month_effective_completion_fen": 40000000,
+        "month_gross_profit_fen": 4200000,
+        "month_cost_fen": 1500000,
+        "month_net_profit_fen": 2700000,
+        "cumulative_effective_completion_fen": 90000000,
+        "cumulative_gross_profit_fen": 8800000,
+        "cumulative_cost_fen": 3400000,
+        "cumulative_net_profit_fen": 5400000,
+        "contract_progress": "90.00%",
+        "city_progress": { "济南": "91.67%", "德州": "87.50%" },
+        "alert": "接近满额"
+      },
+      "note": "05月济南毛利=250000*12.00%=30000；德州=150000*8.00%=12000；累计毛利=46000+42000=88000；累计净利=88000-(19000+15000)=54000"
+    },
+    "overrun_test": {
+      "scenario_1": { "desc": "06月济南新增100000元有效完工", "contract_progress": "100.00%", "contract_state": "待完成确认", "jinancity_progress": "108.33%", "jinancity_overrun_fen": 5000000 },
+      "scenario_2": { "desc": "06月济南新增120000元有效完工", "contract_progress": "102.00%", "contract_overrun_fen": 2000000, "jinancity_progress": "111.67%", "jinancity_overrun_fen": 7000000, "jinancity_gross_profit_fen": 1440000 }
+    }
+  },
+  "golden_sample_2": {
+    "name": "省级去重与地市分配额度",
+    "contracts": [
+      { "contract_no": "A", "tax_inclusive_amount_fen": 100000000, "allocations": [ { "city": "济南", "quota_fen": 60000000 }, { "city": "德州", "quota_fen": 40000000 } ] },
+      { "contract_no": "B", "tax_inclusive_amount_fen": 50000000, "allocations": [ { "city": "济南", "quota_fen": 50000000 } ] }
+    ],
+    "effective_completion_fen": { "济南": 65000000, "德州": 35000000, "省级": 100000000 },
+    "expected": {
+      "city_allocated_contract_amount_fen": { "济南": 110000000, "德州": 40000000 },
+      "city_allocated_total_fen": 150000000,
+      "province_dedup_contract_amount_fen": 150000000,
+      "province_overall_progress": "66.67%",
+      "contract_count": { "济南": 2, "德州": 1, "省级去重": 2 },
+      "city_contribution_rate": "不计算、不展示"
+    },
+    "note": "省级整体进度=1000000/1500000=66.67%；地市汇总不计算贡献率"
+  },
+  "four_roles": {
+    "source": "08-测试与验收方案 TABLE 14 + 02-角色与权限矩阵",
+    "roles": {
+      "super_admin": "全部模块、功能、数据和授权；跨省汇总；恢复订单批次；管理权限",
+      "admin": "授权省份经营业务；上传订单、审核线下完工；默认不可管理账号权限、不可审核成本",
+      "contract_manager": "仅合同管理页面；上传/新增/编辑合同、分配地市；不可看订单、成本、经营分析",
+      "city_user": "永久绑定单地市；仅本地订单/已分配合同/本地成本；仅提交本地线下完工和成本"
+    }
+  },
+  "order_template": {
+    "source": "05-订单模板字段映射表-v1.0-当前确认版.docx",
+    "columns": 34,
+    "sheet_count": 1,
+    "f_column": "含税总金额",
+    "business_month_source": "下单时间",
+    "header": [
+      "省份名称", "地市名称", "采购订单编号", "供应商名称", "订单主状态", "含税总金额",
+      "物料名称", "物料编码", "合同编号", "净价", "运保费", "建安费", "费用类型", "税率",
+      "税额", "含税单价", "采购数量", "计量单位", "收货人", "收货人联系方式", "收货人详细地址",
+      "通知人", "下单时间", "通知时间", "附言信息", "项目编号", "项目名称", "站址编号",
+      "站址信息", "收货状态", "商品名称", "商品编号", "物料源头贴签标识", "是否补样订单"
+    ],
+    "sensitive_columns": [19, 20, 21],
+    "sample_acceptance": { "data_rows": 14725, "dedup_purchase_order_no": 7949, "f_column_sum": "17,909,305.55", "duplicate_rows": 0 }
+  }
+}
