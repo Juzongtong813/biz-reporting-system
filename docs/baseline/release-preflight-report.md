@@ -43,3 +43,5 @@
 正式非 localhost MySQL `192.168.1.197:34001`（8.0.46）已通过 `node scripts/test/run-migrations-mysql.mjs`，并通过 `node scripts/test/run-mysql-integration.mjs` 的五套集成测试，输出 `MYSQL_INTEGRATION_GATE_PASS 5/5`。因此 BLK-1 的实例不可用阻塞已解除。
 
 本次尝试执行 `pnpm release:preflight` 时，pnpm 在项目测试启动前因运行时缓存 SQLite `unable to open database file` 失败并触发自动 install；该环境问题导致当前预检证据仍为 BLOCKED，不能形成发布候选。待具备可写 pnpm store/依赖环境后，必须重新执行并留存新的 `PREFLIGHT_PASS`。
+
+后续在 `CI=true` 下重试，pnpm 成功重建生成的 `node_modules`，但供应链策略拒绝锁文件中的 `xlsx@0.20.3`（缺失 `integrity` 字段，`ERR_PNPM_MISSING_TARBALL_INTEGRITY`）。未放宽策略、未修改 `pnpm-lock.yaml`；因此当前预检仍为 BLOCKED，需先由依赖治理流程补齐并审阅该锁文件完整性后再重跑。

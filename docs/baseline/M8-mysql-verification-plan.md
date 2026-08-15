@@ -105,3 +105,5 @@ pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
 正式 gate 补充记录：将环境变量切换为 `MIGRATION_TEST_MYSQL_HOST=192.168.1.197`、端口 `34001`、账号 `biz_migration_gate` 后，`node scripts/test/run-migrations-mysql.mjs` 通过；`node scripts/test/run-mysql-integration.mjs` 输出 `MYSQL_INTEGRATION_GATE_PASS 5/5 (formal-non-local-gate)`。此前 local 记录仍保留，以上正式记录 supersede 其 DEV-067 判定。
 
 当前收口：DEV-067 / BLK-1 的正式 MySQL 条件已满足；发布候选仍需在依赖环境可写时重跑 `pnpm release:preflight` 并取得当前提交对应的 `PREFLIGHT_PASS`。
+
+预检阻塞细节：`CI=true pnpm release:preflight` 在依赖重建阶段被供应链策略拒绝 `xlsx@0.20.3` 缺少 `integrity` 字段（`ERR_PNPM_MISSING_TARBALL_INTEGRITY`）。该问题与 MySQL gate 无关，且未通过放宽策略或改写锁文件处理。

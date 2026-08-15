@@ -84,3 +84,5 @@ M8 完成后进入发布候选需同时满足：
 正式非 localhost 实例 `192.168.1.197:34001`（MySQL 8.0.46）已通过 `node scripts/test/run-migrations-mysql.mjs`；五套 MySQL 集成测试输出 `MYSQL_INTEGRATION_GATE_PASS 5/5`。BLK-1 的 MySQL 实例阻塞已解除，待 `release:preflight` 在本次变更后通过即可形成最终 M8 判定。
 
 当前验收结论：DEV-067 = PASS，BLK-1 = RESOLVED；M8 仍未宣布完成，原因仅为当前 Codex 运行环境无法启动 pnpm 预检（缓存 SQLite 无法打开并触发自动 install）。
+
+补充：在 `CI=true` 重试时，pnpm 供应链策略进一步拒绝 `pnpm-lock.yaml` 中 `xlsx@0.20.3` 缺失 `integrity` 字段；未修改锁文件或放宽策略。M8 发布候选继续保持 BLOCKED，待依赖治理修复后重跑预检。
