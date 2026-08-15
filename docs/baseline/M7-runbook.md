@@ -129,3 +129,14 @@ NODE_ENV=production DB_TYPE=mysql ... node apps/api/dist/main.js   # 或 PM2/sys
 | BLK-2 | 旧 facts-v31 测试 Node24 原生崩溃（M8 退役旧事实工作台） | 开放 |
 | BLK-3 | 非电商订单模板 8 列名变体（当前仅支持电商版 34 列） | 开放 |
 | NEW-M6 | 增量重算为整库重算简化实现（大数据量需按范围优化） | 可延后 |
+
+## 9. super_admin 运维流程（M8 / DEV-066）
+
+| 场景 | 流程 |
+|---|---|
+| 初始化 | 环境变量注入 `BIZ_SUPER_ADMIN_USERNAME/BIZ_SUPER_ADMIN_PASSWORD`（强密码，≥12 位且非默认）运行 `biz-init-super-admin.mjs`；禁止命令行明文传参；脚本拒绝弱密码（如 123456） |
+| 轮换（改密） | 系统管理 → 权限管理 → 用户 → 重置密码（仅 super_admin；生成强随机密码后安全交付）；重置后原密码立即失效 |
+| 停用 | 权限管理 → 用户 → 状态 → 禁用；禁用后该账号所有令牌失效、登录返回 401 |
+| 审计 | 权限管理 → 操作审计 Tab（GET /biz/admin/operation-logs）：查看创建/重置/停用/作废/审核等操作（操作人/时间/动作/对象/结果） |
+| 应急恢复 | ① 若 super_admin 密码丢失：用 `biz-init-super-admin.mjs`（env 注入新密码）重置；② 若唯一 super 被停用：直接改数据库 `biz_users.status` 为 active 或重建（迁移账本保护）；③ 汇总异常：经营分析 → 全库重算（失败范围优先） |
+| 密钥轮换 | 更换 `JWT_SECRET/AUTH_SECURITY_HMAC_KEY`（生产弱值启动失败）：滚动发布即可，旧令牌过期后自然失效 |

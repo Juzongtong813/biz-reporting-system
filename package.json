@@ -48,7 +48,9 @@
     "test:m4-orders": "node scripts/test/run-m4-orders.mjs",
     "test:m5-offcost": "node scripts/test/run-m5-offcost.mjs",
     "test:m6-aggregates": "node scripts/test/run-m6-aggregates.mjs",
-    "test:m7-views": "node scripts/test/m7-views.mjs"
+    "test:m7-views": "node scripts/test/m7-views.mjs",
+    "test:m8-security": "node scripts/test/run-m8-security.mjs",
+    "release:preflight": "node scripts/release/preflight.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

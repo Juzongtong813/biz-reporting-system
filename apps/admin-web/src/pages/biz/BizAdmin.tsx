@@ -7,6 +7,7 @@ import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
   bizAdminGetUserPermissions, bizAdminRoles, bizAdminModules, bizAdminPermissions, bizAdminProvinces, bizAdminCities,
+  bizOperationLogs,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -16,6 +17,36 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 /** 账号与权限管理（新基线，仅 super_admin） */
+function OperationLogsPanel() {
+  const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
+  const loadLogs = useCallback(async () => {
+    try {
+      const data = await bizOperationLogs({ limit: 100 });
+      setLogs(data.items);
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '审计日志加载失败');
+    }
+  }, []);
+  useEffect(() => { void loadLogs(); }, [loadLogs]);
+  return (
+    <Card>
+      <Table
+        size="small" rowKey="id" dataSource={logs} pagination={{ pageSize: 10 }}
+        scroll={{ x: 'max-content' }}
+        columns={[
+          { title: '时间', dataIndex: 'createdAt', key: 'createdAt', width: 170 },
+          { title: '操作人', dataIndex: 'operatorUserId', key: 'op', render: (v: string) => v?.slice(0, 8) ?? '-' },
+          { title: '动作', dataIndex: 'actionType', key: 'action', width: 180 },
+          { title: '对象', dataIndex: 'targetType', key: 'tt', width: 110 },
+          { title: '对象 ID', dataIndex: 'targetId', key: 'tid', render: (v: string) => v?.slice(0, 12) ?? '-' },
+          { title: '结果', dataIndex: 'resultStatus', key: 'result' },
+        ]}
+      />
+    </Card>
+  );
+}
+
 export default function BizAdmin() {
   const canManage = useBizPermission('operation.user.manage');
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
@@ -176,6 +207,10 @@ export default function BizAdmin() {
                 />
               </Card>
             ),
+          },
+          {
+            key: 'audit', label: '操作审计',
+            children: <OperationLogsPanel />,
           },
           {
             key: 'permissions', label: '权限点',

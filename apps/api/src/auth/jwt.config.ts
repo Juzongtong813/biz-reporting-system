@@ -4,6 +4,33 @@ const JWT_SECRET_ERROR_PREFIX = '[AUTH_CONFIG] JWT_SECRET is required and must n
 const DEFAULT_JWT_ISSUER = 'biz-reporting-api';
 const DEFAULT_JWT_AUDIENCE = 'biz-reporting-clients';
 
+// M8（DEV-064）：弱密钥检测——占位/默认/过短/常见弱词
+const WEAK_SECRET_PATTERNS = [
+  /^(secret|changeme|change-me|password|passwd|admin|administrator|123456|qwerty|letmein|your-secret|your_secret|xxx+)$/i,
+  /^(test|demo|dev|local|default)[-_]?.*$/i,
+];
+function isWeakSecret(secret: string): boolean {
+  if (secret.length < 32) return true; // 少于 32 字符视为弱
+  if (WEAK_SECRET_PATTERNS.some((re) => re.test(secret))) return true;
+  if (/^(.){7,}$/.test(secret)) return true; // 连续重复字符
+  return false;
+}
+
+/** M8：校验密钥强度；生产环境弱密钥必须启动失败，开发环境告警。 */
+export function assertSecretStrength(
+  value: unknown,
+  secretName: string,
+  nodeEnv: unknown,
+): void {
+  const secret = typeof value === 'string' ? value.trim() : '';
+  const isProduction = typeof nodeEnv === 'string' && nodeEnv.trim().toLowerCase() === 'production';
+  if (isWeakSecret(secret)) {
+    const message = `[SECURITY_CONFIG] ${secretName} 强度不足（长度<32 或为占位/默认/弱值），生产环境禁止启动`;
+    if (isProduction) throw new Error(message);
+    console.warn(`[SECURITY_CONFIG] ${secretName} 强度不足（仅开发环境告警）：${message}`);
+  }
+}
+
 function normalizeJwtSecret(
   value: unknown,
   nodeEnv: unknown,
@@ -15,6 +42,7 @@ function normalizeJwtSecret(
     const deployment = typeof deployEnv === 'string' && deployEnv.trim() ? deployEnv.trim() : 'unspecified';
     throw new Error(`${JWT_SECRET_ERROR_PREFIX} (NODE_ENV=${runtime}, DEPLOY_ENV=${deployment})`);
   }
+  assertSecretStrength(secret, 'JWT_SECRET', nodeEnv);
   return secret;
 }
 
@@ -23,6 +51,10 @@ export function validateAuthEnvironment(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
   normalizeJwtSecret(config.JWT_SECRET, config.NODE_ENV, config.DEPLOY_ENV);
+  // M8（DEV-064）：登录限流 HMAC 密钥同样做强度审计
+  if (config.AUTH_SECURITY_HMAC_KEY != null && config.AUTH_SECURITY_HMAC_KEY !== '') {
+    assertSecretStrength(config.AUTH_SECURITY_HMAC_KEY, 'AUTH_SECURITY_HMAC_KEY', config.NODE_ENV);
+  }
   return config;
 }
 

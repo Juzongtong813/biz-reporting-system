@@ -4,6 +4,9 @@ import { BizAuthGuard } from './biz-auth.guard';
 import { BizPermissionsGuard } from './biz-permissions.guard';
 import { BizPermissions } from './biz-permissions.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
+import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
 import { BizAuthUser } from './biz-auth-user.decorator';
 import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput } from './biz-admin.service';
 import { BizPermissionCode, PlatformRole } from '@biz-reporting/shared-types';
@@ -16,7 +19,11 @@ import { BizPermissionCode, PlatformRole } from '@biz-reporting/shared-types';
 @Public()
 @UseGuards(BizAuthGuard, BizPermissionsGuard)
 export class BizAdminController {
-  constructor(private readonly adminService: BizAdminService) {}
+  constructor(
+    private readonly adminService: BizAdminService,
+    @InjectRepository(BizOperationLogEntity)
+    private readonly opLogRepo: Repository<BizOperationLogEntity>,
+  ) {}
 
   // ---- 用户 ----
   @Get('users')
@@ -89,6 +96,16 @@ export class BizAdminController {
   }
 
   // ---- 字典 ----
+  // M8（DEV-066）：操作审计日志（super_admin/admin）
+  @Get('operation-logs')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async operationLogs(@Query('limit') limit?: string, @Query('actionType') actionType?: string) {
+    const qb = this.opLogRepo.createQueryBuilder('l');
+    if (actionType) qb.andWhere('l.actionType = :actionType', { actionType });
+    const items = await qb.orderBy('l.createdAt', 'DESC').take(Math.min(Number(limit) || 100, 500)).getMany();
+    return { items };
+  }
+
   @Get('roles')
   @BizPermissions(BizPermissionCode.OPERATION_ROLE_MANAGE)
   async roles() {

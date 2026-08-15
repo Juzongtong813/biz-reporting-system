@@ -329,3 +329,7 @@ export function bizSettingsList(): Promise<{ items: Array<{ key: string; value: 
 export function bizSettingUpdate(key: string, value: string): Promise<{ ok: boolean }> {
   return request.put(`/biz/settings/${key}`, { value }).then((r) => r.data);
 }
+
+export function bizOperationLogs(params?: { limit?: number; actionType?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/admin/operation-logs', { params }).then((r) => r.data);
+}
