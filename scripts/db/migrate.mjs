@@ -281,6 +281,12 @@ async function inspectState(version) {
       adapter.columnExists('biz_order_import_batches', 'temp_file_path'),
     ]);
   }
+  if (version === '014_biz_system_settings') {
+    if (!await adapter.tableExists('biz_system_settings')) return 'empty';
+    return allOrNothing([
+      adapter.scalar("SELECT COUNT(*) FROM biz_system_settings WHERE setting_key IN ('contract_expiry_warning_days','order_import_max_rows','order_import_max_bytes')").then((value) => value === 3),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 

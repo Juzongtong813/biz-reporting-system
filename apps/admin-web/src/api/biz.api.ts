@@ -295,3 +295,37 @@ export function bizCostVoid(id: string, reason: string): Promise<Record<string, 
 export function bizCostRestore(id: string): Promise<Record<string, unknown>> {
   return request.post(`/biz/costs/${id}/restore`).then((r) => r.data);
 }
+
+// ================= 汇总/分析/设置（M6） =================
+
+export function bizAnalysisOverview(params?: { month?: string }): Promise<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number }> {
+  return request.get('/biz/analysis/overview', { params }).then((r) => r.data);
+}
+
+export function bizAnalysisTrend(limit = 12): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/trend', { params: { limit } }).then((r) => r.data);
+}
+
+export function bizAnalysisByCity(month?: string): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/by-city', { params: month ? { month } : {} }).then((r) => r.data);
+}
+
+export function bizAnalysisOverrunList(): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/overrun-list').then((r) => r.data);
+}
+
+export function bizAggregateRecalc(scope: Record<string, unknown>, confirmAll = false): Promise<{ ok: boolean }> {
+  return request.post('/biz/aggregates/recalc', { scope, confirmAll }).then((r) => r.data);
+}
+
+export function bizAggregateCheck(): Promise<{ ok: boolean; warnings: Array<Record<string, unknown>>; warningCount: number }> {
+  return request.post('/biz/aggregates/check').then((r) => r.data);
+}
+
+export function bizSettingsList(): Promise<{ items: Array<{ key: string; value: string; description: string | null }> }> {
+  return request.get('/biz/settings').then((r) => r.data);
+}
+
+export function bizSettingUpdate(key: string, value: string): Promise<{ ok: boolean }> {
+  return request.put(`/biz/settings/${key}`, { value }).then((r) => r.data);
+}

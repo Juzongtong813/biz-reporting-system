@@ -8,6 +8,7 @@ import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
+import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 
 export interface OfflineCompletionDto {
   contractId: string;
@@ -39,6 +40,7 @@ export class BizOfflineCompletionService {
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
     private readonly rbac: RbacService,
+    private readonly aggregates: BizAggregateService,
   ) {}
 
   private async recordOp(operatorId: string, actionType: string, targetId: string, resultStatus = 'success'): Promise<void> {
@@ -205,6 +207,7 @@ export class BizOfflineCompletionService {
       throw error;
     }
     await this.recordOp(auth.userId, 'offline_completion.approve', id);
+    void this.aggregates.recalcInternal({ contractId: item.contractId }).catch(() => {});
     return item;
   }
 
@@ -235,6 +238,7 @@ export class BizOfflineCompletionService {
     item.voidReason = reason.trim().slice(0, 255);
     await this.offlineRepo.save(item);
     await this.recordOp(auth.userId, 'offline_completion.void', id);
+    void this.aggregates.recalcInternal({ contractId: item.contractId }).catch(() => {});
     return item;
   }
 
@@ -248,6 +252,7 @@ export class BizOfflineCompletionService {
     item.voidReason = null;
     await this.offlineRepo.save(item);
     await this.recordOp(auth.userId, 'offline_completion.restore', id);
+    void this.aggregates.recalcInternal({ contractId: item.contractId }).catch(() => {});
     return item;
   }
 }

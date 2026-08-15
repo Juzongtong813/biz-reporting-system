@@ -12,6 +12,8 @@ import { BizOfflineCompletionEntity } from '../completions/biz-offline-completio
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
+import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 
 export interface CreateContractDto {
@@ -83,6 +85,10 @@ export class BizContractsService {
     private readonly cityRepo: Repository<CityEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    @InjectRepository(BizCostEntryEntity)
+    private readonly costRepo: Repository<BizCostEntryEntity>,
+    @InjectRepository(BizSystemSettingEntity)
+    private readonly settingRepo: Repository<BizSystemSettingEntity>,
     private readonly rbac: RbacService,
   ) {}
 
@@ -211,6 +217,8 @@ export class BizContractsService {
         remainingFen: contractAmountFen - totalCompletionFen,
         overrunFen,
       },
+      // M6：成本/净利（按合同分配地市汇总已审核成本）
+      finance: await this.financeForContract(contract),
     };
   }
 
@@ -432,7 +440,25 @@ export class BizContractsService {
 
   // ================= 预警 =================
 
-  /** 生成/更新合同预警（nearly_full / overfull / expiring / expired；简单实现，M6 收口完整回算） */
+  /** 合同维度成本/净利（M6：成本按分配地市汇总，不关联合同） */
+  private async financeForContract(contract: BizContractEntity): Promise<{ costFen: number; grossProfitFen: number; netProfitFen: number }> {
+    const allocations = await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' });
+    const cityIds = allocations.map((a) => a.cityId);
+    let costFen = 0;
+    if (cityIds.length > 0) {
+      const costs = await this.costRepo.createQueryBuilder('c')
+        .select('SUM(c.amountFen)', 'total')
+        .where('c.status = :status', { status: 'approved' })
+        .andWhere('c.cityId IN (:...cityIds)', { cityIds })
+        .getRawOne();
+      costFen = Number(costs?.total ?? 0);
+    }
+    const orders = await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false });
+    const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);
+    return { costFen, grossProfitFen, netProfitFen: grossProfitFen - costFen };
+  }
+
+  /** 生成/更新合同预警（nearly_full / overfull / expiring / expired；到期阈值来自系统设置） */
   async refreshAlerts(auth: BizAuthContext, contractId: string): Promise<void> {
     const contract = await this.getContractOrFail(contractId);
     const detail = await this.detail(auth, contractId);
@@ -448,7 +474,9 @@ export class BizContractsService {
     }
     if (contract.endDate) {
       const end = new Date(contract.endDate);
-      const thresholdMs = 90 * 24 * 3600 * 1000; // 默认提前 3 个月（M6 收口系统设置）
+      const setting = await this.settingRepo.findOneBy({ settingKey: 'contract_expiry_warning_days' });
+      const warningDays = Number(setting?.settingValue ?? 90);
+      const thresholdMs = warningDays * 24 * 3600 * 1000;
       if (end.getTime() - now.getTime() <= thresholdMs && end.getTime() >= now.getTime() - 24 * 3600 * 1000) tags.push(ContractTag.EXPIRING);
       if (end < new Date(today)) tags.push(ContractTag.EXPIRED);
     }

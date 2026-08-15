@@ -9,6 +9,8 @@ import { BizOfflineCompletionEntity } from '../completions/biz-offline-completio
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
+import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
 import { RbacModule } from '../rbac/rbac.module';
 import { BizContractsService } from './biz-contracts.service';
 import { BizContractsController } from './biz-contracts.controller';
@@ -25,6 +27,8 @@ import { BizContractsController } from './biz-contracts.controller';
       ProvinceEntity,
       CityEntity,
       BizOperationLogEntity,
+      BizCostEntryEntity,
+      BizSystemSettingEntity,
     ]),
     RbacModule,
   ],

@@ -22,6 +22,7 @@ import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { BizContractsService } from '../biz-contracts/biz-contracts.service';
+import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 
 interface PendingRow {
   sourceRowNo: number;
@@ -71,6 +72,7 @@ export class BizOrderImportService {
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
     private readonly dataSource: DataSource,
     private readonly contracts: BizContractsService,
+    private readonly aggregates: BizAggregateService,
   ) {}
 
   private async recordOp(operatorId: string, actionType: string, targetId: string, resultStatus = 'success'): Promise<void> {
@@ -329,6 +331,8 @@ export class BizOrderImportService {
     });
 
     this.cleanupTempFile(batch);
+    // M6：明细变更触发增量重算（失败仅记录不阻断）
+    void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
   /** 批次失败：零写入（从未插入行）→ 状态 FAILED + 错误报告 + 删除临时文件 */
@@ -441,6 +445,7 @@ export class BizOrderImportService {
       await manager.save(batch);
     });
     await this.recordOp(authUserId, 'order_batch.void', id);
+    void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
   /** 批次恢复（仅 super_admin）：恢复原始行统计 */
@@ -459,6 +464,7 @@ export class BizOrderImportService {
       await manager.save(batch);
     });
     await this.recordOp(authUserId, 'order_batch.restore', id);
+    void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
   /** 订单行列表（敏感列脱敏：无 SENSITIVE_ORDER_PERMISSION 时遮罩） */

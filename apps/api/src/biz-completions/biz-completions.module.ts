@@ -5,6 +5,7 @@ import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { RbacModule } from '../rbac/rbac.module';
+import { BizAggregatesModule } from '../biz-aggregates/biz-aggregates.module';
 import { BizOfflineCompletionService } from './biz-offline-completion.service';
 import { BizOfflineCompletionController } from './biz-offline-completion.controller';
 
@@ -17,6 +18,7 @@ import { BizOfflineCompletionController } from './biz-offline-completion.control
       BizOperationLogEntity,
     ]),
     RbacModule,
+    BizAggregatesModule,
   ],
   controllers: [BizOfflineCompletionController],
   providers: [BizOfflineCompletionService],

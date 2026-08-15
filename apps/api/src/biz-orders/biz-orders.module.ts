@@ -11,6 +11,7 @@ import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { RbacModule } from '../rbac/rbac.module';
 import { BizContractsModule } from '../biz-contracts/biz-contracts.module';
+import { BizAggregatesModule } from '../biz-aggregates/biz-aggregates.module';
 import { BizOrderImportService } from './biz-order-import.service';
 import { BizOrdersController } from './biz-orders.controller';
 
@@ -29,6 +30,7 @@ import { BizOrdersController } from './biz-orders.controller';
     ]),
     RbacModule,
     BizContractsModule,
+    BizAggregatesModule,
   ],
   controllers: [BizOrdersController],
   providers: [BizOrderImportService],
