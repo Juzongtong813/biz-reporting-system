@@ -1,0 +1,96 @@
+# M8 真实 MySQL 8 完整验证计划（BLK-1 解除后执行清单）
+
+> 状态：**待执行（BLOCKED by BLK-1）**
+> 验收结论（2026-08-15）：M8 预检通过、M8 未完成、发布状态 BLOCKED；基线提交 `738e06e`
+> 隔离 MySQL 8 实例到位后，按下述 5 项清单执行；全部通过后方可将 DEV-067 标记完成、宣布 M8 完成并形成发布候选。
+
+---
+
+## 0. 前置
+
+- 隔离 MySQL 8 实例（版本 ≥ 8.0，utf8mb4，时区建议 +08:00 或显式配置）
+- 环境变量：`MIGRATION_TEST_MYSQL_HOST / _PORT / _USER / _PASSWORD`（`run-migrations-mysql.mjs` 依赖，缺失即报错防误跑）
+
+## 1. 全新空库迁移 001～014（checksum / 账本 / 二次幂等）
+
+```bash
+# 1a. 创建空库（隔离实例，UTF8MB4）
+#    CREATE DATABASE biz_reporting CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+# 1b. 执行迁移（首次）
+MIGRATION_TEST_MYSQL_HOST=<host> MIGRATION_TEST_MYSQL_PORT=3306 \
+MIGRATION_TEST_MYSQL_USER=<user> MIGRATION_TEST_MYSQL_PASSWORD=<pass> \
+pnpm test:migrations:mysql
+# 预期：MIGRATE_OK dialect=mysql migrations=15；ledger 15 行（001-014 各一，含 002 双文件）
+
+# 1c. 二次幂等（重复执行迁移账本校验）
+#    migrate.mjs up 对已 applied 迁移跳过；checksum 校验通过
+#    断言：重复执行后表数量/账本行数不变，无重复建表错误
+```
+
+**验收断言**：
+- 迁移文件 checksum 与 `scripts/db/migration-checksums.json` 一致（`pnpm migration-files:check`）
+- 账本 `migration_ledger` 15 行，001-014 全部 applied
+- 二次执行幂等：无重复建表/列错误；inspectState 全绿
+
+## 2. 核心 CRUD / 状态机 / 权限 / 事务 / 唯一约束 / 乐观锁 / 汇总
+
+复用 SQLite 已通过的全部集成测试（同一套测试代码、环境切到 MySQL）：
+
+```bash
+# 启动 API（DB_TYPE=mysql 指向隔离实例）
+NODE_ENV=test DB_TYPE=mysql DB_HOST=<host> DB_PORT=3306 DB_USERNAME=<user> \
+DB_PASSWORD=<pass> DB_DATABASE=biz_reporting DB_SYNC=false \
+PORT=0 node apps/api/dist/main.js &
+
+# 逐套运行（均为隔离临时库 + 真实 API 集成）
+pnpm test:m2-rbac-auth     # 四角色/锁定/停用/数据范围（权限与状态）
+pnpm test:m3-contracts     # 合同状态机/费率历史/超额（事务+唯一约束 uk_contract_no）
+pnpm test:m5-offcost       # 完工/成本状态机 + @VersionColumn 乐观锁
+pnpm test:m6-aggregates    # 汇总计算/重算/一致性核对（聚合 SQL）
+pnpm test:m7-views         # 前端全链路（登录→六模块）
+pnpm test:m8-security      # 弱密钥 + super 运维闭环
+```
+
+**验收断言**（MySQL 特有关注点）：
+- 唯一约束：`uk_biz_contract_no`（重复合同号拒绝）、分配/费率唯一、批次幂等唯一、fingerprint 唯一
+- 乐观锁：`version_no` 并发更新冲突（更新 0 行 → 拒绝）
+- 事务：订单导入整批回滚（任一错误零写入）；汇总重算事务
+- 状态机非法跳转拒绝；权限矩阵 403
+
+## 3. 整数分 / UUID / 时区 / 字符集 / 长文本与 JSON
+
+| 项 | 断言 |
+|---|---|
+| 整数分 | 金额 BIGINT（分）：100.00 → 10000；负金额入账；SUM 无浮点误差 |
+| UUID | 主键为 UUID 字符串（36 位），非自增；合同号业务唯一键独立 |
+| 时区 | 下单时间解析与 `business_month`（YYYY-MM）按本地时区正确；DATETIME 存取一致 |
+| 字符集 | 中文（省份/地市/合同名/收货人/地址）读写无损（utf8mb4，emoji/生僻字可入） |
+| 长文本/JSON | `source_row_json` 34 列原值完整存取；错误报告长文本（500+ 字）不截断 |
+
+**执行方式**：上述集成测试已覆盖中文/UUID/分/时间；补充一次"长文本+emoji+生僻字"订单导入与 JSON 回读断言（可在 m4 真实文件验证中加一列含 emoji 的用例）。
+
+## 4. 重新运行 release:preflight（实例版本/命令/日志/报告留档）
+
+```bash
+pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
+```
+
+**验收断言**：
+- PREFLIGHT_PASS（checksum / 账本 / 密钥审计 / 12 测试套件全绿）
+- 留档：实例版本（`SELECT VERSION()`）、执行命令、日志摘要、最终报告 `docs/baseline/release-preflight-report.md`
+
+## 5. 收口
+
+全部通过后：
+1. 更新 `docs/baseline/M8-milestone-report.md`：DEV-067 标记完成、BLK-1 解除、结论改为"M8 完成（真实 MySQL 验证通过）"
+2. 新增提交（追加式，不改 738e06e 基线）
+3. 形成发布候选（配合 M7-runbook 部署验证）
+
+---
+
+## 阻塞记录
+
+| 日期 | 说明 |
+|---|---|
+| 2026-08-15 | 本机 127.0.0.1:34001（隔离 gate）CLOSED；127.0.0.1:3306 有 MySQL 但凭据不可用（非项目实例）；无法执行第 1-5 项。M8 保持 BLOCKED。 |
