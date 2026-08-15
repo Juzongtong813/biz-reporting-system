@@ -20,6 +20,8 @@ const MYSQL = {
   user: process.env.MIGRATION_TEST_MYSQL_USER || 'biz_migration_test',
   password: process.env.MIGRATION_TEST_MYSQL_PASSWORD || 'BizTest_20260815',
 };
+const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(MYSQL.host);
+const runLabel = isLocalhost ? 'mysql-local' : 'mysql-gate';
 
 const suites = ['run-m2-rbac-auth', 'run-m3-contracts', 'run-m5-offcost', 'run-m6-aggregates', 'run-m8-security'];
 const results = [];
@@ -42,7 +44,7 @@ try {
       try {
         execFileSync(process.execPath, [`scripts/test/${suite}.mjs`], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 900_000 });
         results.push({ suite, ok: true });
-        console.log(`PASS | ${suite} | mysql-local`);
+        console.log(`PASS | ${suite} | ${runLabel}`);
       } catch (e) {
         const tail = String(e.stdout || e.message || '').trim().split('\n').slice(-3).join(' | ');
         results.push({ suite, ok: false });
@@ -53,7 +55,9 @@ try {
     }
   }
   const ok = results.filter((r) => r.ok).length;
-  console.log(`MYSQL_INTEGRATION_LOCAL_${ok === suites.length ? 'PASS' : 'FAIL'} ${ok}/${suites.length} suites (local-isolated/non-gate)`);
+  const resultLabel = isLocalhost ? 'MYSQL_INTEGRATION_LOCAL' : 'MYSQL_INTEGRATION_GATE';
+  const scopeLabel = isLocalhost ? 'local-isolated/non-gate' : 'formal-non-local-gate';
+  console.log(`${resultLabel}_${ok === suites.length ? 'PASS' : 'FAIL'} ${ok}/${suites.length} suites (${scopeLabel})`);
 } finally {
   await admin.end();
 }

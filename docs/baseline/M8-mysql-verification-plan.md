@@ -101,3 +101,7 @@ pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
 更正早期记录：`127.0.0.1:34001` 当前可用，不是 CLOSED；已记录 `VERSION()=8.0.46`、`@@port=34001`、`CURRENT_USER()=biz_migration_test@127.0.0.1`。正式 gate 的 localhost 拒绝行为保持不变。
 
 执行记录：使用 `node scripts/test/run-m8-mysql-local.mjs` 完成临时库 001-015 迁移与二次幂等；使用 `node scripts/test/run-migrations-mysql-local.mjs` 完成 47 项等价本地 gate 断言（含失败账本）；使用 `node scripts/test/run-mysql-integration.mjs` 完成五套独立临时库集成测试，结果 `5/5 PASS`。日志摘要为 `MIGRATE_OK dialect=mysql migrations=16`、`MYSQL_MIGRATION_ISOLATION_OK`、`MYSQL_MIGRATION_FAILURE_LEDGER_OK`、`MYSQL_INTEGRATION_LOCAL_PASS 5/5`；上述均为 `local-isolated/non-gate` 证据，正式 gate 与 `release:preflight` 待非 localhost 实例及受控依赖环境后执行。
+
+正式 gate 补充记录：将环境变量切换为 `MIGRATION_TEST_MYSQL_HOST=192.168.1.197`、端口 `34001`、账号 `biz_migration_gate` 后，`node scripts/test/run-migrations-mysql.mjs` 通过；`node scripts/test/run-mysql-integration.mjs` 输出 `MYSQL_INTEGRATION_GATE_PASS 5/5 (formal-non-local-gate)`。此前 local 记录仍保留，以上正式记录 supersede 其 DEV-067 判定。
+
+当前收口：DEV-067 / BLK-1 的正式 MySQL 条件已满足；发布候选仍需在依赖环境可写时重跑 `pnpm release:preflight` 并取得当前提交对应的 `PREFLIGHT_PASS`。

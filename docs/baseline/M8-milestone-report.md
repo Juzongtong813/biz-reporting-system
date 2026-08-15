@@ -78,3 +78,9 @@ M8 完成后进入发布候选需同时满足：
 本次追加迁移 `015_import_job_legacy_fields`，用于补齐旧 `import_jobs` 实体读取的兼容字段；001-014 与既有 checksum 未修改。
 
 说明：`release:preflight` 尚未在本次 015 变更后重跑；pnpm 依赖目录重建需要受控授权。因此旧版 PREFLIGHT_PASS 仅作历史证据，不能作为当前发布候选依据。
+
+## DEV-067 正式 gate 复验（2026-08-16）
+
+正式非 localhost 实例 `192.168.1.197:34001`（MySQL 8.0.46）已通过 `node scripts/test/run-migrations-mysql.mjs`；五套 MySQL 集成测试输出 `MYSQL_INTEGRATION_GATE_PASS 5/5`。BLK-1 的 MySQL 实例阻塞已解除，待 `release:preflight` 在本次变更后通过即可形成最终 M8 判定。
+
+当前验收结论：DEV-067 = PASS，BLK-1 = RESOLVED；M8 仍未宣布完成，原因仅为当前 Codex 运行环境无法启动 pnpm 预检（缓存 SQLite 无法打开并触发自动 install）。

@@ -37,3 +37,9 @@
 # 当前状态更正（2026-08-15）
 
 该文件原报告基于 15 条迁移，已被当前工作区的追加迁移 015 supersede。当前本地 MySQL 隔离验证为 `local-isolated/non-gate PASS`，正式 `release:preflight` 尚未重跑：pnpm 试图在无交互环境清理生成的 `node_modules`，执行未获授权。因此不得将下方旧版 PREFLIGHT_PASS 作为当前发布候选证据。
+
+## DEV-067 正式 gate 结果（2026-08-16）
+
+正式非 localhost MySQL `192.168.1.197:34001`（8.0.46）已通过 `node scripts/test/run-migrations-mysql.mjs`，并通过 `node scripts/test/run-mysql-integration.mjs` 的五套集成测试，输出 `MYSQL_INTEGRATION_GATE_PASS 5/5`。因此 BLK-1 的实例不可用阻塞已解除。
+
+本次尝试执行 `pnpm release:preflight` 时，pnpm 在项目测试启动前因运行时缓存 SQLite `unable to open database file` 失败并触发自动 install；该环境问题导致当前预检证据仍为 BLOCKED，不能形成发布候选。待具备可写 pnpm store/依赖环境后，必须重新执行并留存新的 `PREFLIGHT_PASS`。
