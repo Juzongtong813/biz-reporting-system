@@ -69,7 +69,7 @@ export default function BizAnalysis() {
           <Title level={4} style={{ margin: 0 }}>经营分析</Title>
           <Text type="secondary">汇总口径：订单+线下完工-作废 · 利润 = 毛利 - 成本</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button onClick={onCheck}>一致性核对</Button>
           <Button danger onClick={onRecalc}>全库重算</Button>
@@ -79,14 +79,14 @@ export default function BizAnalysis() {
 
       <Row gutter={12} style={{ marginBottom: 16 }}>
         {cards.map((c) => (
-          <Col span={4} key={c.label}>
+          <Col xs={24} sm={12} lg={4} key={c.label}>
             <Card size="small">
               <div style={{ color: '#68737B', fontSize: 12 }}>{c.label}</div>
               <div style={{ fontSize: 18, fontWeight: 600, color: c.color }}>{fenToYuan(c.value)}</div>
             </Card>
           </Col>
         ))}
-        <Col span={4}>
+        <Col xs={24} sm={12} lg={4}>
           <Card size="small">
             <div style={{ color: '#68737B', fontSize: 12 }}>一致性警告</div>
             <div style={{ fontSize: 18, fontWeight: 600, color: checkResult && checkResult.warningCount > 0 ? '#c64b4b' : '#2f9e62' }}>
@@ -98,7 +98,7 @@ export default function BizAnalysis() {
 
       {checkResult && checkResult.warningCount > 0 && (
         <Card size="small" title={`一致性警告（${checkResult.warningCount} 条，仅告警不自动改写）`} style={{ marginBottom: 16 }}>
-          <Table
+          <Table scroll={{ x: "max-content" }} 
             size="small" rowKey={(r, i) => String(i)} pagination={false} dataSource={checkResult.warnings.slice(0, 20)}
             columns={[
               { title: '类型', dataIndex: 'type', key: 'type' },
@@ -111,9 +111,9 @@ export default function BizAnalysis() {
       )}
 
       <Row gutter={12}>
-        <Col span={10}>
+        <Col xs={24} lg={10}>
           <Card title="月度趋势（近 12 月）" size="small" style={{ marginBottom: 16 }}>
-            <Table
+            <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="month" pagination={false} dataSource={trend}
               columns={[
                 { title: '月份', dataIndex: 'month', key: 'month' },
@@ -125,9 +125,9 @@ export default function BizAnalysis() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} lg={6}>
           <Card title="地市对比" size="small" style={{ marginBottom: 16 }}>
-            <Table
+            <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
                 { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => v?.slice(0, 8) ?? '-' },
@@ -137,9 +137,9 @@ export default function BizAnalysis() {
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col xs={24} lg={8}>
           <Card title="超额清单" size="small">
-            <Table
+            <Table scroll={{ x: "max-content" }} 
               size="small" rowKey={(r, i) => String(i)} pagination={false} dataSource={overruns}
               columns={[
                 { title: '类型', dataIndex: 'type', key: 'type', render: (v: string) => v === 'contract' ? <Tag color="red">合同超额</Tag> : <Tag color="orange">地市超额</Tag> },

@@ -109,7 +109,7 @@ export default function BizOfflineCompletions() {
     {
       title: '操作', key: 'action', width: 260,
       render: (_: unknown, row: Record<string, unknown>) => (
-        <Space>
+        <Space wrap>
           {['draft', 'rejected'].includes(String(row.status)) && <Button size="small" type="primary" onClick={() => run(() => bizOfflineSubmit(String(row.id)), '已提交审核')}>提交</Button>}
           {String(row.status) === 'pending' && <Button size="small" onClick={() => run(() => bizOfflineApprove(String(row.id)), '已审核通过')}>通过</Button>}
           {String(row.status) === 'pending' && <Button size="small" danger onClick={() => onReject(String(row.id))}>驳回</Button>}
@@ -127,14 +127,14 @@ export default function BizOfflineCompletions() {
           <Title level={4} style={{ margin: 0 }}>线下完工</Title>
           <Text type="secondary">地市用户仅本地市 · 金额大于 0 · 月份非未来 · 合同已分配本地市</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建完工</Button>
         </Space>
       </div>
       <Card>
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
+        <Table scroll={{ x: "max-content" }}  rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
       </Card>
 
       <Drawer title="新建线下完工（草稿）" open={createOpen} onClose={() => setCreateOpen(false)} width={420}>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBizPermission } from '@/utils/biz-permission';
 import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload, message } from 'antd';
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -24,6 +25,7 @@ function fenToYuan(fen: number | null): string {
 /** 订单管理（新基线 M4）：上传/批次/错误报告/订单行（敏感列脱敏） */
 export default function BizOrders() {
   const navigate = useNavigate();
+  const canUpload = useBizPermission('operation.order.upload');
   const [batches, setBatches] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<{ batch: Record<string, unknown>; errors: Array<Record<string, unknown>>; rowCount: number } | null>(null);
@@ -115,7 +117,7 @@ export default function BizOrders() {
     {
       title: '操作', key: 'action', width: 220,
       render: (_: unknown, row: Record<string, unknown>) => (
-        <Space>
+        <Space wrap>
           <Button size="small" onClick={() => openDetail(String(row.id))}>详情</Button>
           {row.status === 'imported' && <Button size="small" danger onClick={() => onVoid(String(row.id))}>作废</Button>}
           {row.status === 'voided' && <Button size="small" onClick={() => onRestore(String(row.id))}>恢复</Button>}
@@ -144,7 +146,7 @@ export default function BizOrders() {
           <Title level={4} style={{ margin: 0 }}>订单管理</Title>
           <Text type="secondary">仅电商版 34 列模板 · 仅 super_admin/admin 上传 · 上传即导入确认</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Select
             allowClear placeholder="超额筛选" style={{ width: 150 }} value={overrunFilter}
             onChange={(v) => setOverrunFilter(v)}
@@ -159,6 +161,7 @@ export default function BizOrders() {
         </Space>
       </div>
 
+      {canUpload !== false && (
       <Card title="上传订单文件（.xlsx，≤50MB，≤20 万行，单工作表）" style={{ marginBottom: 16 }}>
         <Upload.Dragger
           accept=".xlsx"
@@ -171,13 +174,15 @@ export default function BizOrders() {
           <p className="ant-upload-hint">上传即视为导入确认（无内容审核）；整批校验任一错误零写入</p>
         </Upload.Dragger>
       </Card>
+      )}
+      {canUpload === false && <Card title="上传订单文件" style={{ marginBottom: 16 }}><Text type="secondary">当前账号无上传权限（仅 super_admin/admin 可上传）</Text></Card>}
 
       <Card title="导入批次" style={{ marginBottom: 16 }}>
-        <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={batches} pagination={{ pageSize: 8 }} />
+        <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={loading} columns={columns} dataSource={batches} pagination={{ pageSize: 8 }} />
       </Card>
 
       <Card title={`订单行（共 ${rows.length} 条展示）`}>
-        <Table rowKey="id" size="small" loading={rowsLoading} columns={rowColumns} dataSource={rows} pagination={{ pageSize: 10 }} />
+        <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={rowsLoading} columns={rowColumns} dataSource={rows} pagination={{ pageSize: 10 }} />
       </Card>
 
       <Drawer title="批次详情" open={detailOpen} onClose={() => setDetailOpen(false)} width={720}>
@@ -189,7 +194,7 @@ export default function BizOrders() {
             {detail.errors.length > 0 && (
               <>
                 <p><b>错误报告（{detail.errors.length} 条，最多展示 100 条）：</b></p>
-                <Table
+                <Table scroll={{ x: "max-content" }} 
                   size="small" rowKey="id" pagination={false}
                   dataSource={detail.errors.slice(0, 100)}
                   columns={[

@@ -185,7 +185,7 @@ export default function BizContracts() {
     {
       title: '操作', key: 'action', width: 200,
       render: (_: unknown, row: BizContractItem) => (
-        <Space>
+        <Space wrap>
           <Button size="small" onClick={() => openDetail(row.id)}>详情</Button>
           {row.status === 'draft' && <Button size="small" type="primary" onClick={() => onActivate(row.id)}>生效</Button>}
           {['active', 'completed'].includes(row.status) && <Button size="small" danger onClick={() => onVoid(row.id)}>作废</Button>}
@@ -201,7 +201,7 @@ export default function BizContracts() {
           <Title level={4} style={{ margin: 0 }}>合同管理</Title>
           <Text type="secondary">新基线（biz_）· 合同号唯一 · 生效后合同额锁定</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>
           <Select
             allowClear placeholder="状态筛选" style={{ width: 140 }} value={statusFilter}
@@ -213,7 +213,7 @@ export default function BizContracts() {
         </Space>
       </div>
       <Card>
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
+        <Table scroll={{ x: "max-content" }}  rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
       </Card>
 
       {/* 新建合同 */}
@@ -277,7 +277,7 @@ export default function BizContracts() {
                       </Form.Item>
                       <Button type="primary" onClick={() => onUpsertAllocation(detail.contract.id)}>新增/调整</Button>
                     </Form>
-                    <Table
+                    <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey="cityId" pagination={false} dataSource={detail.allocations}
                       columns={[
                         { title: '地市', dataIndex: 'cityName', key: 'cityName' },
@@ -310,7 +310,7 @@ export default function BizContracts() {
                       <Form.Item name="changeReason"><Input placeholder="变更原因" style={{ width: 180 }} /></Form.Item>
                       <Button type="primary" onClick={() => onAddFeeRate(detail.contract.id)}>保存费率</Button>
                     </Form>
-                    <Table
+                    <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey={(r) => `${r.cityId}-${r.effectiveMonth}`} pagination={false} dataSource={detail.feeRates}
                       columns={[
                         { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cities.find((c) => c.id === v)?.name ?? v },

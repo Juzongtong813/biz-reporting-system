@@ -63,7 +63,7 @@ export default function BizSettings() {
           <Title level={4} style={{ margin: 0 }}>系统设置</Title>
           <Text type="secondary">到期预警阈值等配置（仅 super_admin 可修改）</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
         </Space>

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Spin } from 'antd';
+import { useBizPermission } from '@/utils/biz-permission';
+import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
+import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
-  bizAdminGetUserPermissions, bizAdminRoles, bizAdminProvinces, bizAdminCities,
+  bizAdminGetUserPermissions, bizAdminRoles, bizAdminModules, bizAdminPermissions, bizAdminProvinces, bizAdminCities,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -14,6 +17,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 /** 账号与权限管理（新基线，仅 super_admin） */
 export default function BizAdmin() {
+  const canManage = useBizPermission('operation.user.manage');
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
   const [roles, setRoles] = useState<Array<{ code: string; name: string }>>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
@@ -24,6 +28,10 @@ export default function BizAdmin() {
   const [permDetail, setPermDetail] = useState<{ roleCode: string; base: string[]; effective: string[] } | null>(null);
   const [form] = Form.useForm();
   const [createRole, setCreateRole] = useState<string>('admin');
+  const [roleRows, setRoleRows] = useState<Array<Record<string, unknown>>>([]);
+  const [moduleRows, setModuleRows] = useState<Array<Record<string, unknown>>>([]);
+  const [permissionRows, setPermissionRows] = useState<Array<Record<string, unknown>>>([]);
+  const [dictLoading, setDictLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,6 +45,20 @@ export default function BizAdmin() {
       setLoading(false);
     }
   }, []);
+
+  const loadDict = useCallback(async () => {
+    setDictLoading(true);
+    try {
+      const [roles, mods, perms] = await Promise.all([bizAdminRoles(), bizAdminModules(), bizAdminPermissions()]);
+      setRoleRows(roles.items as Array<Record<string, unknown>>);
+      setModuleRows(mods.items as Array<Record<string, unknown>>);
+      setPermissionRows(perms.items as Array<Record<string, unknown>>);
+    } finally {
+      setDictLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadDict(); }, [loadDict]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -92,7 +114,7 @@ export default function BizAdmin() {
     {
       title: '操作', key: 'action', width: 260,
       render: (_: unknown, row: Record<string, unknown>) => (
-        <Space>
+        <Space wrap>
           <Button size="small" onClick={() => onViewPerm(String(row.id))}>权限</Button>
           <Button size="small" danger={row.status === 'enabled'} onClick={() => onToggle(String(row.id), String(row.status))}>
             {row.status === 'enabled' ? '停用' : '启用'}
@@ -103,6 +125,9 @@ export default function BizAdmin() {
     },
   ];
 
+  if (canManage === null) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spin /></div>;
+  if (!canManage) return <Result status="403" title="无权限访问" subTitle="账号与权限管理仅 super_admin 可操作。" />;
+
   return (
     <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -112,9 +137,62 @@ export default function BizAdmin() {
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
       </div>
-      <Card>
-        <Table rowKey={(r) => String(r.id)} loading={loading} columns={columns} dataSource={users} pagination={{ pageSize: 10 }} />
-      </Card>
+      <Tabs
+        defaultActiveKey="users"
+        items={[
+          {
+            key: 'users', label: '用户管理',
+            children: (
+              <Card>
+                <Table scroll={{ x: "max-content" }}  rowKey={(r) => String(r.id)} loading={loading} columns={columns} dataSource={users} pagination={{ pageSize: 10 }} />
+              </Card>
+            ),
+          },
+          {
+            key: 'roles', label: '角色字典',
+            children: (
+              <Card>
+                <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={dictLoading} dataSource={roleRows} pagination={false}
+                  columns={[
+                    { title: '角色编码', dataIndex: 'code', key: 'code' },
+                    { title: '角色名称', dataIndex: 'name', key: 'name' },
+                    { title: '说明', dataIndex: 'description', key: 'description', render: (v: unknown) => String(v ?? '-') },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: 'modules', label: '模块字典',
+            children: (
+              <Card>
+                <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={dictLoading} dataSource={moduleRows} pagination={{ pageSize: 10 }}
+                  columns={[
+                    { title: '模块编码', dataIndex: 'code', key: 'code' },
+                    { title: '名称', dataIndex: 'name', key: 'name' },
+                    { title: '层级', dataIndex: 'level', key: 'level' },
+                    { title: '排序', dataIndex: 'sortOrder', key: 'sortOrder' },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: 'permissions', label: '权限点',
+            children: (
+              <Card>
+                <Table scroll={{ x: "max-content" }}  rowKey="code" size="small" loading={dictLoading} dataSource={permissionRows} pagination={{ pageSize: 20 }}
+                  columns={[
+                    { title: '权限编码', dataIndex: 'code', key: 'code' },
+                    { title: '名称', dataIndex: 'name', key: 'name' },
+                    { title: '操作', dataIndex: 'action', key: 'action' },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+        ]}
+      />
 
       <Drawer title="新建账号" open={createOpen} onClose={() => setCreateOpen(false)} width={420}>
         <Form form={form} layout="vertical" onFinish={onCreate} initialValues={{ roleCode: 'admin' }}>

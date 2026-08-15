@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { Button, Result, Spin } from 'antd';
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import AuthGuard from '@/components/AuthGuard';
+import BizLayout from '@/components/biz/BizLayout';
 import AdminLayout from '@/components/AdminLayout';
 import { getMe } from '@/api/auth.api';
 import { clearToken } from '@/utils/auth';
@@ -104,19 +105,39 @@ function ProtectedRoutes() {
   }
   return <RoleRoutes key={currentUser.id} currentUser={currentUser} />;
 }
+function LegacyBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ background: '#fdf0e3', borderBottom: '1px solid #f0d9b5', padding: '4px 16px', fontSize: 12, color: '#9a6b1f' }}>
+        旧版界面（已废弃）：仅保留回退访问路径，请使用新系统入口 /#/biz/login
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
   const protectedRoute = <AuthGuard><ProtectedRoutes /></AuthGuard>;
   return <HashRouter><Routes>
-    <Route path="/login" element={<Suspense fallback={<PageLoading />}><Login /></Suspense>} />
-    {/* 新基线（biz_）两级门户路由段：独立于旧体系，零破坏并存 */}
+    {/* 默认入口：新基线（biz_）两级门户 */}
+    <Route path="/" element={<Navigate to="/biz/login" replace />} />
     <Route path="/biz/login" element={<Suspense fallback={<PageLoading />}><BizLogin /></Suspense>} />
-    <Route path="/biz/portal" element={<Suspense fallback={<PageLoading />}><BizPortal /></Suspense>} />
-    <Route path="/biz/maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
-    <Route path="/biz/placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
-    <Route path="/biz/operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
-    <Route path="/biz/orders" element={<Suspense fallback={<PageLoading />}><BizOrders /></Suspense>} />
-    <Route path="/biz/admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
-    <Route path="/*" element={protectedRoute} />
+    <Route path="/biz" element={<BizLayout />}>
+      <Route index element={<Navigate to="/biz/portal" replace />} />
+      <Route path="portal" element={<Suspense fallback={<PageLoading />}><BizPortal /></Suspense>} />
+      <Route path="maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
+      <Route path="placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
+      <Route path="operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
+      <Route path="orders" element={<Suspense fallback={<PageLoading />}><BizOrders /></Suspense>} />
+      <Route path="offline-completions" element={<Suspense fallback={<PageLoading />}><BizOfflineCompletions /></Suspense>} />
+      <Route path="costs" element={<Suspense fallback={<PageLoading />}><BizCosts /></Suspense>} />
+      <Route path="analysis" element={<Suspense fallback={<PageLoading />}><BizAnalysis /></Suspense>} />
+      <Route path="settings" element={<Suspense fallback={<PageLoading />}><BizSettings /></Suspense>} />
+      <Route path="admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
+    </Route>
+    {/* 旧版登录（已废弃，保留回退路径） */}
+    <Route path="/login" element={<Suspense fallback={<PageLoading />}><LegacyBanner><Login /></LegacyBanner></Suspense>} />
+    <Route path="/*" element={<LegacyBanner>{protectedRoute}</LegacyBanner>} />
   </Routes></HashRouter>;
 }
 

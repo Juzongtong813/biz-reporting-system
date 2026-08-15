@@ -47,7 +47,8 @@
     "test:m3-contracts": "node scripts/test/run-m3-contracts.mjs",
     "test:m4-orders": "node scripts/test/run-m4-orders.mjs",
     "test:m5-offcost": "node scripts/test/run-m5-offcost.mjs",
-    "test:m6-aggregates": "node scripts/test/run-m6-aggregates.mjs"
+    "test:m6-aggregates": "node scripts/test/run-m6-aggregates.mjs",
+    "test:m7-views": "node scripts/test/m7-views.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

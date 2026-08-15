@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  base: '/dataofearth/',
+  // M7: 相对路径部署（任意子路径可用）；如需固定子路径改为 '/xxx/'
+  base: './',
   plugins: [react()],
 
   resolve: {

@@ -110,7 +110,7 @@ export default function BizCosts() {
     {
       title: '操作', key: 'action', width: 260,
       render: (_: unknown, row: Record<string, unknown>) => (
-        <Space>
+        <Space wrap>
           {['draft', 'rejected'].includes(String(row.status)) && <Button size="small" type="primary" onClick={() => run(() => bizCostSubmit(String(row.id)), '已提交审核')}>提交</Button>}
           {String(row.status) === 'pending' && <Button size="small" onClick={() => run(() => bizCostApprove(String(row.id)), '已审核通过')}>通过</Button>}
           {String(row.status) === 'pending' && <Button size="small" danger onClick={() => onReject(String(row.id))}>驳回</Button>}
@@ -128,14 +128,14 @@ export default function BizCosts() {
           <Title level={4} style={{ margin: 0 }}>地市成本</Title>
           <Text type="secondary">独立核算不关联合同 · 分类必填 · 审核授权（默认 super_admin，可授权 admin）</Text>
         </div>
-        <Space>
+        <Space wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增成本</Button>
         </Space>
       </div>
       <Card>
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
+        <Table scroll={{ x: "max-content" }}  rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
       </Card>
 
       <Drawer title="新增地市成本（草稿）" open={createOpen} onClose={() => setCreateOpen(false)} width={420}>
