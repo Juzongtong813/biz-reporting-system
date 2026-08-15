@@ -1,11 +1,22 @@
-import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+
+/** MySQL 下 TypeORM 连接初始化需要 typeorm_metadata 内部表（业务迁移不含此表，启动时幂等创建） */
+@Injectable()
+class TypeOrmMetadataBootstrap implements OnModuleInit {
+  constructor(@Inject(DataSource) private readonly dataSource: DataSource) {}
+  async onModuleInit(): Promise<void> {
+    if (this.dataSource.options.type !== 'mysql') return;
+    await this.dataSource.query('CREATE TABLE IF NOT EXISTS `typeorm_metadata` (\n  `type` varchar(64) NOT NULL,\n  `database` varchar(255) NOT NULL DEFAULT \'\',\n  `schema` varchar(255) NOT NULL DEFAULT \'\',\n  `table` varchar(255) NOT NULL DEFAULT \'\',\n  `name` varchar(255) NOT NULL DEFAULT \'\',\n  `value` text,\n  PRIMARY KEY (`type`,`database`,`schema`,`table`,`name`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+  }
+}
 
 // 核心业务模块
 import { AuthModule } from './auth/auth.module';
@@ -76,7 +87,8 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
             type: 'better-sqlite3',
             database: config.get<string>('DB_DATABASE', './data/dev.sqlite'),
             entities: [__dirname + '/**/*.entity.ts', __dirname + '/**/*.entity.js'],
-            synchronize: isProduction ? false : config.get<boolean>('DB_SYNC', true),
+            // M8 安全修复：DB_SYNC 字符串 'false' 不得被误判为 true（生产强制 false）
+            synchronize: isProduction ? false : config.get<string>('DB_SYNC', 'false') === 'true',
             logging: config.get<boolean>('DB_LOGGING', false),
           };
         }
@@ -90,7 +102,7 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
           database: config.get<string>('DB_DATABASE', 'biz_reporting'),
           charset: 'utf8mb4',
           entities: [__dirname + '/**/*.entity.ts', __dirname + '/**/*.entity.js'],
-          synchronize: isProduction ? false : config.get<boolean>('DB_SYNC', false),
+          synchronize: isProduction ? false : config.get<string>('DB_SYNC', 'false') === 'true',
           logging: config.get<boolean>('DB_LOGGING', false),
           retryAttempts: 3,
           retryDelay: 3000,
@@ -129,6 +141,7 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
   ],
   controllers: [AppController],
   providers: [
+    TypeOrmMetadataBootstrap,
     AppService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

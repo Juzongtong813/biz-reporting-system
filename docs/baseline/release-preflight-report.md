@@ -34,3 +34,6 @@
 ## 结论
 
 预检通过（核心检查全绿）。注意：BLK-1 未解除前仅代表预检通过，不构成发布候选；真实 MySQL 完整验证通过后方可宣布 M8 完成。
+# 当前状态更正（2026-08-15）
+
+该文件原报告基于 15 条迁移，已被当前工作区的追加迁移 015 supersede。当前本地 MySQL 隔离验证为 `local-isolated/non-gate PASS`，正式 `release:preflight` 尚未重跑：pnpm 试图在无交互环境清理生成的 `node_modules`，执行未获授权。因此不得将下方旧版 PREFLIGHT_PASS 作为当前发布候选证据。

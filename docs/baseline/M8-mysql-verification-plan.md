@@ -94,3 +94,10 @@ pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
 | 日期 | 说明 |
 |---|---|
 | 2026-08-15 | 本机 127.0.0.1:34001（隔离 gate）CLOSED；127.0.0.1:3306 有 MySQL 但凭据不可用（非项目实例）；无法执行第 1-5 项。M8 保持 BLOCKED。 |
+# DEV-067 当前更正（2026-08-15）
+
+本地隔离 MySQL 8.0.46（127.0.0.1:34001）已完成迁移 001-015、16 条账本、二次幂等、失败账本和 M2/M3/M5/M6/M8 集成测试；该结果仅标记为 `local-isolated/non-gate`。正式 gate 仍拒绝 localhost，BLK-1 与 DEV-067 保持 BLOCKED。
+
+更正早期记录：`127.0.0.1:34001` 当前可用，不是 CLOSED；已记录 `VERSION()=8.0.46`、`@@port=34001`、`CURRENT_USER()=biz_migration_test@127.0.0.1`。正式 gate 的 localhost 拒绝行为保持不变。
+
+执行记录：使用 `node scripts/test/run-m8-mysql-local.mjs` 完成临时库 001-015 迁移与二次幂等；使用 `node scripts/test/run-migrations-mysql-local.mjs` 完成 47 项等价本地 gate 断言（含失败账本）；使用 `node scripts/test/run-mysql-integration.mjs` 完成五套独立临时库集成测试，结果 `5/5 PASS`。日志摘要为 `MIGRATE_OK dialect=mysql migrations=16`、`MYSQL_MIGRATION_ISOLATION_OK`、`MYSQL_MIGRATION_FAILURE_LEDGER_OK`、`MYSQL_INTEGRATION_LOCAL_PASS 5/5`；上述均为 `local-isolated/non-gate` 证据，正式 gate 与 `release:preflight` 待非 localhost 实例及受控依赖环境后执行。

@@ -14,17 +14,37 @@ const requireFromApi = createRequire(path.join(apiRoot, 'package.json'));
 const { DataSource } = requireFromApi('typeorm');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m3-contract-'));
-const database = path.join(testRoot, 'm3.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'test.sqlite');
 const storageRoot = path.join(testRoot, 'source-files');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: storageRoot,
   JWT_SECRET: 'm3-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm3-test-hmac-key-0123456789abcdef',
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
   PORT: '0',
 };
+
+function createDirectDataSource() {
+  return new DataSource({
+    type: useMysql ? 'mysql' : 'better-sqlite3',
+    database,
+    ...(useMysql ? {
+      host: env.DB_HOST,
+      port: Number(env.DB_PORT),
+      username: env.DB_USERNAME,
+      password: env.DB_PASSWORD,
+    } : {}),
+    synchronize: false,
+    entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')],
+  });
+}
 
 let apiProcess;
 let baseUrl = '';
@@ -193,7 +213,7 @@ try {
 
   // ============ CON-009 超额真实入账：直接插入订单行，detail 进度 >100% ============
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const rowRepo = ds.getRepository('BizOrderRowEntity');
     // 合同A 已分配 500k（济南），合同额 1000k。先插入 600k 订单（超过地市额度但未超合同额）
@@ -214,7 +234,7 @@ try {
 
   // 再插入 600k → 合同累计 1200k > 1000k → 进度 120% + 合同超额 200k
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const rowRepo = ds.getRepository('BizOrderRowEntity');
     await rowRepo.save({ id: randomUUID(), batchId: randomUUID(), sourceRowNo: 2, cityId: jinanId, contractId: contractA.id,

@@ -14,17 +14,37 @@ const requireFromApi = createRequire(path.join(apiRoot, 'package.json'));
 const { DataSource } = requireFromApi('typeorm');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m5-offcost-'));
-const database = path.join(testRoot, 'm5.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'test.sqlite');
 const storageRoot = path.join(testRoot, 'source-files');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: storageRoot,
   JWT_SECRET: 'm5-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm5-test-hmac-key-0123456789abcdef',
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
   PORT: '0',
 };
+
+function createDirectDataSource() {
+  return new DataSource({
+    type: useMysql ? 'mysql' : 'better-sqlite3',
+    database,
+    ...(useMysql ? {
+      host: env.DB_HOST,
+      port: Number(env.DB_PORT),
+      username: env.DB_USERNAME,
+      password: env.DB_PASSWORD,
+    } : {}),
+    synchronize: false,
+    entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')],
+  });
+}
 
 let apiProcess;
 let baseUrl = '';
@@ -204,7 +224,7 @@ try {
     const off4 = off4res.data;
     await api('POST', `/biz/offline-completions/${off4.id}/submit`, { token: cityToken });
     // 同一实体两次审核：第二次应乐观锁冲突（版本已 +1）
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const repo = ds.getRepository('BizOfflineCompletionEntity');
     // 版本保护验证：先由服务方推进版本（vA），再以旧版本条件更新应命中 0 行
@@ -286,7 +306,7 @@ try {
     const cost3res = await api('POST', '/biz/costs', { token: cityToken, body: { ...costBody, amountFen: 3_000_00 } });
     const cost3 = cost3res.data;
     await api('POST', `/biz/costs/${cost3.id}/submit`, { token: cityToken });
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const repo = ds.getRepository('BizCostEntryEntity');
     const v1 = await repo.findOneByOrFail({ id: cost3.id });

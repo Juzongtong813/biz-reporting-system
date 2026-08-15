@@ -71,3 +71,10 @@ M8 完成后进入发布候选需同时满足：
 2. `pnpm test:migrations:mysql` 通过（BLK-1 解除后：迁移 001-014 + 集成测试在真实 MySQL8 全跑）
 3. 生产环境密钥审计通过（预检已含静态扫描；上线前再核验 env 实际值）
 4. 部署验证按 M7-runbook 执行（SQLite→MySQL 切换、初始管理员、回滚演练）
+# DEV-067 当前验收更正（2026-08-15）
+
+本地隔离 MySQL 8.0.46（127.0.0.1:34001）已完成 001-015 迁移、16 条账本、二次幂等、失败账本及 M2/M3/M5/M6/M8 五套集成测试，结果为 `local-isolated/non-gate PASS`。正式 `test:migrations:mysql` 仍因 localhost gate 拒绝，DEV-067/BLK-1 未解除；本报告不宣布 M8 完成或发布候选。
+
+本次追加迁移 `015_import_job_legacy_fields`，用于补齐旧 `import_jobs` 实体读取的兼容字段；001-014 与既有 checksum 未修改。
+
+说明：`release:preflight` 尚未在本次 015 变更后重跑；pnpm 依赖目录重建需要受控授权。因此旧版 PREFLIGHT_PASS 仅作历史证据，不能作为当前发布候选依据。

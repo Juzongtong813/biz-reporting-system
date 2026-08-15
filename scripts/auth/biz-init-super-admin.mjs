@@ -20,14 +20,18 @@ const type = String(process.env.BIZ_BOOTSTRAP_DB_TYPE || process.env.DB_TYPE || 
 const database = process.env.BIZ_BOOTSTRAP_DB_DATABASE || process.env.DB_DATABASE;
 if (!database) fail('BIZ_BOOTSTRAP_DB_DATABASE/DB_DATABASE required');
 
-if (type === 'mysql') fail('mysql bootstrap not supported yet; use sqlite via BIZ_BOOTSTRAP_DB_TYPE=sqlite');
-const db = new Database(database);
+const isMysql = type === 'mysql';
+const mysql = isMysql ? requireFromApi('mysql2/promise') : null;
+const db = isMysql
+  ? { query: async (sql, params) => { const conn = await mysql.createConnection({ host: process.env.DB_HOST || '127.0.0.1', port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USERNAME, password: process.env.DB_PASSWORD, database, multipleStatements: true }); try { const [rows] = await conn.query(sql, params); return rows; } finally { await conn.end(); } } }
+  : new Database(database);
 
-try {
-  const count = db.prepare("SELECT COUNT(*) AS c FROM biz_users WHERE role_code = 'super_admin'").get().c;
+async function run() {
+  const countRows = isMysql ? await db.query('SELECT COUNT(*) AS c FROM biz_users WHERE role_code = ?', ['super_admin']) : [{ c: db.prepare("SELECT COUNT(*) AS c FROM biz_users WHERE role_code = 'super_admin'").get().c }];
+  const count = Number(countRows[0]?.c ?? 0);
   if (checkOnly) {
     console.log(`BIZ_SUPER_ADMIN_READINESS count=${count} ready=${count === 1}`);
-    db.close();
+    if (!isMysql) db.close();
     process.exit(count === 1 ? 0 : 2);
   }
   const username = String(process.env.BIZ_SUPER_ADMIN_USERNAME || '').trim();
@@ -35,18 +39,27 @@ try {
   if (!username || password.length < 6) fail('BIZ_SUPER_ADMIN_USERNAME + password(>=6) required');
   if (count > 0) {
     console.log(`BIZ_SUPER_ADMIN_ALREADY_EXISTS count=${count} (refusing to modify)`);
-    db.close();
+    if (!isMysql) db.close();
     process.exit(0);
   }
   const passwordHash = bcrypt.hashSync(password, 10);
-  db.prepare(`INSERT INTO biz_users
-    (id, username, password_hash, role_code, name, city_id, status, auth_version, sensitive_order_scope, must_change_password, created_at, updated_at)
-    VALUES (?, ?, ?, 'super_admin', ?, NULL, 'enabled', 1, 'full', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
-    .run(randomUUID(), username, passwordHash, username);
+  if (isMysql) {
+    await db.query(
+      `INSERT INTO biz_users
+        (id, username, password_hash, role_code, name, city_id, status, auth_version, sensitive_order_scope, must_change_password, created_at, updated_at)
+        VALUES (?, ?, ?, 'super_admin', ?, NULL, 'enabled', 1, 'full', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [randomUUID(), username, passwordHash, username],
+    );
+  } else {
+    db.prepare(`INSERT INTO biz_users
+      (id, username, password_hash, role_code, name, city_id, status, auth_version, sensitive_order_scope, must_change_password, created_at, updated_at)
+      VALUES (?, ?, ?, 'super_admin', ?, NULL, 'enabled', 1, 'full', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+      .run(randomUUID(), username, passwordHash, username);
+    db.close();
+  }
   console.log('BIZ_SUPER_ADMIN_CREATED');
-} finally {
-  db.close();
 }
+await run();
 
 function fail(message) {
   console.error(`[biz-init-super-admin] ${message}`);

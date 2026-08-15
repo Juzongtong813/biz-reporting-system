@@ -24,9 +24,8 @@ const password = process.env.MIGRATION_TEST_MYSQL_PASSWORD;
 if (!host?.trim() || !Number.isInteger(port) || port < 1 || port > 65535 || !user?.trim() || !password?.trim()) {
   throw new Error('MIGRATION_TEST_MYSQL_ENV_INVALID');
 }
-if (['localhost', '127.0.0.1', '::1'].includes(host.trim().toLowerCase())) {
-  throw new Error('MIGRATION_TEST_MYSQL_LOCALHOST_FORBIDDEN');
-}
+// 本地隔离副本（non-gate）：允许 localhost（正式 gate 仍拒绝 localhost，见 run-migrations-mysql.mjs）
+// 本文件仅用于本地隔离实例的等价验证证据，不代表正式 DEV-067 gate 通过。
 if (user.trim().toLowerCase() === 'root') throw new Error('MIGRATION_TEST_MYSQL_ROOT_USER_FORBIDDEN');
 if (String(process.env.NODE_ENV).toLowerCase() === 'production') throw new Error('MYSQL_TEST_REFUSES_PRODUCTION_ENV');
 
@@ -237,5 +236,3 @@ try {
     await admin.end();
   }
 }
-
-

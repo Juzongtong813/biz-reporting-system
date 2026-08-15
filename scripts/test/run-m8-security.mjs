@@ -19,7 +19,8 @@ const requireFromApi = createRequire(path.join(apiRoot, 'package.json'));
 const { DataSource } = requireFromApi('typeorm');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m8-sec-'));
-const database = path.join(testRoot, 'm8.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'test.sqlite');
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -34,7 +35,11 @@ function freePort() {
 }
 
 const baseEnv = {
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: path.join(testRoot, 'src'),
   JWT_SECRET: 'M8-STRONG-JWT-SECRET-0123456789abcdefghijk',
   AUTH_SECURITY_HMAC_KEY: 'M8-STRONG-HMAC-KEY-0123456789abcdefghijk',

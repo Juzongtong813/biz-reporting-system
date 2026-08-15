@@ -14,17 +14,37 @@ const requireFromApi = createRequire(path.join(apiRoot, 'package.json'));
 const { DataSource } = requireFromApi('typeorm');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m2-rbac-'));
-const database = path.join(testRoot, 'm2.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'test.sqlite');
 const storageRoot = path.join(testRoot, 'source-files');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: storageRoot,
   JWT_SECRET: 'm2-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm2-test-hmac-key-0123456789abcdef',
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
   PORT: '0',
 };
+
+function createDirectDataSource() {
+  return new DataSource({
+    type: useMysql ? 'mysql' : 'better-sqlite3',
+    database,
+    ...(useMysql ? {
+      host: env.DB_HOST,
+      port: Number(env.DB_PORT),
+      username: env.DB_USERNAME,
+      password: env.DB_PASSWORD,
+    } : {}),
+    synchronize: false,
+    entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')],
+  });
+}
 
 const SUPER_ADMIN_USER = 'm2_super';
 const SUPER_ADMIN_PASS = 'M2-secret-1';
@@ -179,10 +199,7 @@ try {
 
   // ============ 7. RbacService 数据范围单元断言（super/admin/city） ============
   {
-    const ds = new DataSource({
-      type: 'better-sqlite3', database, synchronize: false,
-      entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')],
-    });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const { RbacService } = await import(pathToFileURL(path.join(apiRoot, 'dist', 'rbac', 'rbac.service.js')).href);
     const rbac = new RbacService(

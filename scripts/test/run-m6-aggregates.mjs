@@ -15,17 +15,37 @@ const { DataSource } = requireFromApi('typeorm');
 const XLSX = requireFromApi('xlsx');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m6-agg-'));
-const database = path.join(testRoot, 'm6.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'test.sqlite');
 const storageRoot = path.join(testRoot, 'source-files');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: storageRoot,
   JWT_SECRET: 'm6-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm6-test-hmac-key-0123456789abcdef',
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
   PORT: '0',
 };
+
+function createDirectDataSource() {
+  return new DataSource({
+    type: useMysql ? 'mysql' : 'better-sqlite3',
+    database,
+    ...(useMysql ? {
+      host: env.DB_HOST,
+      port: Number(env.DB_PORT),
+      username: env.DB_USERNAME,
+      password: env.DB_PASSWORD,
+    } : {}),
+    synchronize: false,
+    entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')],
+  });
+}
 
 const HEADER = ['省份名称','地市名称','采购订单编号','供应商名称','订单主状态','含税总金额','物料名称','物料编码','合同编号','净价','运保费','建安费','费用类型','税率','税额','含税单价','采购数量','计量单位','收货人','收货人联系方式','收货人详细地址','通知人','下单时间','通知时间','附言信息','项目编号','项目名称','站址编号','站址信息','收货状态','商品名称','商品编号','物料源头贴签标识','是否补样订单'];
 
@@ -184,7 +204,7 @@ try {
   }
   assert.equal(res.status, 201, `recalc failed: ${JSON.stringify(res.data)}`);
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const aggRepo = ds.getRepository('BizMonthlyAggregateEntity');
     const contractAgg = await aggRepo.findOneBy({ contractId, businessMonth: '2026-06' });
@@ -217,7 +237,7 @@ try {
 
   // ============ AGG-003 订单批次作废退出统计 ============
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const batchRepo = ds.getRepository('BizOrderImportBatchEntity');
     const batch = await batchRepo.findOneBy({ filename: 'agg-orders.xlsx' });
@@ -266,7 +286,7 @@ try {
 
   // ============ CNS-002/003 篡改后核对告警且不自动改写 ============
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const aggRepo = ds.getRepository('BizMonthlyAggregateEntity');
     const contractAgg = await aggRepo.findOneBy({ contractId, businessMonth: '2026-06' });
@@ -278,7 +298,7 @@ try {
   assert.ok(res.data.warningCount >= 1 && res.data.warnings.some((w) => w.type === 'net_profit_mismatch'), 'CNS-002 net profit mismatch detected');
   // CNS-003：核对不改写数据
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = createDirectDataSource();
     await ds.initialize();
     const aggRepo = ds.getRepository('BizMonthlyAggregateEntity');
     const contractAgg = await aggRepo.findOneBy({ contractId, businessMonth: '2026-06' });

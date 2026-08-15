@@ -170,6 +170,19 @@ async function applyMigration(migration) {
     await applySqliteProductionGovernance();
     return;
   }
+  if (migration.version === '015_import_job_legacy_fields') {
+    const columns = [
+      ['source_file_base64', 'LONGTEXT NULL'],
+      ['source_file_name', 'VARCHAR(255) NULL'],
+      ['report_year', 'INT NULL'],
+    ];
+    for (const [column, definition] of columns) {
+      if (!await adapter.columnExists('import_jobs', column)) {
+        await adapter.exec(`ALTER TABLE import_jobs ADD COLUMN ${column} ${definition}`);
+      }
+    }
+    return;
+  }
   await adapter.exec(dialect === 'sqlite' ? toSqlite(migration.sql) : migration.sql);
 }
 
@@ -287,6 +300,14 @@ async function inspectState(version) {
       adapter.scalar("SELECT COUNT(*) FROM biz_system_settings WHERE setting_key IN ('contract_expiry_warning_days','order_import_max_rows','order_import_max_bytes')").then((value) => value === 3),
     ]);
   }
+  if (version === '015_import_job_legacy_fields') {
+    if (!await adapter.tableExists('import_jobs')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('import_jobs', 'source_file_base64'),
+      adapter.columnExists('import_jobs', 'source_file_name'),
+      adapter.columnExists('import_jobs', 'report_year'),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 
@@ -388,6 +409,8 @@ async function openMysql() {
     user: process.env.DB_USERNAME || 'root', password: process.env.DB_PASSWORD || '',
     database: process.env.DB_DATABASE, multipleStatements: true,
   });
+  // 运行环境表（非业务迁移）：TypeORM MySQL 驱动初始化需要 typeorm_metadata
+  await connection.query("CREATE TABLE IF NOT EXISTS `typeorm_metadata` (\n  `type` varchar(64) NOT NULL,\n  `database` varchar(64) NOT NULL DEFAULT '',\n  `schema` varchar(64) NOT NULL DEFAULT '',\n  `table` varchar(64) NOT NULL DEFAULT '',\n  `name` varchar(64) NOT NULL DEFAULT '',\n  `value` text,\n  PRIMARY KEY (`type`,`database`,`schema`,`table`,`name`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
   const scalarMysql = async (sql, params) => {
     const [rows] = await connection.query(sql, params);
     return Number(Object.values(rows[0] || {})[0] || 0);
