@@ -44,4 +44,4 @@
 
 ## 5. 开工门禁
 
-确认门禁已通过，DEV-001 完成。DEV-002 已交付模块复用、改造与退出清单（见 `M0-module-reuse-refactor-exit-matrix.md`）；下一步进入 DEV-003 改造前构建、架构与自动化基线复验。确认仅授权开发阶段；任何生产资源操作仍需单独授权。
+确认门禁已通过，DEV-001 完成。DEV-002 已交付模块复用、改造与退出清单（见 `M0-module-reuse-refactor-exit-matrix.md`）；DEV-003 已形成改造前验证报告（见 `M0-DEV-003-prechange-validation-report.md`），其中测试夹具失配和已退役旧域回归失败已登记但未擅自修改。下一步进入 DEV-004 的脱敏夹具复验。确认仅授权开发阶段；任何生产资源操作仍需单独授权。
