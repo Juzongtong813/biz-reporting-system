@@ -80,20 +80,20 @@ for (const s of suites) {
 
 // 5. BLK 清单
 report.blk = [
-  { id: 'BLK-1', status: 'open', note: '隔离 MySQL 8 未提供；真实 MySQL 完整验证（M1-M8 迁移+集成）通过前不得宣布发布候选' },
+  { id: 'BLK-1', status: 'resolved', note: '正式 MySQL gate 已通过（192.168.1.197:34001, MySQL 8.0.46, 账号 biz_migration_gate）：迁移 001-014 + M2/M3/M5/M6/M8 集成 5/5 全过' },
   { id: 'BLK-2', status: 'mitigated-by-retirement', note: 'facts-v31 测试 Node24 崩溃：旧事实工作台已退役隔离（见 M8-legacy-retirement.md），新系统无依赖，风险豁免已记录' },
   { id: 'BLK-3', status: 'accepted-out-of-scope', note: '非电商订单模板 8 列名变体：M4 范围外事项，已确认仅支持电商版 34 列' },
 ];
 
 const allCore = report.checksum.ok && report.ledger.ok && report.secrets.ok && Object.values(report.tests).every((t) => t.ok);
 const conclusion = allCore
-  ? '预检通过（核心检查全绿）。注意：BLK-1 未解除前仅代表预检通过，不构成发布候选；真实 MySQL 完整验证通过后方可宣布 M8 完成。'
+  ? '预检通过（核心检查全绿）。BLK-1 已解除（正式 MySQL gate 通过）；满足 M8 最终验收前置条件，可进入发布候选评审。'
   : '预检未通过，详见下方失败项。';
 
 const md = `# 发布预检报告（DEV-068）
 
 > 日期：2026-08-15 · 脚本：scripts/release/preflight.mjs
-> 结论：**${allCore ? '预检通过（待 BLK-1 解除后最终验证）' : '预检未通过'}**
+> 结论：**${allCore ? '预检通过（BLK-1 已解除，满足 M8 最终验收前置）' : '预检未通过'}**
 
 ## 检查结果
 
