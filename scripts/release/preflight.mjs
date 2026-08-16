@@ -80,7 +80,7 @@ for (const s of suites) {
 
 // 5. BLK 清单
 report.blk = [
-  { id: 'BLK-1', status: 'resolved', note: '正式 MySQL gate 已通过（192.168.1.197:34001, MySQL 8.0.46, 账号 biz_migration_gate）：迁移 001-014 + M2/M3/M5/M6/M8 集成 5/5 全过' },
+  { id: 'BLK-1', status: 'resolved', note: '正式 MySQL gate 已通过（192.168.1.197:34001, MySQL 8.0.46, 账号 biz_migration_gate）：迁移 001-015 共 16 条 + M2/M3/M5/M6/M8 集成 5/5 全过' },
   { id: 'BLK-2', status: 'mitigated-by-retirement', note: 'facts-v31 测试 Node24 崩溃：旧事实工作台已退役隔离（见 M8-legacy-retirement.md），新系统无依赖，风险豁免已记录' },
   { id: 'BLK-3', status: 'accepted-out-of-scope', note: '非电商订单模板 8 列名变体：M4 范围外事项，已确认仅支持电商版 34 列' },
 ];
