@@ -1,6 +1,6 @@
 # 发布预检报告（DEV-068）
 
-> 日期：2026-08-15 · 脚本：scripts/release/preflight.mjs
+> 日期：2026-08-16 · 脚本：scripts/release/preflight.mjs
 > 结论：**预检通过（BLK-1 已解除，满足 M8 最终验收前置）**
 
 ## 检查结果

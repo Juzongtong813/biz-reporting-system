@@ -89,10 +89,11 @@ const allCore = report.checksum.ok && report.ledger.ok && report.secrets.ok && O
 const conclusion = allCore
   ? '预检通过（核心检查全绿）。BLK-1 已解除（正式 MySQL gate 通过）；满足 M8 最终验收前置条件，可进入发布候选评审。'
   : '预检未通过，详见下方失败项。';
+const reportDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
 
 const md = `# 发布预检报告（DEV-068）
 
-> 日期：2026-08-15 · 脚本：scripts/release/preflight.mjs
+> 日期：${reportDate} · 脚本：scripts/release/preflight.mjs
 > 结论：**${allCore ? '预检通过（BLK-1 已解除，满足 M8 最终验收前置）' : '预检未通过'}**
 
 ## 检查结果
