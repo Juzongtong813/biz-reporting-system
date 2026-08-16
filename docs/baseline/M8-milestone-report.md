@@ -13,10 +13,10 @@
 | 任务 | 交付物 | 状态 |
 |---|---|---|
 | DEV-064 | 生产配置审计：JWT/HMAC 弱密钥（长度<32/占位/默认/重复字符）→ 生产启动失败、开发告警 | ✅ |
-| DEV-065 | 旧 facts/报表包/AI 退役隔离（只读隐藏不删代码 + 回退保留）；BLK-2 退役隔离证明与风险豁免（M8-legacy-retirement.md） | ✅ |
+| DEV-065 | 旧 facts/报表包/AI 退役隔离（只读隐藏不删代码；facts 写接口返回 410）；BLK-2 退役隔离证明与风险豁免（M8-legacy-retirement.md） | ✅ |
 | DEV-066 | super_admin 运维闭环：env 注入初始化（禁默认密码，弱密码拒绝）、轮换（重置密码）、停用（令牌失效/登录 401）、审计（操作审计 Tab + GET /biz/admin/operation-logs）、应急恢复流程（runbook §9） | ✅ |
 | DEV-067 | 生产 MySQL 完整验证（192.168.1.197:34001，001-015，16 条账本，M2/M3/M5/M6/M8 集成 5/5） | ✅ PASS |
-| DEV-068 | 发布预检：scripts/release/preflight.mjs（checksum/迁移账本/密钥审计/12 测试套件/BLK 清单）→ **PREFLIGHT_PASS** | ✅ PASS |
+| DEV-068 | 发布预检：scripts/release/preflight.mjs（checksum/迁移账本/密钥审计/正式 MySQL gate/12 测试套件/BLK 清单）→ **PREFLIGHT_PASS** | ✅ PASS |
 
 ## 2. 修改文件
 
@@ -44,7 +44,7 @@ M8 追加迁移 `015_import_job_legacy_fields`，当前共 16 条迁移（001-01
 | `pnpm typecheck` / `pnpm build`（4 包） | ✅ |
 | unit / architecture / m2 / m3 / m5 / m6 / m7 / auth-v3 / exports / metrics / storage | ✅ 全回归 |
 | **`pnpm test:m8-security`**（新增） | ✅ 弱密钥+运维闭环 |
-| **`pnpm release:preflight`**（新增） | ✅ PREFLIGHT_PASS（checksum/ledger/secrets/tests 12/12） |
+| **`pnpm release:preflight`**（新增） | ✅ PREFLIGHT_PASS（checksum/ledger/secrets/formal MySQL gate/tests 12/12） |
 | `pnpm test:migrations:mysql` | ✅ PASS（正式非 localhost gate） |
 
 **验收要点**：

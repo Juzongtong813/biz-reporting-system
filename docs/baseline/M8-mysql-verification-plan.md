@@ -1,17 +1,19 @@
 # M8 真实 MySQL 8 完整验证计划（BLK-1 解除后执行清单）
 
-> 状态：**待执行（BLOCKED by BLK-1）**
-> 验收结论（2026-08-15）：M8 预检通过、M8 未完成、发布状态 BLOCKED；基线提交 `738e06e`
-> 隔离 MySQL 8 实例到位后，按下述 5 项清单执行；全部通过后方可将 DEV-067 标记完成、宣布 M8 完成并形成发布候选。
+> 状态：**已执行（正式 gate PASS，BLK-1 已解除）**
+> 验收结论（2026-08-16）：DEV-067 正式 MySQL 验证通过，M8 预检 12/12 通过；基线提交 `738e06e`，后续修订提交见 git log。
+> 本清单已完成；后续重跑仍须使用非 localhost 隔离实例和临时库，禁止把本地 localhost 结果冒充正式 gate。
 
 ---
+
+> 当前修订（2026-08-16）：DEV-067 已通过正式非 localhost MySQL gate；当前账本为 16 条（001-015，含 002 双文件），BLK-1 已解除。本文前段的 BLOCKED、15 条账本和 CLOSED 记录均为历史快照，以文末正式 gate 记录为准。
 
 ## 0. 前置
 
 - 隔离 MySQL 8 实例（版本 ≥ 8.0，utf8mb4，时区建议 +08:00 或显式配置）
 - 环境变量：`MIGRATION_TEST_MYSQL_HOST / _PORT / _USER / _PASSWORD`（`run-migrations-mysql.mjs` 依赖，缺失即报错防误跑）
 
-## 1. 全新空库迁移 001～014（checksum / 账本 / 二次幂等）
+## 1. 全新空库迁移 001～015（checksum / 账本 / 二次幂等）
 
 ```bash
 # 1a. 创建空库（隔离实例，UTF8MB4）
@@ -21,7 +23,7 @@
 MIGRATION_TEST_MYSQL_HOST=<host> MIGRATION_TEST_MYSQL_PORT=3306 \
 MIGRATION_TEST_MYSQL_USER=<user> MIGRATION_TEST_MYSQL_PASSWORD=<pass> \
 pnpm test:migrations:mysql
-# 预期：MIGRATE_OK dialect=mysql migrations=15；ledger 15 行（001-014 各一，含 002 双文件）
+# 预期：MIGRATE_OK dialect=mysql migrations=16；ledger 16 行（001-015，含 002 双文件）
 
 # 1c. 二次幂等（重复执行迁移账本校验）
 #    migrate.mjs up 对已 applied 迁移跳过；checksum 校验通过
@@ -30,7 +32,7 @@ pnpm test:migrations:mysql
 
 **验收断言**：
 - 迁移文件 checksum 与 `scripts/db/migration-checksums.json` 一致（`pnpm migration-files:check`）
-- 账本 `migration_ledger` 15 行，001-014 全部 applied
+- 账本 `migration_ledger` 16 行，001-015 全部 applied
 - 二次执行幂等：无重复建表/列错误；inspectState 全绿
 
 ## 2. 核心 CRUD / 状态机 / 权限 / 事务 / 唯一约束 / 乐观锁 / 汇总
@@ -48,7 +50,7 @@ pnpm test:m2-rbac-auth     # 四角色/锁定/停用/数据范围（权限与状
 pnpm test:m3-contracts     # 合同状态机/费率历史/超额（事务+唯一约束 uk_contract_no）
 pnpm test:m5-offcost       # 完工/成本状态机 + @VersionColumn 乐观锁
 pnpm test:m6-aggregates    # 汇总计算/重算/一致性核对（聚合 SQL）
-pnpm test:m7-views         # 前端全链路（登录→六模块）
+pnpm test:m7-views         # 前端全链路（登录→六模块；独立浏览器/UI 验证，不计入 MySQL 集成套件）
 pnpm test:m8-security      # 弱密钥 + super 运维闭环
 ```
 
@@ -94,9 +96,9 @@ pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
 | 日期 | 说明 |
 |---|---|
 | 2026-08-15 | 本机 127.0.0.1:34001（隔离 gate）CLOSED；127.0.0.1:3306 有 MySQL 但凭据不可用（非项目实例）；无法执行第 1-5 项。M8 保持 BLOCKED。 |
-# DEV-067 当前更正（2026-08-15）
+# DEV-067 执行记录与当前结论（2026-08-16）
 
-本地隔离 MySQL 8.0.46（127.0.0.1:34001）已完成迁移 001-015、16 条账本、二次幂等、失败账本和 M2/M3/M5/M6/M8 集成测试；该结果仅标记为 `local-isolated/non-gate`。正式 gate 仍拒绝 localhost，BLK-1 与 DEV-067 保持 BLOCKED。
+本地隔离 MySQL 8.0.46（127.0.0.1:34001）已完成迁移 001-015、16 条账本、二次幂等、失败账本和 M2/M3/M5/M6/M8 集成测试；该结果仅标记为 `local-isolated/non-gate`，当时不满足正式 gate 要求。其后正式非 localhost gate 已通过，见下文记录。
 
 更正早期记录：`127.0.0.1:34001` 当前可用，不是 CLOSED；已记录 `VERSION()=8.0.46`、`@@port=34001`、`CURRENT_USER()=biz_migration_test@127.0.0.1`。正式 gate 的 localhost 拒绝行为保持不变。
 
@@ -104,6 +106,6 @@ pnpm release:preflight 2>&1 | tee /tmp/m8-preflight-mysql.log
 
 正式 gate 补充记录：将环境变量切换为 `MIGRATION_TEST_MYSQL_HOST=192.168.1.197`、端口 `34001`、账号 `biz_migration_gate` 后，`node scripts/test/run-migrations-mysql.mjs` 通过；`node scripts/test/run-mysql-integration.mjs` 输出 `MYSQL_INTEGRATION_GATE_PASS 5/5 (formal-non-local-gate)`。此前 local 记录仍保留，以上正式记录 supersede 其 DEV-067 判定。
 
-当前收口：DEV-067 / BLK-1 的正式 MySQL 条件已满足；发布候选仍需在依赖环境可写时重跑 `pnpm release:preflight` 并取得当前提交对应的 `PREFLIGHT_PASS`。
+当前收口：DEV-067 / BLK-1 的正式 MySQL 条件已满足；已在当前提交重跑 `pnpm release:preflight`，结果为 `PREFLIGHT_PASS checksum=true ledger=true secrets=true tests=12/12`。
 
-预检阻塞细节：`CI=true pnpm release:preflight` 在依赖重建阶段被供应链策略拒绝 `xlsx@0.20.3` 缺少 `integrity` 字段（`ERR_PNPM_MISSING_TARBALL_INTEGRITY`）。该问题与 MySQL gate 无关，且未通过放宽策略或改写锁文件处理。
+历史预检阻塞：`xlsx@0.20.3` 缺少 integrity 的供应链问题已由锁文件补齐官方 tarball integrity 解决；`pnpm install --frozen-lockfile` 已通过。

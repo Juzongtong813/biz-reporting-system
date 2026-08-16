@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Request, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Get, GoneException, Param, Patch, Post, Query, Request, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -29,9 +29,9 @@ export class CityFactsController {
   ) {}
 
   @Get('costs') listCosts(@Query() query: FactListQuery, @Request() req: AuthenticatedRequest) { return this.facts.listCosts(query, req.user); }
-  @Post('costs') @Permissions(Permission.CITY_DATA_WRITE) createCost(@Body() dto: CreateCostFactRequest, @Request() req: AuthenticatedRequest) { return this.facts.createCost(dto, req.user); }
-  @Patch('costs/:id') @Permissions(Permission.CITY_DATA_WRITE) updateCost(@Param('id') id: string, @Body() dto: UpdateCostFactRequest, @Request() req: AuthenticatedRequest) { return this.lifecycle.updateCost(Number(id), dto, req.user); }
-  @Post('costs/:id/reverse') @Permissions(Permission.CITY_DATA_WRITE) reverseCost(@Param('id') id: string, @Body() dto: ReverseFactRequest, @Request() req: AuthenticatedRequest) { return this.lifecycle.reverseCost(Number(id), dto, req.user); }
+  @Post('costs') @Permissions(Permission.CITY_DATA_WRITE) createCost(_dto: CreateCostFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
+  @Patch('costs/:id') @Permissions(Permission.CITY_DATA_WRITE) updateCost(_id: string, _dto: UpdateCostFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
+  @Post('costs/:id/reverse') @Permissions(Permission.CITY_DATA_WRITE) reverseCost(_id: string, _dto: ReverseFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
 
   @Post('costs/import')
   @Permissions(Permission.CITY_IMPORT)
@@ -39,20 +39,20 @@ export class CityFactsController {
   importCosts(@UploadedFile() file: Express.Multer.File | undefined, @Body('templateType') templateType: string | undefined,
     @Body('contractCode') contractCode: string | undefined, @Request() req: AuthenticatedRequest) {
     if (!file) throw new BadRequestException('请上传 Excel 文件');
-    return this.imports.importCost(file, req.user, templateType || 'auto', contractCode);
+    throw new GoneException('旧 facts 体系已退役，仅支持读取');
   }
 
   @Get('orders') listOrders(@Query() query: FactListQuery, @Request() req: AuthenticatedRequest) { return this.facts.listOrders(query, req.user); }
-  @Post('orders') @Permissions(Permission.CITY_DATA_WRITE) createOrder(@Body() dto: CreateOrderFactRequest, @Request() req: AuthenticatedRequest) { return this.facts.createOrder(dto, req.user); }
-  @Patch('orders/:id') @Permissions(Permission.CITY_DATA_WRITE) updateOrder(@Param('id') id: string, @Body() dto: UpdateOrderFactRequest, @Request() req: AuthenticatedRequest) { return this.lifecycle.updateOrder(Number(id), dto, req.user); }
-  @Post('orders/:id/reverse') @Permissions(Permission.CITY_DATA_WRITE) reverseOrder(@Param('id') id: string, @Body() dto: ReverseFactRequest, @Request() req: AuthenticatedRequest) { return this.lifecycle.reverseOrder(Number(id), dto, req.user); }
+  @Post('orders') @Permissions(Permission.CITY_DATA_WRITE) createOrder(_dto: CreateOrderFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
+  @Patch('orders/:id') @Permissions(Permission.CITY_DATA_WRITE) updateOrder(_id: string, _dto: UpdateOrderFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
+  @Post('orders/:id/reverse') @Permissions(Permission.CITY_DATA_WRITE) reverseOrder(_id: string, _dto: ReverseFactRequest, _req: AuthenticatedRequest) { throw new GoneException('旧 facts 体系已退役，仅支持读取'); }
 
   @Post('orders/import')
   @Permissions(Permission.CITY_IMPORT)
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }))
   importOrders(@UploadedFile() file: Express.Multer.File | undefined, @Request() req: AuthenticatedRequest) {
     if (!file) throw new BadRequestException('请上传 Excel 文件');
-    return this.imports.importOrders(file, req.user);
+    throw new GoneException('旧 facts 体系已退役，仅支持读取');
   }
 
   @Get('contracts') localContracts(@Query() query: FactListQuery, @Request() req: AuthenticatedRequest) { return this.facts.localContracts(query, req.user); }

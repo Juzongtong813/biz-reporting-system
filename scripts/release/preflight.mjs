@@ -3,7 +3,7 @@
  *  - 迁移文件 checksum 与账本校验
  *  - 生产环境弱密钥静态扫描（.env* 中的 JWT_SECRET/AUTH_SECURITY_HMAC_KEY）
  *  - 关键测试套件就绪检查
- *  - BLK 清单输出（BLK-1 未解除前：预检通过 ≠ 发布候选）
+ *  - BLK 清单输出（DEV-067 formal gate is mandatory; preflight pass is not a release approval）
  * 输出：docs/baseline/release-preflight-report.md
  */
 import { execFileSync } from 'node:child_process';
@@ -19,9 +19,9 @@ const reportPath = path.join(repoRoot, 'docs', 'baseline', 'release-preflight-re
 
 const WEAK_PATTERNS = [/^(secret|changeme|change-me|password|admin|123456|qwerty|your-secret|your_secret|xxx+)$/i, /^(test|demo|dev|local|default)[-_]?.*$/i];
 
-function run(cmd, args, useShell = false) {
+function run(cmd, args, useShell = false, env = process.env) {
   try {
-    const out = execFileSync(cmd, args, { cwd: repoRoot, encoding: 'utf-8', timeout: 600_000, shell: useShell && process.platform === 'win32' });
+    const out = execFileSync(cmd, args, { cwd: repoRoot, env, encoding: 'utf-8', timeout: 900_000, shell: useShell && process.platform === 'win32' });
     return { ok: true, out: out.trim().split('\n').slice(-1)[0] };
   } catch (e) {
     return { ok: false, out: e.stderr?.toString()?.slice(0, 300) ?? String(e).slice(0, 300) };
@@ -79,13 +79,35 @@ for (const s of suites) {
 }
 
 // 5. BLK 清单
+// DEV-067 is part of release preflight: require a live, non-local gate and run both formal checks.
+const requiredMysqlEnv = ['MIGRATION_TEST_MYSQL_HOST', 'MIGRATION_TEST_MYSQL_PORT', 'MIGRATION_TEST_MYSQL_USER', 'MIGRATION_TEST_MYSQL_PASSWORD'];
+const missingMysqlEnv = requiredMysqlEnv.filter((name) => !process.env[name]);
+const gateHost = process.env.MIGRATION_TEST_MYSQL_HOST?.trim() || '';
+const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+let mysqlGate = { ok: false, detail: '' };
+if (missingMysqlEnv.length) {
+  mysqlGate = { ok: false, detail: `DEV-067 credentials missing: ${missingMysqlEnv.join(', ')}` };
+} else if (localHosts.has(gateHost.toLowerCase())) {
+  mysqlGate = { ok: false, detail: 'DEV-067 refuses localhost; provide an isolated non-local MySQL gate' };
+} else {
+  const gateEnv = { ...process.env, NODE_ENV: 'test' };
+  const migrationGate = run(process.execPath, ['scripts/test/run-migrations-mysql.mjs'], false, gateEnv);
+  const integrationGate = run(process.execPath, ['scripts/test/run-mysql-integration.mjs'], false, gateEnv);
+  mysqlGate = {
+    ok: migrationGate.ok && integrationGate.ok,
+    detail: `host=${gateHost}:${process.env.MIGRATION_TEST_MYSQL_PORT} user=${process.env.MIGRATION_TEST_MYSQL_USER}; migration=${migrationGate.ok ? 'PASS' : 'FAIL'}; integration=${integrationGate.ok ? 'PASS' : 'FAIL'}`,
+  };
+}
+report.mysql = mysqlGate;
+
 report.blk = [
-  { id: 'BLK-1', status: 'resolved', note: '正式 MySQL gate 已通过（192.168.1.197:34001, MySQL 8.0.46, 账号 biz_migration_gate）：迁移 001-015 共 16 条 + M2/M3/M5/M6/M8 集成 5/5 全过' },
+  { id: 'BLK-1', status: 'open', note: 'DEV-067 formal MySQL gate not verified' },
   { id: 'BLK-2', status: 'mitigated-by-retirement', note: 'facts-v31 测试 Node24 崩溃：旧事实工作台已退役隔离（见 M8-legacy-retirement.md），新系统无依赖，风险豁免已记录' },
   { id: 'BLK-3', status: 'accepted-out-of-scope', note: '非电商订单模板 8 列名变体：M4 范围外事项，已确认仅支持电商版 34 列' },
 ];
 
-const allCore = report.checksum.ok && report.ledger.ok && report.secrets.ok && Object.values(report.tests).every((t) => t.ok);
+report.blk[0] = { id: 'BLK-1', status: report.mysql.ok ? 'resolved' : 'open', note: report.mysql.detail || 'DEV-067 formal MySQL gate not verified' };
+const allCore = report.checksum.ok && report.ledger.ok && report.secrets.ok && report.mysql.ok && Object.values(report.tests).every((t) => t.ok);
 const conclusion = allCore
   ? '预检通过（核心检查全绿）。BLK-1 已解除（正式 MySQL gate 通过）；满足 M8 最终验收前置条件，可进入发布候选评审。'
   : '预检未通过，详见下方失败项。';

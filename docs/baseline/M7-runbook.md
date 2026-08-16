@@ -6,6 +6,8 @@
 
 ---
 
+> M8 修订（2026-08-16）：正式 MySQL gate 已通过，当前迁移为 001-015 共 16 条；BLK-1 已解除，BLK-2 已按退役隔离处置，BLK-3 仍为范围外登记。文档中的旧阻塞状态仅保留为 M7 历史快照。
+
 ## 1. 系统结构
 
 | 组件 | 技术栈 | 说明 |
@@ -48,7 +50,7 @@
 # 1. 建库（MySQL）
 CREATE DATABASE biz_reporting CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-# 2. 执行迁移（001-014，幂等可重跑）
+# 2. 执行迁移（001-015，16 条账本记录，幂等可重跑）
 # sqlite（开发）：
 DB_TYPE=sqlite DB_DATABASE=./data/prod.sqlite node scripts/db/migrate.mjs up
 # mysql（生产）：
@@ -62,12 +64,14 @@ BIZ_SUPER_ADMIN_USERNAME=admin node scripts/auth/biz-init-super-admin.mjs --chec
 # 4. 创建省级/地市账号（登录后经 系统管理→权限管理 创建）
 ```
 
-迁移规则：新迁移只追加（015 起），不改旧文件/checksum；`scripts/db/migration-checksums.json` 记录 sha256，`pnpm migration-files:check` 校验。
+迁移规则：新迁移只追加（016 起），不改旧文件/checksum；当前 001-015 共 16 条（002 含双文件）。`scripts/db/migration-checksums.json` 记录 sha256，`pnpm migration-files:check` 校验。
 
 ## 4. 构建与部署
 
 ### 4.1 构建
 ```bash
+# M8 current migration baseline: apply 001-015 (16 ledger entries, including both 002 files); rerun is idempotent. New migrations append from 016 onward.
+
 pnpm install
 pnpm --filter @biz-reporting/shared-types build
 pnpm --filter @biz-reporting/api build       # apps/api/dist
@@ -125,9 +129,9 @@ NODE_ENV=production DB_TYPE=mysql ... node apps/api/dist/main.js   # 或 PM2/sys
 
 | ID | 内容 | 状态 |
 |---|---|---|
-| BLK-1 | 隔离 MySQL 8 实例未提供；`test:migrations:mysql` 待实例到位后补跑 M1-M6 真实 MySQL 迁移与集成验证 | 开放 |
-| BLK-2 | 旧 facts-v31 测试 Node24 原生崩溃（M8 退役旧事实工作台） | 开放 |
-| BLK-3 | 非电商订单模板 8 列名变体（当前仅支持电商版 34 列） | 开放 |
+| BLK-1 | 正式非 localhost MySQL 8 gate 已通过；迁移与 M2/M3/M5/M6/M8 集成验证完成 | 已解除 |
+| BLK-2 | 旧 facts-v31 测试 Node24 原生崩溃；旧事实工作台已退役隔离并保留风险豁免 | 已缓解 |
+| BLK-3 | 非电商订单模板 8 列名变体（当前仅支持电商版 34 列） | 范围外 |
 | NEW-M6 | 增量重算为整库重算简化实现（大数据量需按范围优化） | 可延后 |
 
 ## 9. super_admin 运维流程（M8 / DEV-066）
@@ -138,5 +142,5 @@ NODE_ENV=production DB_TYPE=mysql ... node apps/api/dist/main.js   # 或 PM2/sys
 | 轮换（改密） | 系统管理 → 权限管理 → 用户 → 重置密码（仅 super_admin；生成强随机密码后安全交付）；重置后原密码立即失效 |
 | 停用 | 权限管理 → 用户 → 状态 → 禁用；禁用后该账号所有令牌失效、登录返回 401 |
 | 审计 | 权限管理 → 操作审计 Tab（GET /biz/admin/operation-logs）：查看创建/重置/停用/作废/审核等操作（操作人/时间/动作/对象/结果） |
-| 应急恢复 | ① 若 super_admin 密码丢失：用 `biz-init-super-admin.mjs`（env 注入新密码）重置；② 若唯一 super 被停用：直接改数据库 `biz_users.status` 为 active 或重建（迁移账本保护）；③ 汇总异常：经营分析 → 全库重算（失败范围优先） |
+| 应急恢复 | ① 密码丢失：在维护窗口使用 `biz-init-super-admin.mjs` 的 env 注入流程；② 唯一 super 被停用：先备份数据库、记录工单与授权人，再由两人复核后执行最小化数据库修复，随后重新登录验证并补记操作审计；③ 汇总异常：经营分析 → 全库重算（失败范围优先） |
 | 密钥轮换 | 更换 `JWT_SECRET/AUTH_SECURITY_HMAC_KEY`（生产弱值启动失败）：滚动发布即可，旧令牌过期后自然失效 |
