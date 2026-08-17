@@ -181,8 +181,12 @@ export class BizContractsService {
     const offlineCompletionFen = offlines.reduce((s, o) => s + Number(o.amountFen), 0);
     const totalCompletionFen = orderCompletionFen + offlineCompletionFen;
     const contractAmountFen = Number(contract.taxInclusiveAmountFen) || 0;
-    const progress = contractAmountFen > 0 ? (totalCompletionFen / contractAmountFen) * 100 : 0;
-    const overrunFen = Math.max(totalCompletionFen - contractAmountFen, 0);
+    // 进度口径：all/contract 用合同额（合同整体进度）；city/province 范围用可见地市分配额度合计（本地市进度，明确标注 progressBasis）
+    const visibleQuotaFen = allocations.reduce((sum, a) => sum + (Number(a.quotaFen) || 0), 0);
+    const progressBasis = visibleCityIds ? (auth.dataScope.scopeType === 'city' ? 'city-quota' : 'province-quota') : 'contract';
+    const progressDenominator = visibleCityIds ? visibleQuotaFen : contractAmountFen;
+    const progress = progressDenominator > 0 ? (totalCompletionFen / progressDenominator) * 100 : 0;
+    const overrunFen = Math.max(totalCompletionFen - progressDenominator, 0);
 
     const cityRows = await Promise.all(allocations.map(async (alloc) => {
       const city = await this.cityRepo.findOneBy({ id: alloc.cityId });
@@ -233,7 +237,9 @@ export class BizContractsService {
         totalCompletionFen,
         contractAmountFen,
         progress,
-        remainingFen: contractAmountFen - totalCompletionFen,
+        progressBasis,
+        quotaFen: visibleCityIds ? visibleQuotaFen : null,
+        remainingFen: progressDenominator - totalCompletionFen,
         overrunFen,
       },
       // M6：成本/净利（按合同分配地市汇总已审核成本）

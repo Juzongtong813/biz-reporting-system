@@ -358,6 +358,41 @@ export class BizAggregateService {
     }
   }
 
+  /** 合同可见性（与合同详情/重算一致）：all/contract 全量；city 需 active 分配到绑定地市；province 需合同省份在范围内；cityId 附加过滤 */
+  private isContractVisible(auth: BizAuthContext, contract: { id: string; provinceId: string }, cityId?: string, citiesByContract?: Map<string, Set<string>>): boolean {
+    const scope = auth.dataScope;
+    if (scope.scopeType === 'all' || scope.scopeType === 'contract') {
+      if (cityId) return citiesByContract?.get(contract.id)?.has(cityId) ?? false;
+      return true;
+    }
+    if (scope.scopeType === 'city') {
+      if (!(citiesByContract?.get(contract.id)?.has(scope.cityId ?? '') ?? false)) return false;
+      if (cityId) return cityId === scope.cityId;
+      return true;
+    }
+    if (scope.scopeType === 'province') {
+      // provinceIds 为空 = 全部省份（admin 默认）；非空则合同省份必须在范围内
+      if (scope.provinceIds.length > 0 && !scope.provinceIds.includes(contract.provinceId)) return false;
+      if (cityId) return citiesByContract?.get(contract.id)?.has(cityId) ?? false;
+      return true;
+    }
+    return false;
+  }
+
+  /** 合同库存指标（从合同+分配表出发，含零进度合同）：返回可见合同 id 集合与合同总额 */
+  private async contractInventory(auth: BizAuthContext, cityId?: string): Promise<{ ids: Set<string>; amountFen: number }> {
+    const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
+    const allocs = await this.allocRepo.find({ where: { status: 'active' } });
+    const citiesByContract = new Map<string, Set<string>>();
+    for (const a of allocs) {
+      if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
+      citiesByContract.get(a.contractId)!.add(a.cityId);
+    }
+    const visible = contracts.filter((c) => this.isContractVisible(auth, c, cityId, citiesByContract));
+    const amountFen = visible.reduce((sum, c) => sum + (Number(c.taxInclusiveAmountFen) || 0), 0);
+    return { ids: new Set(visible.map((c) => c.id)), amountFen };
+  }
+
   async overview(auth: BizAuthContext, month?: string, cityId?: string) {
     const qb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(qb, auth);
@@ -365,24 +400,16 @@ export class BizAggregateService {
     if (month) qb.andWhere('a.businessMonth = :month', { month });
     const rows = await qb.getMany();
     const total = (field: string) => rows.reduce((s, r) => s + Number(r[field as keyof BizMonthlyAggregateEntity] ?? 0), 0);
-    // 核心指标：范围内合同数与合同总额（服务端组合筛选后）
-    const contractIds = new Set(rows.filter((r) => r.contractId).map((r) => r.contractId as string));
-    let totalContractAmountFen = 0;
-    if (contractIds.size > 0) {
-      const contracts = await this.contractRepo.createQueryBuilder('c')
-        .select('c.taxInclusiveAmountFen', 'amount')
-        .where('c.id IN (:...contractIds)', { contractIds: [...contractIds] })
-        .getRawMany();
-      totalContractAmountFen = contracts.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
-    }
+    // 合同库存指标从合同+分配表出发（含零进度合同：已建立分配但无订单/完工），经营金额仍来自汇总表
+    const inventory = await this.contractInventory(auth, cityId);
     return {
       orderCompletionFen: total('orderCompletionFen'),
       offlineCompletionFen: total('offlineCompletionFen'),
       grossProfitFen: total('grossProfitFen'),
       costFen: total('costFen'),
       netProfitFen: total('netProfitFen'),
-      contractCount: contractIds.size,
-      totalContractAmountFen,
+      contractCount: inventory.ids.size,
+      totalContractAmountFen: inventory.amountFen,
       totalCompletionFen: total('orderCompletionFen') + total('offlineCompletionFen'),
       monthCount: new Set(rows.map((r) => r.businessMonth)).size,
     };
@@ -407,83 +434,152 @@ export class BizAggregateService {
   }
 
   async byCity(auth: BizAuthContext, month?: string) {
-    const qb = this.aggRepo.createQueryBuilder('a');
-    this.applyAggScope(qb, auth);
-    qb
-      .select('a.cityId', 'cityId')
-      .addSelect('MAX(city.name)', 'cityName')
-      .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
-      .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
-      .addSelect('SUM(a.grossProfitFen)', 'grossProfitFen')
-      .addSelect('SUM(a.costFen)', 'costFen')
-      .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
-      .addSelect('COUNT(DISTINCT a.contractId)', 'contractCount')
-      .leftJoin('biz_cities', 'city', 'city.id = a.cityId')
-      .groupBy('a.cityId');
-    if (month) qb.andWhere('a.businessMonth = :month', { month });
-    const rows = await qb.getRawMany();
-    // 地市合同额：按 合同额 × (该地市分配配额/合同总配额) 分摊，跨地市合同不重复计入
-    const allocs = await this.allocRepo.find({ where: { status: 'active' } });
-    const totalQuotaByContract = new Map<string, number>();
-    for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
-    const contracts = await this.contractRepo.find({ select: { id: true, taxInclusiveAmountFen: true } });
-    const amountByContract = new Map(contracts.map((c) => [c.id, Number(c.taxInclusiveAmountFen) || 0]));
-    const contractAmountByCity = new Map<string, number>();
-    for (const a of allocs) {
-      const quota = Number(a.quotaFen) || 0;
-      const totalQuota = totalQuotaByContract.get(a.contractId) || 0;
-      const allocCount = allocs.filter((x) => x.contractId === a.contractId).length || 1;
-      const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
-      contractAmountByCity.set(a.cityId, (contractAmountByCity.get(a.cityId) ?? 0) + (amountByContract.get(a.contractId) ?? 0) * share);
-    }
-    return rows.map((r) => ({
-      ...r,
-      contractCount: Number(r.contractCount) || 0,
-      contractAmountFen: Math.round(contractAmountByCity.get(r.cityId) ?? 0),
-    }));
-  }
-
-  /** 合同到期/满额提醒：nearly_full/overfull/expiring/expired（复用合同 tags，按 auth 数据范围过滤） */
-  async analysisAlerts(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {
-    const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
-    const scope = auth.dataScope;
-    // 预加载：合同→分配地市（city 范围可见性）
+    // 1) 合同+分配表出发：地市库存（含只有分配、无经营数据的地市）
+    const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
     const citiesByContract = new Map<string, Set<string>>();
     for (const a of allocs) {
       if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
       citiesByContract.get(a.contractId)!.add(a.cityId);
     }
-    const visible = contracts.filter((c) => {
-      if (scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
-      if (scope.scopeType === 'city') return citiesByContract.get(c.id)?.has(scope.cityId ?? '') ?? false;
-      if (scope.scopeType === 'province' && scope.provinceIds.length > 0) return scope.provinceIds.includes(c.provinceId);
-      return false;
-    });
+    const totalQuotaByContract = new Map<string, number>();
+    for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
+    const amountByContract = new Map(contracts.map((c) => [c.id, Number(c.taxInclusiveAmountFen) || 0]));
+    const cityInventory = new Map<string, { contractCount: number; contractAmountFen: number; contractIds: Set<string> }>();
+    for (const a of allocs) {
+      const contract = contracts.find((c) => c.id === a.contractId);
+      if (!contract || !this.isContractVisible(auth, contract, undefined, citiesByContract)) continue;
+      const entry = cityInventory.get(a.cityId) ?? { contractCount: 0, contractAmountFen: 0, contractIds: new Set() };
+      if (!entry.contractIds.has(a.contractId)) {
+        entry.contractIds.add(a.contractId);
+        entry.contractCount += 1;
+        const quota = Number(a.quotaFen) || 0;
+        const totalQuota = totalQuotaByContract.get(a.contractId) || 0;
+        const allocCount = allocs.filter((x) => x.contractId === a.contractId).length || 1;
+        const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
+        entry.contractAmountFen += (amountByContract.get(a.contractId) ?? 0) * share;
+      }
+      cityInventory.set(a.cityId, entry);
+    }
+    // 2) 经营金额：汇总表按范围+month 聚合（左连接语义：无 agg 行地市补 0）
+    const qb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(qb, auth);
+    qb
+      .select('a.cityId', 'cityId')
+      .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
+      .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
+      .addSelect('SUM(a.grossProfitFen)', 'grossProfitFen')
+      .addSelect('SUM(a.costFen)', 'costFen')
+      .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
+      .groupBy('a.cityId');
+    if (month) qb.andWhere('a.businessMonth = :month', { month });
+    const aggRows = await qb.getRawMany();
+    const aggByCity = new Map(aggRows.map((r) => [String(r.cityId), r]));
+    // 3) 合并输出
+    const { CityEntity } = await import('../main-data/city.entity');
+    const cityEntities = await this.dataSource.getRepository(CityEntity).find({ select: { id: true, name: true } });
+    const nameById = new Map(cityEntities.map((c) => [String(c.id), String(c.name)]));
+    const out: Array<Record<string, unknown>> = [];
+    for (const [cityId, inv] of cityInventory) {
+      const agg = aggByCity.get(cityId) ?? {};
+      out.push({
+        cityId,
+        cityName: nameById.get(cityId) ?? cityId,
+        contractCount: inv.contractCount,
+        contractAmountFen: Math.round(inv.contractAmountFen),
+        orderCompletionFen: Number(agg.orderCompletionFen) || 0,
+        offlineCompletionFen: Number(agg.offlineCompletionFen) || 0,
+        grossProfitFen: Number(agg.grossProfitFen) || 0,
+        costFen: Number(agg.costFen) || 0,
+        netProfitFen: Number(agg.netProfitFen) || 0,
+      });
+    }
+    // agg 行存在但无分配记录的地市（理论不出现，兜底）
+    for (const [cityId, agg] of aggByCity) {
+      if (!cityInventory.has(cityId)) {
+        out.push({
+          cityId,
+          cityName: nameById.get(cityId) ?? cityId,
+          contractCount: 0,
+          contractAmountFen: 0,
+          orderCompletionFen: Number(agg.orderCompletionFen) || 0,
+          offlineCompletionFen: Number(agg.offlineCompletionFen) || 0,
+          grossProfitFen: Number(agg.grossProfitFen) || 0,
+          costFen: Number(agg.costFen) || 0,
+          netProfitFen: Number(agg.netProfitFen) || 0,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** 合同到期/满额提醒（实时计算，不依赖手工 refresh-alerts）：到期按 endDate+系统阈值，满额按汇总进度；按 auth 数据范围过滤 */
+  async analysisAlerts(auth: BizAuthContext, cityId?: string): Promise<Array<Record<string, unknown>>> {
+    const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
+    const scope = auth.dataScope;
+    // 预加载：合同→分配地市（city 范围可见性 + cityId 附加筛选）
+    const allocs = await this.allocRepo.find({ where: { status: 'active' } });
+    const citiesByContract = new Map<string, Set<string>>();
+    for (const a of allocs) {
+      if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
+      citiesByContract.get(a.contractId)!.add(a.cityId);
+    }
+    const visible = contracts.filter((c) => this.isContractVisible(auth, c, cityId, citiesByContract));
+    // 合同进度（全合同汇总；提醒为合同级口径，不按地市拆分）
+    const aggRows = await this.aggRepo.createQueryBuilder('a')
+      .select('a.contractId', 'contractId')
+      .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
+      .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
+      .groupBy('a.contractId')
+      .getRawMany();
+    const completionByContract = new Map(aggRows.map((r) => [String(r.contractId), Number(r.orderCompletionFen || 0) + Number(r.offlineCompletionFen || 0)]));
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const setting = await this.settingRepo.findOneBy({ settingKey: 'contract_expiry_warning_days' });
+    const warningDays = Number(setting?.settingValue ?? 90);
+    const thresholdMs = warningDays * 24 * 3600 * 1000;
     const alerts: Array<Record<string, unknown>> = [];
     for (const c of visible) {
-      const tags = (c.tags ?? []) as string[];
-      const remindTypes = tags.filter((t) => ['nearly_full', 'overfull', 'expiring', 'expired'].includes(t));
-      for (const tag of remindTypes) {
-        alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: tag, endDate: c.endDate, status: c.status });
+      const amount = Number(c.taxInclusiveAmountFen) || 0;
+      const completion = completionByContract.get(c.id) ?? 0;
+      const progress = amount > 0 ? (completion / amount) * 100 : 0;
+      if (progress >= 90 && progress < 100) alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'nearly_full', endDate: c.endDate, status: c.status });
+      if (progress >= 100) alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'overfull', endDate: c.endDate, status: c.status });
+      if (c.endDate) {
+        const end = new Date(c.endDate);
+        if (end.getTime() - now.getTime() <= thresholdMs && end.getTime() >= new Date(today).getTime()) {
+          alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'expiring', endDate: c.endDate, status: c.status });
+        }
+        if (end.getTime() < new Date(today).getTime()) {
+          alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'expired', endDate: c.endDate, status: c.status });
+        }
       }
     }
     return alerts.slice(0, 100);
   }
 
-  async overrunList(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {
-    // 合同超额：合同累计完工 > 合同额；地市超额：地市累计完工 > 分配额度
+  async overrunList(auth: BizAuthContext, month?: string, cityId?: string): Promise<Array<Record<string, unknown>>> {
+    // 合同超额：合同累计完工 > 合同额；地市超额：地市累计完工 > 分配额度（支持整页组合筛选 month/cityId）
     this.applyAggScope({ andWhere: () => undefined }, auth); // contract scope 统一拒绝（与 overview/trend 一致）
     const contracts = await this.contractRepo.find();
+    const allocs = await this.allocRepo.findBy({ status: 'active' });
+    const citiesByContract = new Map<string, Set<string>>();
+    for (const a of allocs) {
+      if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
+      citiesByContract.get(a.contractId)!.add(a.cityId);
+    }
     const result: Array<Record<string, unknown>> = [];
-    const aggQb = (contractId?: string, cityId?: string) => {
+    const aggQb = (contractId?: string, aggCityId?: string) => {
       const qb = this.aggRepo.createQueryBuilder('a');
       this.applyAggScope(qb, auth);
       if (contractId) qb.andWhere('a.contractId = :contractId', { contractId });
-      if (cityId) qb.andWhere('a.cityId = :cityId', { cityId });
+      if (aggCityId) qb.andWhere('a.cityId = :aggCityId', { aggCityId });
+      if (month) qb.andWhere('a.businessMonth = :month', { month });
       return qb;
     };
     for (const contract of contracts) {
+      // 合同超额只统计可见合同（与详情/重算一致），cityId 附加过滤该地市分配
+      if (!this.isContractVisible(auth, contract, cityId, citiesByContract)) continue;
       const aggs = await aggQb(contract.id).getMany();
       const totalCompletion = aggs.reduce((s, a) => s + Number(a.orderCompletionFen) + Number(a.offlineCompletionFen), 0);
       const amount = Number(contract.taxInclusiveAmountFen) || 0;
@@ -491,8 +587,10 @@ export class BizAggregateService {
         result.push({ type: 'contract', id: contract.id, contractNo: contract.contractNo, completionFen: totalCompletion, quotaFen: amount, overrunFen: totalCompletion - amount });
       }
     }
-    const allocs = await this.allocRepo.findBy({ status: 'active' });
     for (const alloc of allocs) {
+      const contract = contracts.find((c) => c.id === alloc.contractId);
+      if (!contract || !this.isContractVisible(auth, contract, undefined, citiesByContract)) continue;
+      if (cityId && alloc.cityId !== cityId) continue;
       // 地市超额必须按 contractId+cityId 汇总（与分配额度同粒度；一个地市多个合同互不混淆）
       const aggs = await aggQb(alloc.contractId, alloc.cityId).getMany();
       const total = aggs.reduce((s, a) => s + Number(a.orderCompletionFen) + Number(a.offlineCompletionFen), 0);

@@ -139,7 +139,8 @@ export interface BizContractDetail {
   alerts: Array<{ alertType: string; firstTriggeredAt: string }>;
   progress: {
     orderCompletionFen: number; offlineCompletionFen: number; totalCompletionFen: number;
-    contractAmountFen: number; progress: number; remainingFen: number; overrunFen: number;
+    contractAmountFen: number; progress: number; progressBasis: string; quotaFen: number | null;
+    remainingFen: number; overrunFen: number;
   };
   finance?: {
     referenceCostFen: number; grossProfitFen: number; referenceNetProfitFen: number; isReference: boolean;
@@ -313,12 +314,12 @@ export function bizAnalysisByCity(month?: string): Promise<{ items: Array<Record
   return request.get('/biz/analysis/by-city', { params: month ? { month } : {} }).then((r) => r.data);
 }
 
-export function bizAnalysisOverrunList(): Promise<{ items: Array<Record<string, unknown>> }> {
-  return request.get('/biz/analysis/overrun-list').then((r) => r.data);
+export function bizAnalysisOverrunList(params?: { month?: string; cityId?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/overrun-list', { params }).then((r) => r.data);
 }
 
-export function bizAnalysisAlerts(): Promise<{ items: Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }> }> {
-  return request.get('/biz/analysis/alerts').then((r) => r.data);
+export function bizAnalysisAlerts(cityId?: string): Promise<{ items: Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }> }> {
+  return request.get('/biz/analysis/alerts', { params: cityId ? { cityId } : {} }).then((r) => r.data);
 }
 
 export function bizAggregateRecalc(scope: Record<string, unknown>, confirmAll = false): Promise<{ ok: boolean }> {

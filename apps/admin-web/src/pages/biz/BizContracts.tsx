@@ -332,6 +332,9 @@ export default function BizContracts() {
                       <Descriptions.Item label="累计完工（元）">{fenToYuan(detail.progress.totalCompletionFen)}</Descriptions.Item>
                       <Descriptions.Item label="合同进度">
                         <Progress percent={Math.round(detail.progress.progress)} status={detail.progress.progress >= 100 ? 'exception' : 'active'} />
+                        {detail.progress.progressBasis !== 'contract' && (
+                          <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>按本地市分配额度 {fenToYuan(detail.progress.quotaFen ?? 0)} 计算</Text>
+                        )}
                       </Descriptions.Item>
                       <Descriptions.Item label="剩余额度（元）">{fenToYuan(detail.progress.remainingFen)}</Descriptions.Item>
                       <Descriptions.Item label="合同超额（元）">

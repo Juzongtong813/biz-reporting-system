@@ -164,3 +164,29 @@ M8 完成后进入发布候选需同时满足：
 - MySQL：集成 **7/7 真实 MySQL**（m9/m10 已条件化）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
 - preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
+
+
+---
+
+## 治理三次复核返工（2026-08-17，169ae77 复核不通过后的四次返工）
+
+### 复核结论
+治理负责人复核 169ae77：两项 P0 权限漏洞已修复，但核心经营指标和提醒存在业务正确性问题（P1×4 + P2×1）。发布候选评审保持冻结。
+
+### 返工修复（全部完成并验证）
+**P1**
+1. 零进度合同计入指标：overview 合同数量/总合同额改为从**合同+分配表出发**（contractInventory：按 auth 范围过滤合同可见性，含已建立分配但无订单/完工的合同）；byCity 从分配表出发构造地市行（只有分配、无经营数据的地市也出现），经营金额左连接汇总表补 0。
+2. 提醒实时计算：analysisAlerts 不再依赖手工 refresh-alerts 的 tags，改为**查询时实时计算**——到期（endDate+系统阈值 contract_expiry_warning_days）、满额（汇总进度 ≥90%/≥100%），按 auth 范围过滤。
+3. 整页组合筛选：overrunList/analysisAlerts 支持 month/cityId 服务端参数，前端提醒中心/超额清单/CSV 导出使用相同筛选条件。
+4. 共享合同进度口径：city/province 范围详情 progress 改**本地市口径**（本地市完工÷本地市分配额度合计），新增 progressBasis（city-quota/province-quota/contract）与 quotaFen 字段，前端进度卡标注按本地市分配额度计算；super 保持合同整体口径。
+
+**P2**
+5. CSV 第一列由截断 cityId 改为地市名称（cityName）。
+
+**M11 业务正确性测试**（test:m11-business，SQLite+MySQL 均过）：零进度合同计入首页/地市指标、不调手工刷新自动产生到期/满额提醒、提醒/超额整页筛选（cityId）、共享合同进度口径（济南 10w/60w=16.67%，super 10%）。
+
+### 四次验证结果
+- SQLite：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9/M10/M11 全套通过
+- MySQL：集成 **8/8 真实 MySQL**（含 m11）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
+- preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
+- 发布候选评审仍冻结，待治理负责人复核本返工

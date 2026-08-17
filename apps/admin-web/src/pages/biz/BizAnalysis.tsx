@@ -31,7 +31,7 @@ export default function BizAnalysis() {
     const params = { month: filterMonth, cityId: filterCity };
     const [ov, tr, ct, or, al] = await Promise.all([
       bizAnalysisOverview(params),
-      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(), bizAnalysisAlerts(),
+      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity),
     ]);
     setOverview(ov);
     setTrend(tr.items);
@@ -50,7 +50,7 @@ export default function BizAnalysis() {
     const header = ['地市', '合同数量', '合同额(元)', '订单完工(元)', '线下完工(元)', '毛利(元)', '成本(元)', '净利(元)', '超额标记'];
     const rows = cities.map((r) => {
       const overrun = overruns.find((o) => o.type === 'city' && o.cityId === r.cityId);
-      return [String(r.cityId ?? '').slice(0, 8), String(Number(r.contractCount) || 0), fenToYuan(Number(r.contractAmountFen) || 0), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
+      return [String(r.cityName ?? r.cityId ?? '-'), String(Number(r.contractCount) || 0), fenToYuan(Number(r.contractAmountFen) || 0), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
     });
     const escapeCsv = (v: string) => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
     const csv = '\uFEFF' + [header, ...rows].map((r) => r.map(escapeCsv).join(',')).join('\n');

@@ -61,14 +61,14 @@ export class BizAggregateController {
 
   @Get('analysis/alerts')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async analysisAlerts(@BizAuthUser() auth: BizAuthContext) {
-    return { items: await this.service.analysisAlerts(auth) };
+  async analysisAlerts(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string) {
+    return { items: await this.service.analysisAlerts(auth, cityId) };
   }
 
   @Get('analysis/overrun-list')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async overrunList(@BizAuthUser() auth: BizAuthContext) {
-    return { items: await this.service.overrunList(auth) };
+  async overrunList(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string, @Query('cityId') cityId?: string) {
+    return { items: await this.service.overrunList(auth, month, cityId) };
   }
 
   // ---- 系统设置（DEV-055） ----
