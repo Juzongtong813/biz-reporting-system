@@ -152,7 +152,28 @@ try {
   };
   await mkOffline(c3.data.id, 1_200_000_00);
   await mkOffline(c4.data.id, 100_000_00);
-  // 重算进汇总（提醒实时计算依赖 agg；零进度合同不走 agg）
+
+  // ============ 2b. 地市范围 byCity：济南管理员只返回济南，不泄露德州分配 ============
+  res = await api('GET', '/biz/analysis/by-city', { token: adminToken });
+  const adminCityIds = res.data.items.map((r) => r.cityId);
+  assert.deepEqual(adminCityIds, [jinanId], `M11 jinan admin byCity returns only jinan: ${JSON.stringify(adminCityIds)}`);
+  assert.ok(!adminCityIds.includes(dezhouId), 'M11 jinan admin byCity excludes dezhou (shared contract alloc not leaked)');
+
+  // ============ 2c. 合同额口径一致性：overview?cityId 与 byCity 济南行一致 ============
+  res = await api('GET', `/biz/analysis/overview?cityId=${jinanId}`, { token: superToken });
+  const overviewJinanAmount = res.data.totalContractAmountFen;
+  res = await api('GET', '/biz/analysis/by-city', { token: superToken });
+  const jinanByCityAmount = Number(res.data.items.find((r) => r.cityId === jinanId).contractAmountFen);
+  assert.equal(overviewJinanAmount, jinanByCityAmount, `M11 contract amount consistent (overview?cityId=${overviewJinanAmount} vs byCity=${jinanByCityAmount})`);
+  assert.equal(overviewJinanAmount, 2_900_000_00, 'M11 jinan overview contract amount = 290w (quota-split)');
+
+  // ============ 3a. 提醒实时计算（无显式重算：完工明细已 approve，立即查询） ============
+  res = await api('GET', '/biz/analysis/alerts', { token: superToken });
+  const alertsNoRecalc = res.data.items;
+  assert.ok(alertsNoRecalc.some((a) => a.contractId === c2.data.id && a.alertType === 'expiring'), `M11 expiring without recalc: ${JSON.stringify(alertsNoRecalc.map((a) => [a.contractId, a.alertType]))}`);
+  assert.ok(alertsNoRecalc.some((a) => a.contractId === c3.data.id && a.alertType === 'overfull'), 'M11 overfull without recalc (detail-level aggregation)');
+
+  // 重算进汇总（经营金额断言依赖 agg；提醒断言已在上方无重算通过）
   res = await api('POST', '/biz/aggregates/recalc', { token: superToken, body: { scope: {}, confirmAll: true } });
   assert.ok([200, 201].includes(res.status), `M11 recalc: ${JSON.stringify(res.data)}`);
 
@@ -177,12 +198,6 @@ try {
   assert.equal(Number(dezhouRow.contractCount), 1, 'M11 dezhou contractCount = 1 (C4)');
   assert.equal(Number(dezhouRow.orderCompletionFen), 0, 'M11 dezhou zero order');
   assert.equal(Number(dezhouRow.offlineCompletionFen), 0, 'M11 dezhou zero offline');
-
-  // ============ 3. 提醒实时计算（不调 refresh-alerts） ============
-  res = await api('GET', '/biz/analysis/alerts', { token: superToken });
-  const alerts = res.data.items;
-  assert.ok(alerts.some((a) => a.contractId === c2.data.id && a.alertType === 'expiring'), `M11 expiring without manual refresh: ${JSON.stringify(alerts.map((a) => [a.contractId, a.alertType]))}`);
-  assert.ok(alerts.some((a) => a.contractId === c3.data.id && a.alertType === 'overfull'), 'M11 overfull without manual refresh');
 
   // ============ 4. 整页筛选作用于超额/提醒 ============
   res = await api('GET', `/biz/analysis/overrun-list?cityId=${jinanId}`, { token: superToken });
@@ -209,7 +224,28 @@ try {
   assert.equal(res.data.progress.totalCompletionFen, 100_000_00, 'M11 super completion 10w');
   assert.ok(Math.abs(res.data.progress.progress - 10) < 0.01, 'M11 super progress = 10w/100w = 10%');
 
-  console.log('M11_BUSINESS_OK zero-progress-contract + realtime-alerts + page-filter + progress-basis all passed');
+  // ============ 5b. 取消分配不稀释进度分母 ============
+  const c5 = await api('POST', '/biz/contracts', { token: superToken, body: {
+    contractNo: 'HT-M11-CANCEL', contractName: '含取消分配合同', taxInclusiveAmountFen: 2_000_000_00,
+    provinceId: shandongId, startDate: '2026-01-01', endDate: endFar,
+  } });
+  await api('POST', `/biz/contracts/${c5.data.id}/allocations`, { token: superToken, body: { cityId: jinanId, quotaFen: 1_000_000_00 } });
+  await api('POST', `/biz/contracts/${c5.data.id}/allocations`, { token: superToken, body: { cityId: dezhouId, quotaFen: 800_000_00 } });
+  await api('DELETE', `/biz/contracts/${c5.data.id}/allocations/${dezhouId}`, { token: superToken });
+  res = await api('GET', `/biz/contracts/${c5.data.id}`, { token: adminToken }); // 济南 city scope
+  assert.equal(res.status, 200, 'M11 C5 visible to jinan admin');
+  assert.equal(res.data.progress.progressBasis, 'city-quota', 'M11 C5 city progress basis');
+  assert.equal(res.data.progress.quotaFen, 1_000_000_00, `M11 C5 quota excludes cancelled dezhou 80w: ${res.data.progress.quotaFen}`);
+  // 地市用户裁剪后只显示本地市（1 条 active）
+  assert.equal(res.data.allocations.length, 1, 'M11 C5 jinan admin sees only jinan allocation');
+  assert.equal(res.data.allocations.filter((a) => a.status === 'active').length, 1, 'M11 C5 one active allocation');
+  // super 全量视角：历史分配保留（济南 active + 德州 cancelled），分母仅 active
+  res = await api('GET', `/biz/contracts/${c5.data.id}`, { token: superToken });
+  assert.equal(res.data.allocations.length, 2, 'M11 C5 super sees history (2 allocations incl cancelled)');
+  assert.equal(res.data.allocations.filter((a) => a.status === 'active').length, 1, 'M11 C5 super sees 1 active');
+  assert.equal(res.data.progress.progressBasis, 'contract', 'M11 C5 super contract basis');
+
+  console.log('M11_BUSINESS_OK zero-progress-contract + realtime-alerts(no-recalc) + page-filter + progress-basis + alloc-visibility + quota-split-consistent + cancelled-alloc all passed');
 } finally {
   if (apiProcess && apiProcess.exitCode === null) apiProcess.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 1000));

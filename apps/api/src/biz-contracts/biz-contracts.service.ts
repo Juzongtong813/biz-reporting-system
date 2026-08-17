@@ -181,8 +181,8 @@ export class BizContractsService {
     const offlineCompletionFen = offlines.reduce((s, o) => s + Number(o.amountFen), 0);
     const totalCompletionFen = orderCompletionFen + offlineCompletionFen;
     const contractAmountFen = Number(contract.taxInclusiveAmountFen) || 0;
-    // 进度口径：all/contract 用合同额（合同整体进度）；city/province 范围用可见地市分配额度合计（本地市进度，明确标注 progressBasis）
-    const visibleQuotaFen = allocations.reduce((sum, a) => sum + (Number(a.quotaFen) || 0), 0);
+    // 进度口径：all/contract 用合同额（合同整体进度）；city/province 范围用可见地市【active】分配额度合计（本地市进度，明确标注 progressBasis；已取消分配不稀释分母）
+    const visibleQuotaFen = allocations.filter((a) => a.status === 'active').reduce((sum, a) => sum + (Number(a.quotaFen) || 0), 0);
     const progressBasis = visibleCityIds ? (auth.dataScope.scopeType === 'city' ? 'city-quota' : 'province-quota') : 'contract';
     const progressDenominator = visibleCityIds ? visibleQuotaFen : contractAmountFen;
     const progress = progressDenominator > 0 ? (totalCompletionFen / progressDenominator) * 100 : 0;

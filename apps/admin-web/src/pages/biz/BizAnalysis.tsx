@@ -31,7 +31,7 @@ export default function BizAnalysis() {
     const params = { month: filterMonth, cityId: filterCity };
     const [ov, tr, ct, or, al] = await Promise.all([
       bizAnalysisOverview(params),
-      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity),
+      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity, filterMonth),
     ]);
     setOverview(ov);
     setTrend(tr.items);

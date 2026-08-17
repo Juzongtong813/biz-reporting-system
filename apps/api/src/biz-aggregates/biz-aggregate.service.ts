@@ -379,7 +379,7 @@ export class BizAggregateService {
     return false;
   }
 
-  /** 合同库存指标（从合同+分配表出发，含零进度合同）：返回可见合同 id 集合与合同总额 */
+  /** 合同库存指标（从合同+分配表出发，含零进度合同）：合同数=可见合同数；合同额=未带地市筛选时全额、带地市筛选时按该地市配额比例分摊（与 byCity 同一口径） */
   private async contractInventory(auth: BizAuthContext, cityId?: string): Promise<{ ids: Set<string>; amountFen: number }> {
     const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
@@ -389,7 +389,25 @@ export class BizAggregateService {
       citiesByContract.get(a.contractId)!.add(a.cityId);
     }
     const visible = contracts.filter((c) => this.isContractVisible(auth, c, cityId, citiesByContract));
-    const amountFen = visible.reduce((sum, c) => sum + (Number(c.taxInclusiveAmountFen) || 0), 0);
+    let amountFen: number;
+    if (cityId) {
+      // 地市口径：合同额 × (该地市分配配额/合同总配额)，与 byCity 行内 contractAmountFen 完全一致
+      const totalQuotaByContract = new Map<string, number>();
+      for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
+      amountFen = 0;
+      for (const c of visible) {
+        const cityAllocs = allocs.filter((a) => a.contractId === c.id && a.cityId === cityId);
+        if (cityAllocs.length === 0) continue;
+        const quota = cityAllocs.reduce((sum, a) => sum + (Number(a.quotaFen) || 0), 0);
+        const totalQuota = totalQuotaByContract.get(c.id) || 0;
+        const allocCount = allocs.filter((x) => x.contractId === c.id).length || 1;
+        const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
+        amountFen += (Number(c.taxInclusiveAmountFen) || 0) * share;
+      }
+      amountFen = Math.round(amountFen);
+    } else {
+      amountFen = visible.reduce((sum, c) => sum + (Number(c.taxInclusiveAmountFen) || 0), 0);
+    }
     return { ids: new Set(visible.map((c) => c.id)), amountFen };
   }
 
@@ -448,7 +466,8 @@ export class BizAggregateService {
     const cityInventory = new Map<string, { contractCount: number; contractAmountFen: number; contractIds: Set<string> }>();
     for (const a of allocs) {
       const contract = contracts.find((c) => c.id === a.contractId);
-      if (!contract || !this.isContractVisible(auth, contract, undefined, citiesByContract)) continue;
+      // P0：分配地市也必须在可见范围内——共享合同的其他地市分配不得泄露（济南管理员只看到济南行）
+      if (!contract || !this.isContractVisible(auth, contract, a.cityId, citiesByContract)) continue;
       const entry = cityInventory.get(a.cityId) ?? { contractCount: 0, contractAmountFen: 0, contractIds: new Set() };
       if (!entry.contractIds.has(a.contractId)) {
         entry.contractIds.add(a.contractId);
@@ -513,8 +532,8 @@ export class BizAggregateService {
     return out;
   }
 
-  /** 合同到期/满额提醒（实时计算，不依赖手工 refresh-alerts）：到期按 endDate+系统阈值，满额按汇总进度；按 auth 数据范围过滤 */
-  async analysisAlerts(auth: BizAuthContext, cityId?: string): Promise<Array<Record<string, unknown>>> {
+  /** 合同到期/满额提醒（实时计算，不依赖手工 refresh-alerts 与汇总重算）：到期按 endDate+系统阈值，满额按订单/已审核线下完工明细实时聚合；按 auth 数据范围过滤 */
+  async analysisAlerts(auth: BizAuthContext, cityId?: string, _month?: string): Promise<Array<Record<string, unknown>>> {
     const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
     const scope = auth.dataScope;
     // 预加载：合同→分配地市（city 范围可见性 + cityId 附加筛选）
@@ -525,14 +544,22 @@ export class BizAggregateService {
       citiesByContract.get(a.contractId)!.add(a.cityId);
     }
     const visible = contracts.filter((c) => this.isContractVisible(auth, c, cityId, citiesByContract));
-    // 合同进度（全合同汇总；提醒为合同级口径，不按地市拆分）
-    const aggRows = await this.aggRepo.createQueryBuilder('a')
-      .select('a.contractId', 'contractId')
-      .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
-      .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
-      .groupBy('a.contractId')
+    // 完工明细实时聚合（不依赖汇总表/重算）：未作废订单 + 已审核线下完工
+    const orderRows = await this.orderRowRepo.createQueryBuilder('o')
+      .select('o.contractId', 'contractId')
+      .addSelect('SUM(o.completionAmountFen)', 'amount')
+      .where('o.isVoid = 0')
+      .groupBy('o.contractId')
       .getRawMany();
-    const completionByContract = new Map(aggRows.map((r) => [String(r.contractId), Number(r.orderCompletionFen || 0) + Number(r.offlineCompletionFen || 0)]));
+    const offlineRows = await this.offlineRepo.createQueryBuilder('f')
+      .select('f.contractId', 'contractId')
+      .addSelect('SUM(f.amountFen)', 'amount')
+      .where('f.status = :status', { status: 'approved' })
+      .groupBy('f.contractId')
+      .getRawMany();
+    const completionByContract = new Map<string, number>();
+    for (const r of orderRows) completionByContract.set(String(r.contractId), (completionByContract.get(String(r.contractId)) ?? 0) + Number(r.amount || 0));
+    for (const r of offlineRows) completionByContract.set(String(r.contractId), (completionByContract.get(String(r.contractId)) ?? 0) + Number(r.amount || 0));
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const setting = await this.settingRepo.findOneBy({ settingKey: 'contract_expiry_warning_days' });

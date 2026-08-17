@@ -333,7 +333,9 @@ export default function BizContracts() {
                       <Descriptions.Item label="合同进度">
                         <Progress percent={Math.round(detail.progress.progress)} status={detail.progress.progress >= 100 ? 'exception' : 'active'} />
                         {detail.progress.progressBasis !== 'contract' && (
-                          <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>按本地市分配额度 {fenToYuan(detail.progress.quotaFen ?? 0)} 计算</Text>
+                          <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                            {detail.progress.progressBasis === 'province-quota' ? '按省下辖市分配额度' : '按本地市分配额度'} {fenToYuan(detail.progress.quotaFen ?? 0)} 计算
+                          </Text>
                         )}
                       </Descriptions.Item>
                       <Descriptions.Item label="剩余额度（元）">{fenToYuan(detail.progress.remainingFen)}</Descriptions.Item>

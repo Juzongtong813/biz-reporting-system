@@ -190,3 +190,32 @@ M8 完成后进入发布候选需同时满足：
 - MySQL：集成 **8/8 真实 MySQL**（含 m11）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
 - preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
+
+
+---
+
+## 治理四次复核返工（2026-08-17，f23ca53 复核不通过后的五次返工）
+
+### 复核结论
+治理负责人复核 f23ca53：既定测试全部通过，但新增地市库存逻辑引入数据范围回归，且实时提醒仍依赖汇总重算（P0×1 + P1×3）。发布候选评审保持冻结。
+
+### 返工修复（全部完成并验证）
+**P0**
+1. byCity 分配地市可见性：遍历合同分配时按**当前分配 cityId** 判断可见性（isContractVisible(auth, contract, a.cityId)）——共享合同的其他地市分配不再进入 cityInventory；济南范围管理员 byCity 只返回济南行。
+
+**P1**
+2. 提醒满额进度改**订单+已审核线下完工明细实时聚合**（不再读 biz_monthly_aggregates，不依赖重算）；M11 删除显式重算，完工 approve 后立即查询提醒通过。
+3. 合同额口径统一：overview?cityId 合同额改为**按该地市配额比例分摊**（与 byCity 行内 contractAmountFen 完全一致，共享合同不再全额计入）；月份语义明确为经营金额筛选（库存为累计口径，前端选择器标注）；alerts 支持 month 参数（整页调用一致）。
+4. 进度分母仅累计 **status='active'** 分配（已取消分配不稀释地市/省级进度；历史分配仍展示）；前端 province-quota 文案区分按省下辖市分配额度。
+
+### M11 补充测试（四类，SQLite+MySQL 均过）
+- 地市范围 byCity：济南 admin 只返回济南、不泄露德州分配
+- 无显式重算提醒：完工 approve 后立即查 alerts 得到 expiring/overfull
+- 合同额口径一致性：overview?cityId=jinan 290 万 = byCity 济南行 290 万
+- 取消分配进度分母：C5 济南 active 100 万 + 德州 cancelled 80 万 → 济南 admin quotaFen=100 万、super 历史 2 条/active 1 条
+
+### 五次验证结果
+- SQLite：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9/M10/M11 全套通过
+- MySQL：集成 **8/8 真实 MySQL**（含 m11）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
+- preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
+- 发布候选评审仍冻结，待治理负责人复核本返工
