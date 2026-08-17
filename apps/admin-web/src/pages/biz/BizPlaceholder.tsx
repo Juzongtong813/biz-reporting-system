@@ -31,7 +31,7 @@ export default function BizPlaceholder() {
     })();
   }, [code]);
 
-  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;
+  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spin /></div>;
 
   if (!found) {
     return (

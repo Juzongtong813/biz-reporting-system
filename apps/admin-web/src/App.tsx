@@ -37,7 +37,7 @@ const BizAnalysis = lazy(() => import('@/pages/biz/BizAnalysis'));
 const BizSettings = lazy(() => import('@/pages/biz/BizSettings'));
 
 function PageLoading() {
-  return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin tip="加载中" /></div>;
+  return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin /></div>;
 }
 function UnsupportedRole() {
   const navigate = useNavigate();

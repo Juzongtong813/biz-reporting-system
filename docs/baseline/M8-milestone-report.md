@@ -138,7 +138,6 @@ M8 完成后进入发布候选需同时满足：
 - preflight PASS（含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
 
-
 ---
 
 ## 治理二次复核返工（2026-08-17，0730ef4 复核不通过后的三次返工）
@@ -243,3 +242,24 @@ M8 完成后进入发布候选需同时满足：
 - MySQL：集成 **8/8 真实 MySQL**（m9/m10/m11 条件化）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
 - preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
+
+---
+
+## 发布前收口（2026-08-17，92ea939 后续验证）
+
+本轮发布前收口补齐了预检套件与浏览器交互证据：
+
+- `scripts/release/preflight.mjs` 已纳入 `typecheck`、`build`、M7、M12 及 M2-M11 全部发布套件，预检套件总数为 20 项；M4/M12 保持独立 SQLite/浏览器验证，MySQL 集成仅运行其支持的后端套件。
+- `test:m12-interaction` 已实际验证登录经营分析页、月份筛选请求、地市筛选请求与结果、清空筛选恢复、CSV 内容/列数/地市名称/金额字段、合同开始/结束日期显示；Chromium 与 WebKit 均通过。
+- 合同详情开始日期、结束日期统一显示为 `yyyy年mm月`，接口与数据库仍保留原始日期格式；趋势、一致性、订单、线下完工、成本列表的业务月份显示规则保持统一。
+- 浏览器测试同时清理 Ant Design 控制台告警，并为筛选、导出、合同详情增加稳定测试标识；未改变业务口径或权限边界。
+
+### 最终验证结果
+
+- `typecheck/build` 通过；unit、architecture、ledger、M2-M12、发布辅助套件全部通过。
+- M7 视图测试通过：桌面/移动端页面、无溢出、地市菜单隐藏与越权直链 403。
+- M12 Chromium + WebKit 通过：登录、月份/地市筛选请求与结果、清空、CSV 内容核对、合同日期显示及控制台错误检查。
+- 正式 MySQL gate 通过：18 条迁移、幂等、失败账本隔离；MySQL 集成 `8/8 PASS`。
+- `release:preflight` 通过：`PREFLIGHT_PASS tests=20/20`，BLK-1 resolved。
+
+代码现已达到“待发布”状态；生产发布前仍需治理负责人按 M7-runbook 完成生产密钥实值核验、SQLite→MySQL 部署验证、初始管理员检查及回滚演练。

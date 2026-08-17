@@ -29,6 +29,11 @@ function fenToYuan(fen: number): string {
   return (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatYearMonth(value: string | null | undefined): string {
+  if (!value) return '-';
+  return dayjs(value).isValid() ? dayjs(value).format('YYYY年MM月') : value;
+}
+
 /** 合同管理（新基线 M3）：列表 + 全屏详情弹窗 */
 export default function BizContracts() {
   const navigate = useNavigate();
@@ -177,7 +182,7 @@ export default function BizContracts() {
   };
 
   const columns = [
-    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (v: string, row: BizContractItem) => <a onClick={() => openDetail(row.id)}>{v}</a> },
+    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (v: string, row: BizContractItem) => <a data-testid={`contract-detail-${v}`} onClick={() => openDetail(row.id)}>{v}</a> },
     { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
     { title: '含税合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'amount', render: (v: number) => fenToYuan(Number(v)) },
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v] ?? v}</Tag> },
@@ -252,8 +257,8 @@ export default function BizContracts() {
                       <Descriptions.Item label="合同额锁定">{detail.contract.amountLocked ? '已锁定' : '未锁定'}</Descriptions.Item>
                       <Descriptions.Item label="含税合同额（元）">{fenToYuan(detail.contract.taxInclusiveAmountFen)}</Descriptions.Item>
                       <Descriptions.Item label="不含税（元）">{detail.contract.taxExclusiveAmountFen != null ? fenToYuan(detail.contract.taxExclusiveAmountFen) : '-'}</Descriptions.Item>
-                      <Descriptions.Item label="开始日期">{detail.contract.startDate ?? '-'}</Descriptions.Item>
-                      <Descriptions.Item label="结束日期">{detail.contract.endDate ?? '-'}</Descriptions.Item>
+                      <Descriptions.Item label="开始日期"><span data-testid="contract-start-date">{formatYearMonth(detail.contract.startDate)}</span></Descriptions.Item>
+                      <Descriptions.Item label="结束日期"><span data-testid="contract-end-date">{formatYearMonth(detail.contract.endDate)}</span></Descriptions.Item>
                       <Descriptions.Item label="父合同">{detail.contract.parentContractId ?? '-'}</Descriptions.Item>
                       <Descriptions.Item label="版本号">{detail.contract.versionNo}</Descriptions.Item>
                     </Descriptions>

@@ -43,7 +43,7 @@ export default function BizLogin() {
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="密码" autoComplete="current-password" />
           </Form.Item>
-          <Button type="primary" htmlType="submit" block loading={loading}>登 录</Button>
+          <Button data-testid="biz-login-submit" type="primary" htmlType="submit" block loading={loading}>登 录</Button>
         </Form>
       </Card>
     </div>

@@ -13,6 +13,13 @@ function fenToYuan(fen: number): string {
   return (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function analysisRowKey(row: Record<string, unknown>): string {
+  return [row.type, row.month, row.dimension, row.contractId, row.cityId, row.detail]
+    .filter((value) => value != null && value !== '')
+    .map(String)
+    .join(':');
+}
+
 /** 显示层月份统一 yyyy年mm月（数据库/接口保留 YYYY-MM） */
 export function formatMonth(v: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? ''));
@@ -42,7 +49,7 @@ export default function BizAnalysis() {
     setOverview(ov);
     setTrend(tr.items);
     setContractAlerts(al.items);
-    const cityRows = filterCity ? ct.items.filter((r: Record<string, unknown>) => r.cityId === filterCity) : ct.items;
+    const cityRows = filterCity ? ct.items.filter((r: Record<string, unknown>) => String(r.cityId) === filterCity) : ct.items;
     setCities(cityRows);
     setOverruns(or.items);
     setCityOptions(ct.items.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
@@ -97,22 +104,22 @@ export default function BizAnalysis() {
 
   return (
     <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
           <Title level={4} style={{ margin: 0 }}>经营分析</Title>
           <Text type="secondary">汇总口径：订单+线下完工-作废 · 利润 = 毛利 - 成本</Text>
         </div>
-        <Space wrap>
-          <Select
+        <Space wrap style={{ flex: '1 1 720px', maxWidth: '100%', justifyContent: 'flex-end' }}>
+          <Select data-testid="analysis-month-filter"
             allowClear placeholder="月份筛选（经营金额）" style={{ width: 170 }} options={monthOptions}
             value={filterMonth} onChange={(v) => setFilterMonth(v ?? undefined)}
           />
-          <Select
+          <Select data-testid="analysis-city-filter"
             allowClear placeholder="地市筛选" style={{ width: 170 }} options={cityOptions}
             value={filterCity} onChange={(v) => setFilterCity(v ?? undefined)}
           />
-          {(filterMonth || filterCity) && <Button onClick={() => { setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
-          <Button icon={<DownloadOutlined />} onClick={onExport}>导出当前视图</Button>
+          {(filterMonth || filterCity) && <Button data-testid="analysis-clear-filter" onClick={() => { setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
+          <Button data-testid="analysis-export" icon={<DownloadOutlined />} onClick={onExport}>导出当前视图</Button>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button onClick={onCheck}>一致性核对</Button>
           <Button danger onClick={onRecalc}>全库重算</Button>
@@ -179,7 +186,7 @@ export default function BizAnalysis() {
       {checkResult && checkResult.warningCount > 0 && (
         <Card size="small" title={`一致性警告（${checkResult.warningCount} 条，仅告警不自动改写）`} style={{ marginBottom: 16 }}>
           <Table scroll={{ x: "max-content" }} 
-            size="small" rowKey={(r, i) => String(i)} pagination={false} dataSource={checkResult.warnings.slice(0, 20)}
+            size="small" rowKey={analysisRowKey} pagination={false} dataSource={checkResult.warnings.slice(0, 20)}
             columns={[
               { title: '类型', dataIndex: 'type', key: 'type' },
               { title: '月份', dataIndex: 'month', key: 'month', render: (v: string) => formatMonth(v) },
@@ -207,6 +214,7 @@ export default function BizAnalysis() {
         </Col>
         <Col xs={24} lg={6}>
           <Card title="地市对比" size="small" style={{ marginBottom: 16 }}>
+            <div data-testid="analysis-city-table">
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
@@ -224,12 +232,13 @@ export default function BizAnalysis() {
                   } },
               ]}
             />
+            </div>
           </Card>
         </Col>
         <Col xs={24} lg={8}>
           <Card title="超额清单" size="small">
             <Table scroll={{ x: "max-content" }} 
-              size="small" rowKey={(r, i) => String(i)} pagination={false} dataSource={overruns}
+              size="small" rowKey={analysisRowKey} pagination={false} dataSource={overruns}
               columns={[
                 { title: '类型', dataIndex: 'type', key: 'type', render: (v: string) => v === 'contract' ? <Tag color="red">合同超额</Tag> : <Tag color="orange">地市超额</Tag> },
                 { title: '合同/地市', dataIndex: 'contractNo', key: 'no', render: (_: unknown, r: Record<string, unknown>) => String(r.contractNo ?? (r.cityId ? String(r.cityId).slice(0, 8) : '-')) },

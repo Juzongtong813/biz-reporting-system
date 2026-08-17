@@ -69,7 +69,7 @@ try {
 }
 
 // 4. 关键测试套件（引用执行）
-const suites = ['test:unit', 'test:architecture', 'test:migrations:ledger', 'test:m2-rbac-auth', 'test:m3-contracts', 'test:m5-offcost', 'test:m6-aggregates', 'test:m7-views', 'test:auth-v3', 'test:exports-v3', 'test:metric-sources', 'test:storage-gate'];
+const suites = ['typecheck', 'build', 'test:m7-views', 'test:m12-interaction', 'test:unit', 'test:architecture', 'test:migrations:ledger', 'test:m2-rbac-auth', 'test:m3-contracts', 'test:m4-orders', 'test:m5-offcost', 'test:m6-aggregates', 'test:m8-security', 'test:m9-negative', 'test:m10-negative', 'test:m11-business', 'test:auth-v3', 'test:exports-v3', 'test:metric-sources', 'test:storage-gate'];
 for (const s of suites) {
   const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf-8'));
   if (pkg.scripts?.[s]) {
