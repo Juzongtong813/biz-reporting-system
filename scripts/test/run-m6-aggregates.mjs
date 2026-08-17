@@ -319,9 +319,11 @@ try {
   res = await api('GET', `/biz/contracts/${contractId}`, { token: adminToken });
   assert.ok(res.data.finance, 'DEV-053 contract detail has finance');
   // 此时订单：AGG-ORD-1/2 批次已作废退出，仅剩 AGG-ORD-3（110 万，毛利 13.2 万）
-  assert.equal(res.data.finance.costFen, 30_000_00, 'DEV-053 cost 30000');
+  // 成本不关联合同：按分配地市汇总为参考值（referenceCostFen），一市多合同会重复计入，不用于净利润口径
+  assert.equal(res.data.finance.isReference, true, 'DEV-053 finance is reference (cost not contract-bound)');
+  assert.equal(res.data.finance.referenceCostFen, 30_000_00, 'DEV-053 reference cost 30000');
   assert.equal(res.data.finance.grossProfitFen, 132_000_00, 'DEV-053 gross 132000 (110w x 12%)');
-  assert.equal(res.data.finance.netProfitFen, 102_000_00, 'DEV-053 net 132000-30000=102000');
+  assert.equal(res.data.finance.referenceNetProfitFen, 102_000_00, 'DEV-053 reference net 132000-30000=102000');
 
   console.log('M6_AGG_OK AGG-001..008 + REC-001..003 + CNS-001..003 all passed + DEV-055 settings + DEV-053 contract finance');
 } finally {

@@ -16,7 +16,7 @@ function fenToYuan(fen: number): string {
 /** 经营分析（新基线 M6）：概览/趋势/地市对比/超额清单 + 汇总重算与一致性核对 */
 export default function BizAnalysis() {
   const navigate = useNavigate();
-  const [overview, setOverview] = useState<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number } | null>(null);
+  const [overview, setOverview] = useState<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number; contractCount: number; totalContractAmountFen: number; totalCompletionFen: number } | null>(null);
   const [trend, setTrend] = useState<Array<Record<string, unknown>>>([]);
   const [cities, setCities] = useState<Array<Record<string, unknown>>>([]);
   const [overruns, setOverruns] = useState<Array<Record<string, unknown>>>([]);
@@ -27,16 +27,17 @@ export default function BizAnalysis() {
   const [monthOptions, setMonthOptions] = useState<Array<{ label: string; value: string }>>([]);
 
   const load = useCallback(async () => {
+    const params = { month: filterMonth, cityId: filterCity };
     const [ov, tr, ct, or] = await Promise.all([
-      bizAnalysisOverview(filterMonth ? { month: filterMonth } : undefined),
-      bizAnalysisTrend(), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(),
+      bizAnalysisOverview(params),
+      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(),
     ]);
     setOverview(ov);
     setTrend(tr.items);
     const cityRows = filterCity ? ct.items.filter((r) => r.cityId === filterCity) : ct.items;
     setCities(cityRows);
     setOverruns(or.items);
-    setCityOptions(ct.items.map((r) => ({ label: String(r.cityId ?? '').slice(0, 8), value: String(r.cityId) })));
+    setCityOptions(ct.items.map((r) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
     setMonthOptions(tr.items.map((r) => ({ label: String(r.month), value: String(r.month) })));
   }, [filterMonth, filterCity]);
 
@@ -101,6 +102,24 @@ export default function BizAnalysis() {
       </div>
 
       <Row gutter={12} style={{ marginBottom: 16 }}>
+        <Col xs={24} sm={12} lg={4}>
+          <Card size="small">
+            <div style={{ color: '#68737B', fontSize: 12 }}>合同数量</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#2878b8' }}>{overview?.contractCount ?? 0}</div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={4}>
+          <Card size="small">
+            <div style={{ color: '#68737B', fontSize: 12 }}>总合同额（元）</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#2878b8' }}>{fenToYuan(overview?.totalContractAmountFen ?? 0)}</div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} lg={4}>
+          <Card size="small">
+            <div style={{ color: '#68737B', fontSize: 12 }}>总完工（元）</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#0F766E' }}>{fenToYuan(overview?.totalCompletionFen ?? 0)}</div>
+          </Card>
+        </Col>
         {cards.map((c) => (
           <Col xs={24} sm={12} lg={4} key={c.label}>
             <Card size="small">
@@ -166,7 +185,7 @@ export default function BizAnalysis() {
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
-                { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => v?.slice(0, 8) ?? '-' },
+                { title: '地市', dataIndex: 'cityName', key: 'cityName', render: (_: unknown, r: Record<string, unknown>) => String(r.cityName ?? r.cityId ?? '-').slice(0, 12) },
                 { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '线下完工（元）', dataIndex: 'offlineCompletionFen', key: 'of', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '毛利（元）', dataIndex: 'grossProfitFen', key: 'gp', render: (v: number) => fenToYuan(Number(v)) },

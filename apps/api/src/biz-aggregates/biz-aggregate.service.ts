@@ -112,7 +112,24 @@ export class BizAggregateService {
   private async recalcRange(auth: BizAuthContext, scope: RecalcScope): Promise<{ affected: number; failures: number }> {
     if (scope.cityId) await this.rbac.assertCityScope(auth, scope.cityId);
     if (scope.provinceId) await this.rbac.assertProvinceScope(auth, scope.provinceId);
+    if (scope.contractId) await this.assertContractInScope(auth, scope.contractId);
     return this.recalcRangeInternal(scope);
+  }
+
+  /** 合同范围校验（与合同详情可见性一致）：all/contract 放行；province 需合同省份在范围内；city 需有本地市分配 */
+  private async assertContractInScope(auth: BizAuthContext, contractId: string): Promise<void> {
+    const contract = await this.contractRepo.findOneBy({ id: contractId });
+    if (!contract) throw new NotFoundException('合同不存在');
+    const scope = auth.dataScope;
+    if (scope.scopeType === 'all' || scope.scopeType === 'contract') return;
+    if (scope.scopeType === 'city') {
+      const alloc = await this.allocRepo.findOneBy({ contractId, cityId: scope.cityId ?? '', status: 'active' });
+      if (!alloc) throw new ForbiddenException('数据范围不足');
+      return;
+    }
+    if (scope.scopeType === 'province' && scope.provinceIds.length > 0 && !scope.provinceIds.includes(contract.provinceId)) {
+      throw new ForbiddenException('数据范围不足');
+    }
   }
 
   /** 内部增量重算（由业务服务在明细变更后调用；调用方已完成权限校验） */
@@ -254,21 +271,40 @@ export class BizAggregateService {
     if (scope.month) qb.andWhere(`${alias}.businessMonth = :month`, { month: scope.month });
   }
 
-  async listFailures(): Promise<BizAggregateFailureEntity[]> {
-    return this.failureRepo.find({ order: { createdAt: 'DESC' }, take: 50 });
+  async listFailures(auth: BizAuthContext): Promise<BizAggregateFailureEntity[]> {
+    const all = await this.failureRepo.find({ order: { createdAt: 'DESC' }, take: 200 });
+    const scope = auth.dataScope;
+    const visible = all.filter((f) => {
+      if (scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
+      try {
+        const s = JSON.parse(f.scopeDesc ?? '{}') as RecalcScope;
+        if (s.contractId || s.cityId || s.provinceId) {
+          if (scope.scopeType === 'city') return s.cityId === scope.cityId || s.contractId != null;
+          if (scope.scopeType === 'province' && scope.provinceIds.length > 0) return s.provinceId ? scope.provinceIds.includes(s.provinceId) : true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    });
+    return visible.slice(0, 50);
   }
 
   // ================= 一致性核对（只告警不自动改写） =================
 
   async checkConsistency(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {
     const warnings: Array<Record<string, unknown>> = [];
-    // 逐月核对：汇总行 vs 明细聚合
-    const months = await this.aggRepo.createQueryBuilder('a').select('DISTINCT a.businessMonth', 'month').getRawMany();
+    // 逐月核对：汇总行 vs 明细聚合（按 auth 数据范围过滤可见维度）
+    const monthsQb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(monthsQb, auth);
+    const months = await monthsQb.select('DISTINCT a.businessMonth', 'month').getRawMany();
     const targetMonths = months.map((m) => m.month).sort();
     for (const month of targetMonths) {
       const scope = { month };
       const detailRows = await this.collectAggRows(scope);
-      const aggRows = await this.aggRepo.findBy({ businessMonth: month });
+      const aggQb = this.aggRepo.createQueryBuilder('a');
+      this.applyAggScope(aggQb, auth);
+      const aggRows = await aggQb.andWhere('a.businessMonth = :month', { month }).getMany();
       // 校验：利润 = 毛利 - 成本（科目平衡）
       for (const agg of aggRows) {
         const expectedNet = Number(agg.grossProfitFen) - Number(agg.costFen);
@@ -302,25 +338,40 @@ export class BizAggregateService {
     }
   }
 
-  async overview(auth: BizAuthContext, month?: string) {
+  async overview(auth: BizAuthContext, month?: string, cityId?: string) {
     const qb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(qb, auth);
+    if (cityId) qb.andWhere('a.cityId = :overviewCityId', { overviewCityId: cityId });
     if (month) qb.andWhere('a.businessMonth = :month', { month });
     const rows = await qb.getMany();
     const total = (field: string) => rows.reduce((s, r) => s + Number(r[field as keyof BizMonthlyAggregateEntity] ?? 0), 0);
+    // 核心指标：范围内合同数与合同总额（服务端组合筛选后）
+    const contractIds = new Set(rows.filter((r) => r.contractId).map((r) => r.contractId as string));
+    let totalContractAmountFen = 0;
+    if (contractIds.size > 0) {
+      const contracts = await this.contractRepo.createQueryBuilder('c')
+        .select('c.taxInclusiveAmountFen', 'amount')
+        .where('c.id IN (:...contractIds)', { contractIds: [...contractIds] })
+        .getRawMany();
+      totalContractAmountFen = contracts.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    }
     return {
       orderCompletionFen: total('orderCompletionFen'),
       offlineCompletionFen: total('offlineCompletionFen'),
       grossProfitFen: total('grossProfitFen'),
       costFen: total('costFen'),
       netProfitFen: total('netProfitFen'),
+      contractCount: contractIds.size,
+      totalContractAmountFen,
+      totalCompletionFen: total('orderCompletionFen') + total('offlineCompletionFen'),
       monthCount: new Set(rows.map((r) => r.businessMonth)).size,
     };
   }
 
-  async trend(auth: BizAuthContext, limit = 12) {
+  async trend(auth: BizAuthContext, limit = 12, cityId?: string) {
     const trendQb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(trendQb, auth);
+    if (cityId) trendQb.andWhere('a.cityId = :trendCityId', { trendCityId: cityId });
     const rows = await trendQb
       .select('a.businessMonth', 'month')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
@@ -340,11 +391,13 @@ export class BizAggregateService {
     this.applyAggScope(qb, auth);
     qb
       .select('a.cityId', 'cityId')
+      .addSelect('MAX(city.name)', 'cityName')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
       .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
       .addSelect('SUM(a.grossProfitFen)', 'grossProfitFen')
       .addSelect('SUM(a.costFen)', 'costFen')
       .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
+      .leftJoin('biz_cities', 'city', 'city.id = a.cityId')
       .groupBy('a.cityId');
     if (month) qb.andWhere('a.businessMonth = :month', { month });
     return qb.getRawMany();

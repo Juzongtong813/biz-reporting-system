@@ -28,8 +28,8 @@ export class BizAggregateController {
 
   @Get('aggregates/failures')
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
-  async failures() {
-    return { items: await this.service.listFailures() };
+  async failures(@BizAuthUser() auth: BizAuthContext) {
+    return { items: await this.service.listFailures(auth) };
   }
 
   // ---- 一致性核对（只告警） ----
@@ -43,14 +43,14 @@ export class BizAggregateController {
   // ---- 分析聚合 ----
   @Get('analysis/overview')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async overview(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string) {
-    return this.service.overview(auth, month);
+  async overview(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string, @Query('cityId') cityId?: string) {
+    return this.service.overview(auth, month, cityId);
   }
 
   @Get('analysis/trend')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async trend(@BizAuthUser() auth: BizAuthContext, @Query('limit') limit?: string) {
-    return { items: await this.service.trend(auth, Number(limit) || 12) };
+  async trend(@BizAuthUser() auth: BizAuthContext, @Query('limit') limit?: string, @Query('cityId') cityId?: string) {
+    return { items: await this.service.trend(auth, Number(limit) || 12, cityId) };
   }
 
   @Get('analysis/by-city')

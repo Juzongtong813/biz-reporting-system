@@ -109,3 +109,31 @@ M8 完成后进入发布候选需同时满足：
 - 016_biz_offline_rate_snapshot（完工费率快照+毛利）
 - 017_biz_order_batch_scope（批次上传范围快照）
 - 账本 18 条（001-017 含 002 双文件）；001-014 不可变，015-017 追加
+
+
+---
+
+## 治理返工验收（2026-08-17，da3e298 复核不通过后的二次返工）
+
+### 复核结论
+治理负责人复核 da3e298：不批准重启发布候选评审，判定"部分修复通过，需再次返工"（P0×3 + P1×4）。发布候选评审保持冻结。
+
+### 返工修复（全部完成并验证）
+**P0**
+1. 完工/成本 approve/reject/void/restore 补齐 `assertCityAccess`（目标记录 cityId 范围校验，8 个方法）。
+2. 合同详情 `assertContractVisible` 支持 admin province/city 范围（city 需本地市分配、province 需合同省份在范围内）。
+3. 合同级重算 `assertContractInScope`（与详情可见性一致）；失败列表 `listFailures(auth)` 按范围过滤；一致性检查 `checkConsistency` 按范围过滤可见维度。
+
+**P1**
+4. 经营首页：概览增加核心指标（合同数量/总合同额/总完工）；**服务端组合筛选**（overview/trend 支持 cityId，前端筛选不再本地过滤）；地市表显示地市名称（byCity join city 字典）；BizPortal 首页加经营概览摘要（真实首页入口）；超额提醒条保留。
+5. CSV 导出转义：金额千分位逗号 → 引号包裹（escapeCsv）。
+6. 合同成本归属明确：**成本不关联合同**，合同详情 finance 改参考值语义（`referenceCostFen`/`referenceNetProfitFen`/`isReference:true`），标注"所分配地市成本参考值"，不称净利润。
+7. 批次详情范围统计收敛：非上传者且范围受限时只返回可见城市行数（`rowCountScoped:true`）、错误列表置空（不泄露范围外错误/总数）。
+
+**M10 负向测试**（test:m10-negative，SQLite+MySQL 均过）：跨范围 approve/reject/void/restore 403、合同详情跨范围 403、合同级重算跨范围 403、批次统计收敛、服务端组合筛选。
+
+### 二次验证结果
+- SQLite：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9/M10 全套通过
+- MySQL：集成 7/7（含 m9/m10）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
+- preflight PASS（含 gate env，BLK-1 resolved）
+- 发布候选评审仍冻结，待治理负责人复核本返工

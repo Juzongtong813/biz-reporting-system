@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Empty, Result, Spin, Typography } from 'antd';
+import { Button, Card, Empty, Result, Space, Spin, Typography } from 'antd';
 import { ApartmentOutlined, ToolOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { bizMe, bizPortalModules, type BizModuleItem } from '@/api/biz.api';
+import { bizMe, bizPortalModules, bizAnalysisOverview, type BizModuleItem } from '@/api/biz.api';
 import { clearBizToken } from '@/utils/biz-auth';
 
 const { Title, Text } = Typography;
@@ -19,6 +19,7 @@ export default function BizPortal() {
   const [modules, setModules] = useState<BizModuleItem[]>([]);
   const [userName, setUserName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [overview, setOverview] = useState<{ contractCount: number; totalContractAmountFen: number; totalCompletionFen: number; netProfitFen: number } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -26,6 +27,7 @@ export default function BizPortal() {
         const [me, data] = await Promise.all([bizMe(), bizPortalModules()]);
         setUserName(me.username);
         setModules(data.level1);
+        void bizAnalysisOverview().then(setOverview).catch(() => {});
         setLoading(false);
       } catch {
         setError('登录已失效，请重新登录');
@@ -48,6 +50,15 @@ export default function BizPortal() {
         </div>
         <Button onClick={() => { clearBizToken(); navigate('/biz/login'); }}>退出登录</Button>
       </div>
+      {overview && (
+        <Card size="small" style={{ marginBottom: 16, maxWidth: 760 }}>
+          <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Text strong>经营概览</Text>
+            <Text>合同 {overview.contractCount} 个 · 合同额 {(overview.totalContractAmountFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元 · 总完工 {(overview.totalCompletionFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元 · 净利 {(overview.netProfitFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元</Text>
+            <Button size="small" type="link" onClick={() => navigate('/biz/analysis')}>进入经营分析 →</Button>
+          </Space>
+        </Card>
+      )}
       {modules.length === 0 ? (
         <Empty description="当前账号无任何一级模块权限" />
       ) : (

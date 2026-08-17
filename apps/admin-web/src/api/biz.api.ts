@@ -298,12 +298,12 @@ export function bizCostRestore(id: string): Promise<Record<string, unknown>> {
 
 // ================= 汇总/分析/设置（M6） =================
 
-export function bizAnalysisOverview(params?: { month?: string }): Promise<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number }> {
+export function bizAnalysisOverview(params?: { month?: string; cityId?: string }): Promise<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number; contractCount: number; totalContractAmountFen: number; totalCompletionFen: number }> {
   return request.get('/biz/analysis/overview', { params }).then((r) => r.data);
 }
 
-export function bizAnalysisTrend(limit = 12): Promise<{ items: Array<Record<string, unknown>> }> {
-  return request.get('/biz/analysis/trend', { params: { limit } }).then((r) => r.data);
+export function bizAnalysisTrend(limit = 12, cityId?: string): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/trend', { params: cityId ? { limit, cityId } : { limit } }).then((r) => r.data);
 }
 
 export function bizAnalysisByCity(month?: string): Promise<{ items: Array<Record<string, unknown>> }> {

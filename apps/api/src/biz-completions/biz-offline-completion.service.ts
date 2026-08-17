@@ -220,6 +220,7 @@ export class BizOfflineCompletionService {
   /** 审核通过：重新校验合同状态与分配；乐观锁防并发 */
   async approve(auth: BizAuthContext, id: string): Promise<BizOfflineCompletionEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== OfflineCompletionStatus.PENDING) throw new BadRequestException('仅已提交记录可审核');
     await this.assertSubmissionRules({
       contractId: item.contractId, cityId: item.cityId, businessMonth: item.businessMonth,
@@ -245,6 +246,7 @@ export class BizOfflineCompletionService {
   /** 驳回：原因必填；退回草稿可修改重新提交 */
   async reject(auth: BizAuthContext, id: string, comment: string): Promise<BizOfflineCompletionEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== OfflineCompletionStatus.PENDING) throw new BadRequestException('仅已提交记录可驳回');
     if (!comment?.trim()) throw new BadRequestException('驳回原因必填');
     item.status = OfflineCompletionStatus.REJECTED;
@@ -261,6 +263,7 @@ export class BizOfflineCompletionService {
   /** 已通过记录作废：仅授权（approve 权限）可操作；原因必填；退出统计 */
   async voidItem(auth: BizAuthContext, id: string, reason: string): Promise<BizOfflineCompletionEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== OfflineCompletionStatus.APPROVED) throw new BadRequestException('仅已审核通过的记录可作废');
     if (!reason?.trim()) throw new BadRequestException('作废原因必填');
     item.status = OfflineCompletionStatus.VOIDED;
@@ -276,6 +279,7 @@ export class BizOfflineCompletionService {
   /** 恢复已作废记录：仅授权（approve 权限）可操作 */
   async restoreItem(auth: BizAuthContext, id: string): Promise<BizOfflineCompletionEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== OfflineCompletionStatus.VOIDED) throw new BadRequestException('仅已作废记录可恢复');
     item.status = OfflineCompletionStatus.APPROVED;
     item.voidedBy = null;

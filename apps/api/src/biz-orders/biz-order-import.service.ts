@@ -483,6 +483,17 @@ export class BizOrderImportService {
     }
     const errors = await this.errorRepo.findBy({ batchId: id });
     const rowCount = await this.rowRepo.countBy({ batchId: id });
+    // 范围收敛：非上传者且数据范围受限时，只返回可见城市行数，不返回范围外错误/数量（防止混合批次统计泄露）
+    if (!isUploader && auth.dataScope.scopeType !== 'all' && auth.dataScope.scopeType !== 'contract') {
+      const cityIds = await this.visibleCityIds(auth);
+      const visibleRows = cityIds
+        ? await this.rowRepo.createQueryBuilder('r')
+            .where('r.batch_id = :batchId', { batchId: id })
+            .andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds })
+            .getCount()
+        : rowCount;
+      return { batch: { ...batch, totalRows: visibleRows, importedRows: visibleRows, rowCountScoped: true } as BizOrderImportBatchEntity, errors: [], rowCount: visibleRows };
+    }
     return { batch, errors, rowCount };
   }
 

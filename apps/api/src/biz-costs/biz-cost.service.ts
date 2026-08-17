@@ -180,6 +180,7 @@ export class BizCostService {
 
   async approve(auth: BizAuthContext, id: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== CostStatus.PENDING) throw new BadRequestException('仅已提交记录可审核');
     item.status = CostStatus.APPROVED;
     item.reviewerId = auth.userId;
@@ -200,6 +201,7 @@ export class BizCostService {
 
   async reject(auth: BizAuthContext, id: string, comment: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== CostStatus.PENDING) throw new BadRequestException('仅已提交记录可驳回');
     if (!comment?.trim()) throw new BadRequestException('驳回原因必填');
     item.status = CostStatus.REJECTED;
@@ -213,6 +215,7 @@ export class BizCostService {
 
   async voidItem(auth: BizAuthContext, id: string, reason: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== CostStatus.APPROVED) throw new BadRequestException('仅已审核通过的记录可作废');
     if (!reason?.trim()) throw new BadRequestException('作废原因必填');
     item.status = CostStatus.VOIDED;
@@ -227,6 +230,7 @@ export class BizCostService {
 
   async restoreItem(auth: BizAuthContext, id: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
+    await this.assertCityAccess(auth, item.cityId);
     if (item.status !== CostStatus.VOIDED) throw new BadRequestException('仅已作废记录可恢复');
     item.status = CostStatus.APPROVED;
     item.voidedBy = null;

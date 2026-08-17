@@ -51,7 +51,8 @@
     "test:m7-views": "node scripts/test/m7-views.mjs",
     "test:m8-security": "node scripts/test/run-m8-security.mjs",
     "release:preflight": "node scripts/release/preflight.mjs",
-    "test:m9-negative": "node scripts/test/run-m9-negative.mjs"
+    "test:m9-negative": "node scripts/test/run-m9-negative.mjs",
+    "test:m10-negative": "node scripts/test/run-m10-negative.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

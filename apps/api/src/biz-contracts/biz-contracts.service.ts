@@ -107,11 +107,17 @@ export class BizContractsService {
     return contract;
   }
 
-  /** 地市用户可见性：仅已分配给绑定地市的合同 */
-  private async assertContractVisible(auth: BizAuthContext, contractId: string): Promise<void> {
-    if (auth.roleCode === PlatformRole.CITY_USER) {
-      const alloc = await this.allocationRepo.findOneBy({ contractId, cityId: auth.dataScope.cityId ?? '', status: 'active' });
+  /** 合同可见性：all/contract 放行；city 需已分配绑定地市；province 需合同省份在范围内 */
+  private async assertContractVisible(auth: BizAuthContext, contract: BizContractEntity): Promise<void> {
+    const scope = auth.dataScope;
+    if (scope.scopeType === 'all' || scope.scopeType === 'contract') return;
+    if (scope.scopeType === 'city') {
+      const alloc = await this.allocationRepo.findOneBy({ contractId: contract.id, cityId: scope.cityId ?? '', status: 'active' });
       if (!alloc) throw new ForbiddenException('数据范围不足');
+      return;
+    }
+    if (scope.scopeType === 'province' && scope.provinceIds.length > 0 && !scope.provinceIds.includes(contract.provinceId)) {
+      throw new ForbiddenException('数据范围不足');
     }
   }
 
@@ -149,7 +155,7 @@ export class BizContractsService {
   /** 详情聚合（基础/分配/费率/进度/预警/来源汇总） */
   async detail(auth: BizAuthContext, id: string) {
     const contract = await this.getContractOrFail(id);
-    await this.assertContractVisible(auth, id);
+    await this.assertContractVisible(auth, contract);
 
     const allocations = await this.allocationRepo.findBy({ contractId: id });
     const feeRates = await this.feeRateRepo.findBy({ contractId: id });
@@ -440,8 +446,8 @@ export class BizContractsService {
 
   // ================= 预警 =================
 
-  /** 合同维度成本/净利（M6：成本按分配地市汇总，不关联合同） */
-  private async financeForContract(contract: BizContractEntity): Promise<{ costFen: number; grossProfitFen: number; netProfitFen: number }> {
+  /** 合同维度财务参考（成本不关联合同：按分配地市汇总为【参考值】，一市多合同会重复计入，不用于净利润口径） */
+  private async financeForContract(contract: BizContractEntity): Promise<{ referenceCostFen: number; grossProfitFen: number; referenceNetProfitFen: number; isReference: boolean }> {
     const allocations = await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' });
     const cityIds = allocations.map((a) => a.cityId);
     let costFen = 0;
@@ -457,7 +463,7 @@ export class BizContractsService {
     const offlines = await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' });
     const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0)
       + offlines.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);
-    return { costFen, grossProfitFen, netProfitFen: grossProfitFen - costFen };
+    return { referenceCostFen: costFen, grossProfitFen, referenceNetProfitFen: grossProfitFen - costFen, isReference: true };
   }
 
   /** 生成/更新合同预警（nearly_full / overfull / expiring / expired；到期阈值来自系统设置） */
