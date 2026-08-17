@@ -2,9 +2,15 @@
 
 NestJS + TypeORM + React 18 + Ant Design 5 的经营数据汇聚、治理、合同、事实数据和分析平台。
 
+## 2026-08-17 发布基线
+
+治理已批准在现有 CloudBase 环境 `zy-data-d2g9g1ghr47ac6254` 内采用隔离发布：生产 schema 为 `biz_reporting_prod`，API 服务为 `biz-reporting-api-prod`，旧主库 `zy-data-d2g9g1ghr47ac6254` 保留只读回退用途。三个历史 staging schema 已按授权删除。生产部署不得使用旧服务、旧 schema 或旧凭据。
+
 ## 当前状态
 
-`RBAC_AND_FEATURES_IMPLEMENTED_NOT_DEPLOYABLE`
+`ISOLATED_PRODUCTION_DEPLOYMENT_IN_PROGRESS`
+
+See [current deployment status](docs/current-deployment-status.md) for the active production resources, the temporary upload lifecycle decision, and the remaining release conditions.
 
 代码和隔离 SQLite 自动化已覆盖四角色 RBAC、账号安全、临时密码、微信邀请、页面导出、用户设置及事实口径声明。但以下门禁尚未关闭：
 
@@ -14,7 +20,7 @@ NestJS + TypeORM + React 18 + Ant Design 5 的经营数据汇聚、治理、合�
 - 旧报表包与 V3 事实模型的最终退出迁移
 - Admin Facts 完整多地市查询闭环
 
-不得连接或修改 `zy-data`、公网 `biz-reporting-api-v3-staging`、默认 schema、共享开发库或任何生产资源。
+上面的不可部署说明属于历史基线；当前生产变更必须严格使用本节指定的隔离 schema、服务名和独立凭据，并保留旧主库作为回退资源。
 
 ## 工作区
 

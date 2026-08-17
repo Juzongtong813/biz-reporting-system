@@ -1,22 +1,11 @@
-import { Module, NestModule, MiddlewareConsumer, Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-
-/** MySQL 下 TypeORM 连接初始化需要 typeorm_metadata 内部表（业务迁移不含此表，启动时幂等创建） */
-@Injectable()
-class TypeOrmMetadataBootstrap implements OnModuleInit {
-  constructor(@Inject(DataSource) private readonly dataSource: DataSource) {}
-  async onModuleInit(): Promise<void> {
-    if (this.dataSource.options.type !== 'mysql') return;
-    await this.dataSource.query('CREATE TABLE IF NOT EXISTS `typeorm_metadata` (\n  `type` varchar(64) NOT NULL,\n  `database` varchar(255) NOT NULL DEFAULT \'\',\n  `schema` varchar(255) NOT NULL DEFAULT \'\',\n  `table` varchar(255) NOT NULL DEFAULT \'\',\n  `name` varchar(255) NOT NULL DEFAULT \'\',\n  `value` text,\n  PRIMARY KEY (`type`,`database`,`schema`,`table`,`name`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-  }
-}
 
 // 核心业务模块
 import { AuthModule } from './auth/auth.module';
@@ -141,7 +130,6 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
   ],
   controllers: [AppController],
   providers: [
-    TypeOrmMetadataBootstrap,
     AppService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

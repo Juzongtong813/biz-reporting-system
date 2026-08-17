@@ -39,13 +39,10 @@ RUN pnpm deploy --filter=@biz-reporting/api /app/deploy
 
 FROM node:20-alpine AS runner
 
-# E-06：非 root 运行（UID/GID 10001），持久挂载点挂载前兜底可写
-RUN addgroup -g 10001 app && adduser -u 10001 -G app -S app \
-    && mkdir -p /mnt/fact-source-files && chown 10001:10001 /mnt/fact-source-files
+# E-06：非 root 运行（UID/GID 10001）；上传解析使用容器临时目录并在任务结束后删除。
+RUN addgroup -g 10001 app && adduser -u 10001 -G app -S app
 
 WORKDIR /app
-ENV FACT_SOURCE_STORAGE_ROOT=/mnt/fact-source-files
-LABEL com.biz-reporting.required-persistent-mount="/mnt/fact-source-files"
 COPY --from=builder --chown=10001:10001 /app/deploy ./
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

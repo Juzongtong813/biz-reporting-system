@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import Module from 'node:module';
@@ -18,16 +19,18 @@ try {
   const tsc = path.join(repoRoot, 'node_modules', '.pnpm', 'typescript@5.6.3', 'node_modules', 'typescript', 'bin', 'tsc');
   execFileSync(process.execPath, [tsc, '-p', path.join(apiRoot, 'tsconfig.v3-check.json'), '--noEmit', 'false', '--declaration', 'false', '--outDir', compiledRoot, '--pretty', 'false'], { cwd: repoRoot, stdio: 'inherit' });
   const runtime = await import(pathToFileURL(path.join(compiledRoot, 'apps', 'api', 'src', 'runtime.config.js')));
+  const jwtSecret = randomBytes(48).toString('base64url');
+  const authSecurityHmacKey = randomBytes(48).toString('base64url');
   const valid = {
     NODE_ENV: 'production', DEPLOY_ENV: 'staging', DB_TYPE: 'mysql', DB_HOST: 'mysql.internal', DB_PORT: '3306',
     DB_USERNAME: 'biz_runtime', DB_PASSWORD: 'managed-secret', DB_DATABASE: 'biz_v3', DB_SYNC: 'false',
-    JWT_SECRET: 'a-long-test-only-secret-value', AUTH_SECURITY_HMAC_KEY: 'a-distinct-hmac-test-key',
+    JWT_SECRET: jwtSecret, AUTH_SECURITY_HMAC_KEY: authSecurityHmacKey,
     JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
     TRUST_PROXY_HOPS: '1',
     AUTH_RATE_LIMIT_WINDOW_MS: '60000', AUTH_RATE_LIMIT_IP_MAX: '5',
     AUTH_ACCOUNT_WINDOW_MS: '900000', AUTH_ACCOUNT_MAX_FAILURES: '5', AUTH_ACCOUNT_BLOCK_MS: '900000',
     READINESS_CACHE_MS: '5000', READINESS_TIMEOUT_MS: '2000',
-    FACT_SOURCE_STORAGE_ROOT: '/mnt/fact-source-files', CORS_ORIGINS: 'https://staging.example.com',
+    CORS_ORIGINS: 'https://staging.example.com',
   };
   runtime.validateRuntimeEnvironment(valid);
   for (const [key, value, expected] of [
@@ -64,6 +67,7 @@ try {
     ['READINESS_CACHE_MS', '0', /READINESS_CACHE_MS_INVALID/],
     ['READINESS_TIMEOUT_MS', '0', /READINESS_TIMEOUT_MS_INVALID/],
     ['READINESS_TIMEOUT_MS', '60001', /READINESS_TIMEOUT_MS_INVALID/],
+    ['FACT_SOURCE_STORAGE_ROOT', 'relative/files', /FACT_SOURCE_STORAGE_ROOT_MUST_BE_ABSOLUTE/],
   ]) assert.throws(() => runtime.validateRuntimeEnvironment({ ...valid, [key]: value }), expected);
   console.log('PRODUCTION_RUNTIME_CONFIG_GATE_OK');
 } finally {

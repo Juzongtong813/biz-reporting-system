@@ -1,5 +1,7 @@
 # 旧 Base64 文件迁移 Runbook（D-06）
 
+> 退役说明（2026-08-17）：本文仅用于旧 `import_jobs` 源文件迁移，不是新经营管理模块的上线前置条件。
+
 **适用**：biz-reporting-system 治理批次 PG-20260802 D-06
 **工具**：`scripts/oneoff/migrate-import-job-files.mjs`
 **目标**：将 `import_jobs.source_file_base64` 存量数据迁移到内容寻址持久存储（`<storage_root>/<sha256 前两位>/<sha256>`），回填 `source_file_storage_key / source_file_sha256 / source_file_size / source_file_stored_at`。

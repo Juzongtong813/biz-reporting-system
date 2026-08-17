@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { access, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { assertProductionFactSourceStorage, resolveFactSourceStorageRoot } from './fact-source-storage.config';
+import { assertFactSourceStorageConfig, resolveFactSourceStorageRoot } from './fact-source-storage.config';
 
 export interface StoredFactSourceFile {
   storageKey: string;
@@ -16,10 +16,7 @@ export class FactSourceFileStorageService implements OnModuleInit {
   private readonly root = resolveFactSourceStorageRoot(process.env, __dirname);
 
   async onModuleInit(): Promise<void> {
-    const mountInfo = process.platform === 'linux' && process.env.NODE_ENV === 'production'
-      ? await readFile('/proc/self/mountinfo', 'utf8').catch(() => '')
-      : undefined;
-    assertProductionFactSourceStorage(process.env, process.platform, mountInfo);
+    assertFactSourceStorageConfig(process.env, process.platform);
     await mkdir(this.root, { recursive: true });
     // E-02：模块初始化执行一次写探针（可写性），后续 ready 只读
     await this.assertWritable();

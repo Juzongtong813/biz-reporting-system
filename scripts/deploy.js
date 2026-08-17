@@ -1,25 +1,58 @@
-const { spawn } = require('child_process');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
-const proc = spawn('tcb', [
+const repoRoot = path.resolve(__dirname, '..');
+const expectedEnvId = 'zy-data-d2g9g1ghr47ac6254';
+const serviceName = 'biz-reporting-api-prod';
+const envId = process.env.TCB_ENV_ID || '';
+
+if (envId !== expectedEnvId) {
+  console.error(`DEPLOY_ENV_ID_MISMATCH expected=${expectedEnvId} received=${envId || '<missing>'}`);
+  process.exit(2);
+}
+
+const configPaths = [
+  path.join(repoRoot, 'cloudbaserc.json'),
+  path.join(repoRoot, 'apps', 'api', 'cloudbaserc.json'),
+];
+for (const configPath of configPaths) {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  if (config.envId !== expectedEnvId || config.cloudrun?.name !== serviceName) {
+    console.error(`DEPLOY_CONFIG_MISMATCH path=${configPath}`);
+    process.exit(2);
+  }
+}
+
+for (const script of ['governance:gates', 'release:integrity:gate']) {
+  const gate = spawnSync('pnpm', [script], {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
+  if (gate.status !== 0) {
+    console.error(`DEPLOY_GATE_FAILED script=${script}`);
+    process.exit(gate.status ?? 1);
+  }
+}
+
+const result = spawnSync('tcb', [
   'cloudrun', 'deploy',
-  '-s', 'biz-reporting-api',
-  '--source', 'E:\\code2\\biz-reporting-system-fix',
+  '--serviceName', serviceName,
+  '--source', repoRoot,
   '--port', '3000',
-  '--force',
+  '--traffic',
   '--json',
 ], {
-  stdio: ['pipe', 'inherit', 'inherit'],
-  cwd: 'E:\\code2\\biz-reporting-system-fix',
+  cwd: repoRoot,
+  env: { ...process.env, TCB_ENV_ID: expectedEnvId },
+  stdio: 'inherit',
+  shell: false,
 });
 
-setTimeout(() => {
-  // Answer "No" for gray deployment
-  proc.stdin.write('\x1b[B\r');  // Down arrow then Enter (selects "No")
-  setTimeout(() => {
-    proc.stdin.write('\x1b[B\r');  // Same for "No"  
-    setTimeout(() => {
-      // If asked about cancelling existing deployments, answer Y
-      proc.stdin.write('Y\n');
-    }, 2000);
-  }, 2000);
-}, 5000);
+if (result.error) {
+  console.error(`DEPLOY_EXEC_ERROR ${result.error.message}`);
+  process.exit(1);
+}
+process.exit(result.status ?? 1);

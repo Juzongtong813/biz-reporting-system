@@ -24,8 +24,9 @@ export function validateRuntimeEnvironment(
   validateOptionalInteger(config.DB_POOL_QUEUE_LIMIT, 'DB_POOL_QUEUE_LIMIT_INVALID', 0, 10000);
 
   if (normalize(config.DB_SYNC) !== 'false') fail('DB_SYNC_MUST_BE_FALSE');
-  if (normalize(config.FACT_SOURCE_STORAGE_ROOT) !== '/mnt/fact-source-files') {
-    fail('FACT_SOURCE_STORAGE_ROOT_INVALID');
+  const factSourceStorageRoot = normalize(config.FACT_SOURCE_STORAGE_ROOT);
+  if (factSourceStorageRoot && !factSourceStorageRoot.startsWith('/')) {
+    fail('FACT_SOURCE_STORAGE_ROOT_MUST_BE_ABSOLUTE');
   }
 
   const origins = required(config.CORS_ORIGINS, 'CORS_ORIGINS_REQUIRED')

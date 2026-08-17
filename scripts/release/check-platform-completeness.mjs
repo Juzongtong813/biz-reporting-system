@@ -24,7 +24,7 @@ for (let item = 1; item <= 6; item += 1) {
   if (!new RegExp(`- \\[x\\] I-${item}\\b`).test(taskSource)) localFailures.push(`task_I-${item}_not_closed`);
 }
 
-for (const [gate, fileName] of [['REAL_MYSQL', 'mysql.json'], ['BROWSER', 'browser.json'], ['PERSISTENT_STORAGE', 'storage.json']]) {
+for (const [gate, fileName] of [['REAL_MYSQL', 'mysql.json'], ['BROWSER', 'browser.json'], ['TEMP_UPLOAD_LIFECYCLE', 'storage.json']]) {
   const evidencePath = path.join(repoRoot, 'evidence/deployment-gates', fileName);
   if (!fs.existsSync(evidencePath)) { blockers.push(gate); continue; }
   try {

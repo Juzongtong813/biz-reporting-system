@@ -263,3 +263,15 @@ M8 完成后进入发布候选需同时满足：
 - `release:preflight` 通过：`PREFLIGHT_PASS tests=20/20`，BLK-1 resolved。
 
 代码现已达到“待发布”状态；生产发布前仍需治理负责人按 M7-runbook 完成生产密钥实值核验、SQLite→MySQL 部署验证、初始管理员检查及回滚演练。
+
+---
+
+## zy-data 隔离发布收口（2026-08-17）
+
+- 环境：`zy-data-d2g9g1ghr47ac6254`（不新建环境）。
+- 保留旧主库：`zy-data-d2g9g1ghr47ac6254`；未执行任何旧主库删除或覆盖。
+- 已删除历史 schema：`biz_reporting_staging`、`biz_reporting_v3_staging`、`biz_reporting_i1_60f3a48`；系统回收 schema 未触碰。
+- 新生产 schema：`biz_reporting_prod`，追加式迁移 `001-017` 共 18 条，账本最新版本 `017_biz_order_batch_scope`。
+- 数据库账号：应用运行账号为 `biz_prod_runtime`，仅授予新 schema 的 `SELECT/INSERT/UPDATE/DELETE`；迁移账号已在迁移完成后删除。
+- 新 API 服务：`biz-reporting-api-prod` 已创建并以 0% 流量构建；旧 API 服务未切流、未删除。
+- 当前阻塞：CloudRun MCP 部署接口返回的 `VolumesConf` 为空，尚未确认 `/mnt/fact-source-files` 的真实持久化挂载；在挂载完成并通过 `/api/health/ready` 前不得切流。
