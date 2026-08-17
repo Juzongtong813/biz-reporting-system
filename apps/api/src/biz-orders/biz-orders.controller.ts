@@ -34,20 +34,20 @@ export class BizOrdersController {
   ) {
     const key = (idempotencyKey ?? '').trim() || undefined;
     if (!key) throw new BadRequestException('缺少幂等键 idempotencyKey');
-    const batch = await this.service.upload(auth.userId, file, key);
+    const batch = await this.service.upload(auth, file, key);
     return { batchId: batch.id, status: batch.status };
   }
 
   @Get('batches')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_READ)
-  async batches() {
-    return { items: await this.service.listBatches() };
+  async batches(@BizAuthUser() auth: BizAuthContext) {
+    return { items: await this.service.listBatches(auth) };
   }
 
   @Get('batches/:id')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_READ)
-  async batchDetail(@Param('id') id: string) {
-    return this.service.batchDetail(id);
+  async batchDetail(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    return this.service.batchDetail(auth, id);
   }
 
   @Post('batches/:id/void')
@@ -73,7 +73,7 @@ export class BizOrdersController {
     @Query('overrun') overrun?: 'city' | 'contract' | 'any',
   ) {
     const sensitive = auth.isSuperAdmin || auth.permissionCodes.has(SENSITIVE_ORDER_PERMISSION);
-    const items = await this.service.listRows({ batchId, cityId, overrun }, sensitive);
+    const items = await this.service.listRows(auth, { batchId, cityId, overrun }, sensitive);
     return { items };
   }
 }

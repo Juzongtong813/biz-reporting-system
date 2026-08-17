@@ -1,14 +1,16 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { OfflineCompletionStatus, PlatformRole } from '@biz-reporting/shared-types';
 import { BizOfflineCompletionEntity } from '../completions/biz-offline-completion.entity';
 import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
+import { CityEntity } from '../main-data/city.entity';
 
 export interface OfflineCompletionDto {
   contractId: string;
@@ -39,6 +41,10 @@ export class BizOfflineCompletionService {
     private readonly allocRepo: Repository<BizContractCityAllocationEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    @InjectRepository(CityEntity)
+    private readonly cityRepo: Repository<CityEntity>,
+    @InjectRepository(BizContractFeeRateEntity)
+    private readonly feeRateRepo: Repository<BizContractFeeRateEntity>,
     private readonly rbac: RbacService,
     private readonly aggregates: BizAggregateService,
   ) {}
@@ -58,6 +64,7 @@ export class BizOfflineCompletionService {
 
   /** 地市用户仅本地市（cityId 强制=绑定地市）；admin 校验地市数据范围 */
   private async assertCityAccess(auth: BizAuthContext, cityId: string | null): Promise<void> {
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无完工数据范围');
     if (auth.roleCode === PlatformRole.CITY_USER) {
       if (cityId !== auth.dataScope.cityId) throw new ForbiddenException('数据范围不足');
     } else if (cityId) {
@@ -70,7 +77,14 @@ export class BizOfflineCompletionService {
   async list(auth: BizAuthContext, filter: { cityId?: string; status?: string }): Promise<BizOfflineCompletionEntity[]> {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.offlineRepo.createQueryBuilder('o');
-    if (auth.roleCode === PlatformRole.CITY_USER) qb.andWhere('o.cityId = :cityId', { cityId: auth.dataScope.cityId });
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无完工数据范围');
+    if (auth.dataScope.scopeType === 'city') qb.andWhere('o.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
+      const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
+      const cityIds = cities.map((city) => city.id);
+      if (cityIds.length === 0) qb.andWhere('1 = 0');
+      else qb.andWhere('o.cityId IN (:...scopeCityIds)', { scopeCityIds: cityIds });
+    }
     if (filter.cityId) qb.andWhere('o.cityId = :cityId', { cityId: filter.cityId });
     if (filter.status) qb.andWhere('o.status = :status', { status: filter.status });
     return qb.orderBy('o.createdAt', 'DESC').getMany();
@@ -119,6 +133,9 @@ export class BizOfflineCompletionService {
       attachmentRef: dto.attachmentRef ?? item.attachmentRef,
     };
     await this.assertSubmissionRules(merged);
+    // 新 cityId 范围校验（update 允许改城市时，新城市必须在操作人数据范围内）
+    if (merged.cityId !== item.cityId) await this.assertCityAccess(auth, merged.cityId);
+    await this.applyRateSnapshot({ ...item, contractId: merged.contractId, cityId: merged.cityId, businessMonth: merged.businessMonth, amountFen: Math.round(merged.amountFen) } as BizOfflineCompletionEntity);
     Object.assign(item, {
       contractId: merged.contractId,
       cityId: merged.cityId,
@@ -143,6 +160,8 @@ export class BizOfflineCompletionService {
       contractId: item.contractId, cityId: item.cityId, businessMonth: item.businessMonth,
       amountFen: Number(item.amountFen), summary: item.summary, attachmentRef: item.attachmentRef,
     });
+    // 费率快照：按 合同+地市+业务月份 取最新生效费率，固化到记录并计算毛利（指标字典 MET-003）
+    await this.applyRateSnapshot(item);
     item.status = OfflineCompletionStatus.PENDING;
     item.submittedBy = auth.userId;
     item.submittedAt = new Date();
@@ -166,6 +185,18 @@ export class BizOfflineCompletionService {
     await this.offlineRepo.save(item);
     await this.recordOp(auth.userId, 'offline_completion.withdraw', id);
     return item;
+  }
+
+  /** 费率快照：管理费率按 合同+地市+业务月份 取 ≤month 最新生效值；毛利 = 金额 × 费率 / 10000 */
+  private async applyRateSnapshot(item: BizOfflineCompletionEntity): Promise<void> {
+    const rate = await this.feeRateRepo.createQueryBuilder('f')
+      .where('f.contractId = :contractId AND f.cityId = :cityId AND f.effectiveMonth <= :month', {
+        contractId: item.contractId, cityId: item.cityId, month: item.businessMonth,
+      })
+      .orderBy('f.effectiveMonth', 'DESC')
+      .getOne();
+    item.feeRateSnapshotBp = rate ? rate.rateBp : 0;
+    item.grossProfitFen = Math.round((Number(item.amountFen) * (rate ? rate.rateBp : 0)) / 10000);
   }
 
   /** 提交校验（DEV-039）：金额>0、月份非未来、合同已分配本地市 */

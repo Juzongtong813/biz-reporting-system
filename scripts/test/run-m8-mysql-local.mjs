@@ -53,8 +53,8 @@ try {
   // 账本 16 条全部 applied
   const [ledger] = await conn.query(`SELECT version, status FROM \`${dbName}\`.schema_migrations ORDER BY version`);
   const versions = ledger.map((r) => r.version);
-  const allApplied = versions.length === 16 && ledger.every((r) => r.status === 'applied');
-  record('ledger-16-applied', allApplied, `rows=${versions.length} versions=[${versions.join(',')}]`);
+  const allApplied = versions.length === 18 && ledger.every((r) => r.status === 'applied');
+  record('ledger-18-applied', allApplied, `rows=${versions.length} versions=[${versions.join(',')}]`);
 
   // 表数量
   const [tables] = await conn.query(`SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema=?`, [dbName]);
@@ -67,7 +67,7 @@ try {
   // 1c. 二次幂等
   const m2 = runMigrate(['up']);
   const [ledger2] = await conn.query(`SELECT COUNT(*) AS c FROM \`${dbName}\`.schema_migrations`);
-  record('migrate-second-idempotent', Number(ledger2[0].c) === 16 && m2.ok, `rows=${ledger2[0].c}`);
+  record('migrate-second-idempotent', Number(ledger2[0].c) === 18 && m2.ok, `rows=${ledger2[0].c}`);
 
   // 1d. 012/013/014 种子与列
   const [perms] = await conn.query(`SELECT COUNT(*) AS c FROM \`${dbName}\`.biz_permissions`);

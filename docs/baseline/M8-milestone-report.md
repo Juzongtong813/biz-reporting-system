@@ -4,7 +4,7 @@
 > 权威代码主线：`E:\code2\biz-reporting-system-authoritative`
 > 报告日期：2026-08-16
 > 阶段：M8「收口与退役」
-> 结论：**M8 验收通过（正式 MySQL gate + 发布预检 PASS）；进入发布候选评审**
+> 结论：**M8 修复验收（2026-08-17 撤回旧"验收通过"结论后重新验收）：10 项修复全部完成并全量验证通过；预检 PASS（含正式 gate）；发布候选评审前须经治理负责人 codex 复核**
 
 ---
 
@@ -84,3 +84,28 @@ M8 完成后进入发布候选需同时满足：
 - BLK-1：RESOLVED。BLK-2 仍为 `mitigated-by-retirement`，BLK-3 仍为 `accepted-out-of-scope`。
 
 结论：M8 验收通过，允许进入发布候选评审。正式发布仍须按 M7-runbook 完成部署环境核验；本结论不扩大 BLK-2/BLK-3 的既有处置范围。
+
+
+---
+
+## M8 修复验收（2026-08-17，DEV-067 复验后补充）
+
+### 撤回说明
+2026-08-17 治理指令：暂停发布候选评审，撤回此前"M8 已验收通过、仅剩密钥和部署演练"的结论。按 10 项清单修复后重新提交验收。
+
+### 修复清单（全部完成并验证）
+1. **线下完工费率快照与毛利**：完工提交时按 合同+地市+业务月份 固化 fee_rate_snapshot_bp 并计算 gross_profit_fen（迁移 016）；汇总/合同详情毛利 = (订单+完工)×费率，符合 golden-samples.json（MET-003）；M6 测试断言对齐 golden（AGG-001/006）。
+2. **分析/详情数据范围过滤**：概览/趋势/地市/超额/合同详情统一 all/province/city 过滤（contract scope 拒绝分析域）。
+3. **完工/成本写操作范围校验**：update/approve/reject/void/restore 目标记录与新 cityId 校验；contract scope 拒绝。
+4. **订单上传硬限制**：仅 super_admin/admin（role 级，override 不可绕过）；批次固化上传人范围快照（迁移 017），行级省份/地市范围校验（超范围整批回滚+错误报告）。
+5. **省级重算修复**：线下完工表无 province_id，省级范围用 city→province 子查询过滤。
+6. **地市超额按 contractId+cityId 汇总**（与分配额度同粒度）。
+7. **批次详情范围收敛**：非上传者按范围校验；上传者可查看自己上传的失败批次。
+8. **经营首页补齐**：组合筛选（月份/地市）、CSV 导出、超额提醒条、完整地市指标（订单/线下/毛利/成本/净利/超额标记）。
+9. **负向测试**（test:m9-negative）：线下利润、省级重算、跨地市 403、权限覆盖（override 不可绕过 role 硬限制）、混合批次（整批回滚+scope 错误+上传者可见）。
+10. **全量验证**：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9 全套、MySQL 本地迁移 18、MySQL 集成 6/6（gate）、正式 gate（001-017 ISOLATION_OK）、preflight PASS（含 gate env，BLK-1 resolved）。
+
+### 迁移新增
+- 016_biz_offline_rate_snapshot（完工费率快照+毛利）
+- 017_biz_order_batch_scope（批次上传范围快照）
+- 账本 18 条（001-017 含 002 双文件）；001-014 不可变，015-017 追加

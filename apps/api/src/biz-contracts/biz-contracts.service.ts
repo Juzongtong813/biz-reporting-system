@@ -454,7 +454,9 @@ export class BizContractsService {
       costFen = Number(costs?.total ?? 0);
     }
     const orders = await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false });
-    const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);
+    const offlines = await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' });
+    const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0)
+      + offlines.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);
     return { costFen, grossProfitFen, netProfitFen: grossProfitFen - costFen };
   }
 

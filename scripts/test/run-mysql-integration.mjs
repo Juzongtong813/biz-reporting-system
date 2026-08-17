@@ -23,7 +23,7 @@ const MYSQL = {
 const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(MYSQL.host);
 const runLabel = isLocalhost ? 'mysql-local' : 'mysql-gate';
 
-const suites = ['run-m2-rbac-auth', 'run-m3-contracts', 'run-m5-offcost', 'run-m6-aggregates', 'run-m8-security'];
+const suites = ['run-m2-rbac-auth', 'run-m3-contracts', 'run-m5-offcost', 'run-m6-aggregates', 'run-m8-security', 'run-m9-negative'];
 const results = [];
 
 const admin = await mysql.createConnection({ ...MYSQL, multipleStatements: true });

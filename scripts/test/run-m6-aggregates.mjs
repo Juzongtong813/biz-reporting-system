@@ -211,7 +211,7 @@ try {
     assert.ok(contractAgg, 'AGG-001 contract-month aggregate exists');
     assert.equal(Number(contractAgg.orderCompletionFen), 200_000_00, 'AGG-001 order 200000.00');
     assert.equal(Number(contractAgg.offlineCompletionFen), 50_000_00, 'AGG-001 offline 50000.00');
-    assert.equal(Number(contractAgg.grossProfitFen), 24_000_00, 'AGG-001 gross profit 24000.00');
+    assert.equal(Number(contractAgg.grossProfitFen), 30_000_00, 'AGG-001 gross profit 30000.00 = (order 200000 + offline 50000) x 12%');
     // 成本行（地市维度，contractId=NULL）
     const costAgg = await aggRepo.createQueryBuilder('a')
       .where('a.cityId = :cityId AND a.contractId IS NULL AND a.businessMonth = :month', { cityId: jinanId, month: '2026-06' })
@@ -224,9 +224,9 @@ try {
   // ============ AGG-006 利润=收入-成本 ============
   res = await api('GET', '/biz/analysis/overview', { token: adminToken });
   assert.equal(res.status, 200);
-  assert.equal(res.data.grossProfitFen, 24_000_00, 'AGG-006 gross 24000');
+  assert.equal(res.data.grossProfitFen, 30_000_00, 'AGG-006 gross 30000 (incl offline profit)');
   assert.equal(res.data.costFen, 30_000_00, 'AGG-006 cost 30000');
-  assert.equal(res.data.netProfitFen, -6_000_00, 'AGG-006 net = gross - cost = -6000');
+  assert.equal(res.data.netProfitFen, 0, 'AGG-006 net = gross - cost = 30000 - 30000 = 0');
 
   // ============ AGG-007 累计/趋势/地市 ============
   res = await api('GET', '/biz/analysis/trend', { token: adminToken });

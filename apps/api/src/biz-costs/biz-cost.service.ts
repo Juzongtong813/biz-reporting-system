@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { CostStatus, PlatformRole } from '@biz-reporting/shared-types';
 import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
@@ -8,6 +8,7 @@ import { BizCostCategoryEntity } from '../costs/biz-cost-category.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
+import { CityEntity } from '../main-data/city.entity';
 
 export interface CostEntryDto {
   cityId: string;
@@ -34,6 +35,8 @@ export class BizCostService {
     private readonly categoryRepo: Repository<BizCostCategoryEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    @InjectRepository(CityEntity)
+    private readonly cityRepo: Repository<CityEntity>,
     private readonly rbac: RbacService,
     private readonly aggregates: BizAggregateService,
   ) {}
@@ -53,6 +56,7 @@ export class BizCostService {
 
   /** 地市用户仅本地市 */
   private async assertCityAccess(auth: BizAuthContext, cityId: string | null): Promise<void> {
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
     if (auth.roleCode === PlatformRole.CITY_USER) {
       if (cityId !== auth.dataScope.cityId) throw new ForbiddenException('数据范围不足');
     } else if (cityId) {
@@ -76,7 +80,14 @@ export class BizCostService {
   async list(auth: BizAuthContext, filter: { cityId?: string; status?: string }): Promise<BizCostEntryEntity[]> {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.costRepo.createQueryBuilder('c');
-    if (auth.roleCode === PlatformRole.CITY_USER) qb.andWhere('c.cityId = :cityId', { cityId: auth.dataScope.cityId });
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
+    if (auth.dataScope.scopeType === 'city') qb.andWhere('c.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
+      const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
+      const cityIds = cities.map((city) => city.id);
+      if (cityIds.length === 0) qb.andWhere('1 = 0');
+      else qb.andWhere('c.cityId IN (:...scopeCityIds)', { scopeCityIds: cityIds });
+    }
     if (filter.cityId) qb.andWhere('c.cityId = :cityId', { cityId: filter.cityId });
     if (filter.status) qb.andWhere('c.status = :status', { status: filter.status });
     return qb.orderBy('c.createdAt', 'DESC').getMany();
@@ -119,6 +130,8 @@ export class BizCostService {
       description: dto.description ?? item.description,
     };
     await this.assertRules(merged);
+    // 新 cityId 范围校验（update 允许改城市时，新城市必须在操作人数据范围内）
+    if (merged.cityId !== item.cityId) await this.assertCityAccess(auth, merged.cityId);
     Object.assign(item, {
       cityId: merged.cityId,
       businessMonth: merged.businessMonth,

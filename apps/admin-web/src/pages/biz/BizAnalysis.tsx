@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Col, Descriptions, InputNumber, Modal, Row, Space, Table, Tag, Typography, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Button, Card, Col, Modal, Row, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList,
   bizAggregateRecalc, bizAggregateCheck,
@@ -21,18 +21,41 @@ export default function BizAnalysis() {
   const [cities, setCities] = useState<Array<Record<string, unknown>>>([]);
   const [overruns, setOverruns] = useState<Array<Record<string, unknown>>>([]);
   const [checkResult, setCheckResult] = useState<{ warningCount: number; warnings: Array<Record<string, unknown>> } | null>(null);
+  const [filterMonth, setFilterMonth] = useState<string | undefined>(undefined);
+  const [filterCity, setFilterCity] = useState<string | undefined>(undefined);
+  const [cityOptions, setCityOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [monthOptions, setMonthOptions] = useState<Array<{ label: string; value: string }>>([]);
 
   const load = useCallback(async () => {
     const [ov, tr, ct, or] = await Promise.all([
-      bizAnalysisOverview(), bizAnalysisTrend(), bizAnalysisByCity(), bizAnalysisOverrunList(),
+      bizAnalysisOverview(filterMonth ? { month: filterMonth } : undefined),
+      bizAnalysisTrend(), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(),
     ]);
     setOverview(ov);
     setTrend(tr.items);
-    setCities(ct.items);
+    const cityRows = filterCity ? ct.items.filter((r) => r.cityId === filterCity) : ct.items;
+    setCities(cityRows);
     setOverruns(or.items);
-  }, []);
+    setCityOptions(ct.items.map((r) => ({ label: String(r.cityId ?? '').slice(0, 8), value: String(r.cityId) })));
+    setMonthOptions(tr.items.map((r) => ({ label: String(r.month), value: String(r.month) })));
+  }, [filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** CSV 导出当前地市指标视图（元，千分位两位小数） */
+  const onExport = () => {
+    const header = ['地市', '订单完工(元)', '线下完工(元)', '毛利(元)', '成本(元)', '净利(元)', '超额标记'];
+    const rows = cities.map((r) => {
+      const overrun = overruns.find((o) => o.type === 'city' && o.cityId === r.cityId);
+      return [String(r.cityId ?? '').slice(0, 8), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
+    });
+    const csv = '\uFEFF' + [header, ...rows].map((r) => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `经营分析-地市指标-${filterMonth ?? '累计'}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  };
 
   const onRecalc = () => {
     Modal.confirm({
@@ -96,6 +119,19 @@ export default function BizAnalysis() {
         </Col>
       </Row>
 
+      {overruns.length > 0 && (
+        <Card size="small" title="超额提醒" style={{ marginBottom: 16, borderLeft: '3px solid #c64b4b' }}>
+          <Space wrap>
+            {overruns.slice(0, 8).map((o, i) => (
+              <Tag key={i} color={o.type === 'contract' ? 'red' : 'orange'}>
+                {o.type === 'contract' ? `合同 ${String(o.contractNo ?? o.id ?? '').slice(0, 12)}` : `地市 ${String(o.cityId ?? '').slice(0, 8)}`} 超额 {fenToYuan(Number(o.overrunFen))}
+              </Tag>
+            ))}
+            {overruns.length > 8 && <Text type="secondary">…共 {overruns.length} 项</Text>}
+          </Space>
+        </Card>
+      )}
+
       {checkResult && checkResult.warningCount > 0 && (
         <Card size="small" title={`一致性警告（${checkResult.warningCount} 条，仅告警不自动改写）`} style={{ marginBottom: 16 }}>
           <Table scroll={{ x: "max-content" }} 
@@ -131,8 +167,15 @@ export default function BizAnalysis() {
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
                 { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => v?.slice(0, 8) ?? '-' },
-                { title: '完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
+                { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
+                { title: '线下完工（元）', dataIndex: 'offlineCompletionFen', key: 'of', render: (v: number) => fenToYuan(Number(v)) },
+                { title: '毛利（元）', dataIndex: 'grossProfitFen', key: 'gp', render: (v: number) => fenToYuan(Number(v)) },
+                { title: '成本（元）', dataIndex: 'costFen', key: 'co', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '净利（元）', dataIndex: 'netProfitFen', key: 'np', render: (v: number) => fenToYuan(Number(v)) },
+                { title: '超额标记', key: 'overrun', render: (_: unknown, r: Record<string, unknown>) => {
+                    const o = overruns.find((x) => x.type === 'city' && x.cityId === r.cityId);
+                    return o ? <Tag color="red">超额 {fenToYuan(Number(o.overrunFen))}</Tag> : <Tag color="green">正常</Tag>;
+                  } },
               ]}
             />
           </Card>

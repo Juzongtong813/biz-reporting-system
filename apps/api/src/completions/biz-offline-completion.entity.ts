@@ -36,6 +36,14 @@ export class BizOfflineCompletionEntity {
   @Column({ name: 'amount_fen', type: 'bigint' })
   amountFen: number;
 
+  /** 管理费率快照（基点，如 12.35% => 1235；提交时按 合同+地市+业务月份 固化，与费率历史解耦） */
+  @Column({ name: 'fee_rate_snapshot_bp', type: 'int', nullable: true })
+  feeRateSnapshotBp: number | null;
+
+  /** 完工毛利（分）= amount_fen × fee_rate_snapshot_bp / 10000（提交时计算，审核通过后计入汇总） */
+  @Column({ name: 'gross_profit_fen', type: 'bigint', default: 0 })
+  grossProfitFen: number;
+
   /** 业务摘要（必填） */
   @Column({ type: 'varchar', length: 500 })
   summary: string;

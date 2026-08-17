@@ -63,6 +63,10 @@ export class BizOrderImportBatchEntity {
   @Column({ name: 'temp_file_path', type: 'varchar', length: 500, nullable: true })
   tempFilePath: string | null;
 
+  /** 上传时数据范围快照（JSON：{roleCode,scopeType,provinceIds,cityId}；行级范围校验依据） */
+  @Column({ name: 'data_scope_json', type: 'varchar', length: 500, nullable: true })
+  dataScopeJson: string | null;
+
   /** 作废人 UUID */
   @Column({ name: 'voided_by', type: 'varchar', length: 36, nullable: true })
   voidedBy: string | null;

@@ -170,6 +170,24 @@ async function applyMigration(migration) {
     await applySqliteProductionGovernance();
     return;
   }
+  if (migration.version === '017_biz_order_batch_scope') {
+    if (!await adapter.columnExists('biz_order_import_batches', 'data_scope_json')) {
+      await adapter.exec('ALTER TABLE biz_order_import_batches ADD COLUMN data_scope_json VARCHAR(500) NULL');
+    }
+    return;
+  }
+  if (migration.version === '016_biz_offline_rate_snapshot') {
+    const columns = [
+      ['fee_rate_snapshot_bp', 'INT NULL'],
+      ['gross_profit_fen', 'BIGINT NOT NULL DEFAULT 0'],
+    ];
+    for (const [column, definition] of columns) {
+      if (!await adapter.columnExists('biz_offline_completions', column)) {
+        await adapter.exec(`ALTER TABLE biz_offline_completions ADD COLUMN ${column} ${definition}`);
+      }
+    }
+    return;
+  }
   if (migration.version === '015_import_job_legacy_fields') {
     const columns = [
       ['source_file_base64', 'LONGTEXT NULL'],
@@ -306,6 +324,19 @@ async function inspectState(version) {
       adapter.columnExists('import_jobs', 'source_file_base64'),
       adapter.columnExists('import_jobs', 'source_file_name'),
       adapter.columnExists('import_jobs', 'report_year'),
+    ]);
+  }
+  if (version === '016_biz_offline_rate_snapshot') {
+    if (!await adapter.tableExists('biz_offline_completions')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('biz_offline_completions', 'fee_rate_snapshot_bp'),
+      adapter.columnExists('biz_offline_completions', 'gross_profit_fen'),
+    ]);
+  }
+  if (version === '017_biz_order_batch_scope') {
+    if (!await adapter.tableExists('biz_order_import_batches')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('biz_order_import_batches', 'data_scope_json'),
     ]);
   }
   fail(`STATE_CHECK_MISSING version=${version}`);

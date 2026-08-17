@@ -47,6 +47,8 @@ const expectedVersions = [
   '013_biz_order_temp_file',
   '014_biz_system_settings',
   '015_import_job_legacy_fields',
+  '016_biz_offline_rate_snapshot',
+  '017_biz_order_batch_scope',
 ];
 
 const database = `biz_reporting_migration_test_${Date.now()}_${process.pid}`;
@@ -62,7 +64,7 @@ try {
   const verification = await mysql.createConnection({ host, port, user, password, database });
   try {
     const [firstLedger] = await verification.query('SELECT version, status, execution_mode, checksum, applied_at FROM schema_migrations ORDER BY version');
-    assert.equal(firstLedger.length, 16, 'expected 001-015 migration ledger entries, including both 002 files');
+    assert.equal(firstLedger.length, 18, 'expected 001-017 migration ledger entries, including both 002 files');
     assert.deepEqual(firstLedger.map((row) => row.version), expectedVersions, 'migration ledger versions differ from manifest');
     assert.ok(firstLedger.every((row) => row.status === 'applied'), 'all migrations must be applied');
     assert.ok(firstLedger.every((row) => /^[a-f0-9]{64}$/.test(String(row.checksum))), 'every migration requires a SHA-256 checksum');

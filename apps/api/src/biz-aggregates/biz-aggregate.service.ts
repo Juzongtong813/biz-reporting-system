@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { PlatformRole } from '@biz-reporting/shared-types';
 import { BizMonthlyAggregateEntity } from '../aggregates/biz-monthly-aggregate.entity';
@@ -12,6 +12,7 @@ import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
+import { CityEntity } from '../main-data/city.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 
 export interface RecalcScope {
@@ -189,10 +190,12 @@ export class BizAggregateService {
       .addSelect('f.contractId', 'contractId')
       .addSelect('f.businessMonth', 'businessMonth')
       .addSelect('SUM(f.amountFen)', 'offlineCompletionFen')
-      .addSelect('0', 'grossProfitFen')
+      .addSelect('SUM(f.grossProfitFen)', 'grossProfitFen')
       .where('f.status = :status', { status: 'approved' });
     this.applyScope(orderQb, scope, 'o');
-    this.applyScope(offlineQb, scope, 'f');
+    // 完工表无 province_id 列：省级范围用 地市→省份 子查询过滤（修复省级重算查询）
+    if (scope.provinceId) offlineQb.andWhere('f.cityId IN (SELECT id FROM biz_cities WHERE province_id = :offlineProvinceId)', { offlineProvinceId: scope.provinceId });
+    else this.applyScope(offlineQb, scope, 'f');
 
     // 预加载地市→省份映射（完工/成本表无 province_id 列）
     const { CityEntity } = await import('../main-data/city.entity');
@@ -213,17 +216,24 @@ export class BizAggregateService {
     for (const r of offlineRows) {
       const key = `${r.provinceId}|${r.cityId ?? ''}|${r.contractId ?? ''}|${r.businessMonth}`;
       const existing = map.get(key);
-      if (existing) existing.offlineCompletionFen += Number(r.offlineCompletionFen) || 0;
-      else map.set(key, { provinceId: r.provinceId, cityId: r.cityId, contractId: r.contractId, businessMonth: r.businessMonth, orderCompletionFen: 0, offlineCompletionFen: Number(r.offlineCompletionFen) || 0, grossProfitFen: 0, costFen: 0 });
+      const offlineGross = Number(r.grossProfitFen) || 0;
+      if (existing) {
+        existing.offlineCompletionFen += Number(r.offlineCompletionFen) || 0;
+        existing.grossProfitFen += offlineGross;
+      } else {
+        map.set(key, { provinceId: r.provinceId, cityId: r.cityId, contractId: r.contractId, businessMonth: r.businessMonth, orderCompletionFen: 0, offlineCompletionFen: Number(r.offlineCompletionFen) || 0, grossProfitFen: offlineGross, costFen: 0 });
+      }
     }
 
     // 成本按地市（contractId=NULL 维度；不关联合同）
+    if (scope.contractId) return [...map.values()];
     const costQb = this.costRepo.createQueryBuilder('c')
       .select('c.cityId', 'cityId')
       .addSelect('c.businessMonth', 'businessMonth')
       .addSelect('SUM(c.amountFen)', 'costFen')
       .where('c.status = :status', { status: 'approved' });
     if (scope.cityId) costQb.andWhere('c.cityId = :cityId', { cityId: scope.cityId });
+    if (scope.provinceId) costQb.andWhere('c.cityId IN (SELECT id FROM biz_cities WHERE province_id = :costProvinceId)', { costProvinceId: scope.provinceId });
     if (scope.month) costQb.andWhere('c.businessMonth = :month', { month: scope.month });
     const costRows = (await costQb.groupBy('c.cityId, c.businessMonth').getRawMany()) as Array<{ cityId: string; businessMonth: string; costFen: string }>;
     for (const r of costRows) {
@@ -278,8 +288,23 @@ export class BizAggregateService {
 
   // ================= 分析聚合 API =================
 
+  /** 分析域数据范围过滤：all 不限；city→地市；province→省下辖市；contract 无地域维度→拒绝 */
+  private applyAggScope(qb: { andWhere: (cond: string, params?: Record<string, unknown>) => unknown }, auth: BizAuthContext): void {
+    const scope = auth.dataScope;
+    if (scope.scopeType === 'all') return;
+    if (scope.scopeType === 'contract') throw new ForbiddenException('当前账号无经营分析数据范围');
+    if (scope.scopeType === 'city') {
+      qb.andWhere('a.cityId = :scopeCityId', { scopeCityId: scope.cityId });
+      return;
+    }
+    if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
+      qb.andWhere('a.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...scopeProvinceIds))', { scopeProvinceIds: scope.provinceIds });
+    }
+  }
+
   async overview(auth: BizAuthContext, month?: string) {
     const qb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(qb, auth);
     if (month) qb.andWhere('a.businessMonth = :month', { month });
     const rows = await qb.getMany();
     const total = (field: string) => rows.reduce((s, r) => s + Number(r[field as keyof BizMonthlyAggregateEntity] ?? 0), 0);
@@ -294,7 +319,9 @@ export class BizAggregateService {
   }
 
   async trend(auth: BizAuthContext, limit = 12) {
-    const rows = await this.aggRepo.createQueryBuilder('a')
+    const trendQb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(trendQb, auth);
+    const rows = await trendQb
       .select('a.businessMonth', 'month')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
       .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
@@ -309,7 +336,9 @@ export class BizAggregateService {
   }
 
   async byCity(auth: BizAuthContext, month?: string) {
-    const qb = this.aggRepo.createQueryBuilder('a')
+    const qb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(qb, auth);
+    qb
       .select('a.cityId', 'cityId')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
       .addSelect('SUM(a.offlineCompletionFen)', 'offlineCompletionFen')
@@ -323,10 +352,18 @@ export class BizAggregateService {
 
   async overrunList(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {
     // 合同超额：合同累计完工 > 合同额；地市超额：地市累计完工 > 分配额度
+    this.applyAggScope({ andWhere: () => undefined }, auth); // contract scope 统一拒绝（与 overview/trend 一致）
     const contracts = await this.contractRepo.find();
     const result: Array<Record<string, unknown>> = [];
+    const aggQb = (contractId?: string, cityId?: string) => {
+      const qb = this.aggRepo.createQueryBuilder('a');
+      this.applyAggScope(qb, auth);
+      if (contractId) qb.andWhere('a.contractId = :contractId', { contractId });
+      if (cityId) qb.andWhere('a.cityId = :cityId', { cityId });
+      return qb;
+    };
     for (const contract of contracts) {
-      const aggs = await this.aggRepo.findBy({ contractId: contract.id });
+      const aggs = await aggQb(contract.id).getMany();
       const totalCompletion = aggs.reduce((s, a) => s + Number(a.orderCompletionFen) + Number(a.offlineCompletionFen), 0);
       const amount = Number(contract.taxInclusiveAmountFen) || 0;
       if (totalCompletion > amount) {
@@ -335,9 +372,8 @@ export class BizAggregateService {
     }
     const allocs = await this.allocRepo.findBy({ status: 'active' });
     for (const alloc of allocs) {
-      const aggs = await this.aggRepo.createQueryBuilder('a')
-        .where('a.cityId = :cityId', { cityId: alloc.cityId })
-        .getMany();
+      // 地市超额必须按 contractId+cityId 汇总（与分配额度同粒度；一个地市多个合同互不混淆）
+      const aggs = await aggQb(alloc.contractId, alloc.cityId).getMany();
       const total = aggs.reduce((s, a) => s + Number(a.orderCompletionFen) + Number(a.offlineCompletionFen), 0);
       const quota = Number(alloc.quotaFen) || 0;
       if (total > quota) {

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +23,7 @@ import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { BizContractsService } from '../biz-contracts/biz-contracts.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
+import { BizAuthContext } from '../rbac/rbac.service';
 
 interface PendingRow {
   sourceRowNo: number;
@@ -94,7 +95,12 @@ export class BizOrderImportService {
   }
 
   /** 上传：创建批次（PARSING）→ 后台解析；返回批次 ID 供轮询 */
-  async upload(authUserId: string, file: Express.Multer.File, idempotencyKey: string): Promise<BizOrderImportBatchEntity> {
+  async upload(auth: BizAuthContext, file: Express.Multer.File, idempotencyKey: string): Promise<BizOrderImportBatchEntity> {
+    // 硬限制：仅 super_admin / admin 可上传（权限码可被 override 覆盖，role 级为最终边界）
+    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
+      throw new ForbiddenException('仅 super_admin/admin 可上传订单文件');
+    }
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无订单数据范围');
     if (!file) throw new BadRequestException('缺少上传文件');
     const filename = (file.originalname ?? 'upload.xlsx').trim();
     if (!filename.toLowerCase().endsWith(ORDER_FILE_ALLOWED_EXT)) throw new BadRequestException('仅支持 .xlsx 文件');
@@ -135,8 +141,9 @@ export class BizOrderImportService {
       status: OrderBatchStatus.PARSING,
       totalRows: 0,
       importedRows: 0,
-      uploadedBy: authUserId,
+      uploadedBy: auth.userId,
       tempFilePath: filePath,
+      dataScopeJson: JSON.stringify({ roleCode: auth.roleCode, scopeType: auth.dataScope.scopeType, provinceIds: auth.dataScope.provinceIds ?? [], cityId: auth.dataScope.cityId ?? null }),
     });
 
     // 后台异步解析（单实例进程内任务；幂等与唯一约束保障重试安全）
@@ -224,6 +231,9 @@ export class BizOrderImportService {
       const provinceId = provinceName ? provinceByName.get(provinceName) : undefined;
       if (!provinceName || !provinceId) { p.error = { type: 'province', field: '省份名称', message: `省份「${provinceName || ''}」无法映射` }; pending.push(p); return; }
       p.provinceId = provinceId;
+      // 行级数据范围校验（按上传时快照）
+      const scopeErr = this.assertRowScope(batch.dataScopeJson, provinceId, cityName ? cityByProvinceName.get(`${provinceId}|${cityName}`) : undefined);
+      if (scopeErr) { p.error = { type: 'scope', field: '省份名称', message: scopeErr }; pending.push(p); return; }
 
       const cityId = cityName ? cityByProvinceName.get(`${provinceId}|${cityName}`) : undefined;
       if (!cityName || !cityId) { p.error = { type: 'city', field: '地市名称', message: `地市「${cityName || ''}」无法映射到省份` }; pending.push(p); return; }
@@ -335,6 +345,23 @@ export class BizOrderImportService {
     void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
+  /** 行级数据范围校验：上传人超范围行拒绝（super=all 不限；province=行省份 ∈ provinceIds；city=行地市=绑定地市） */
+  private assertRowScope(scopeJson: string | null, provinceId: string, cityId: string | undefined): string | null {
+    if (!scopeJson) return null;
+    let scope: { roleCode?: string; scopeType?: string; provinceIds?: string[]; cityId?: string | null };
+    try { scope = JSON.parse(scopeJson); } catch { return null; }
+    if (scope.scopeType === 'all') return null;
+    if (scope.scopeType === 'province') {
+      if (!scope.provinceIds || scope.provinceIds.length === 0) return null;
+      return scope.provinceIds.includes(provinceId) ? null : '上传人数据范围不包含该省份';
+    }
+    if (scope.scopeType === 'city') {
+      return cityId && scope.cityId === cityId ? null : '上传人数据范围不包含该地市';
+    }
+    if (scope.scopeType === 'contract') return '当前账号无订单数据范围';
+    return null;
+  }
+
   /** 批次失败：零写入（从未插入行）→ 状态 FAILED + 错误报告 + 删除临时文件 */
   private async failBatch(batchId: string, reason: string, errors: Array<{ type: string; rowNo: number | null; field: string | null; message: string }> = []): Promise<void> {
     const batch = await this.batchRepo.findOneBy({ id: batchId });
@@ -417,13 +444,43 @@ export class BizOrderImportService {
 
   // ================= 查询与作废/恢复 =================
 
-  async listBatches(): Promise<BizOrderImportBatchEntity[]> {
-    return this.batchRepo.find({ order: { createdAt: 'DESC' } });
+  private async visibleCityIds(auth: BizAuthContext): Promise<string[] | null> {
+    if (auth.isSuperAdmin || auth.dataScope.scopeType === 'all') return null;
+    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无订单数据范围');
+    if (auth.dataScope.scopeType === 'city') return auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
+    if (auth.dataScope.provinceIds.length === 0) return null;
+    const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
+    return cities.map((city) => city.id);
   }
 
-  async batchDetail(id: string): Promise<{ batch: BizOrderImportBatchEntity; errors: BizOrderImportErrorEntity[]; rowCount: number }> {
+  async listBatches(auth: BizAuthContext): Promise<BizOrderImportBatchEntity[]> {
+    const cityIds = await this.visibleCityIds(auth);
+    const qb = this.batchRepo.createQueryBuilder('b').orderBy('b.createdAt', 'DESC');
+    if (cityIds) {
+      if (cityIds.length === 0) return [];
+      qb.innerJoin(BizOrderRowEntity, 'r', 'r.batch_id = b.id')
+        .andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds })
+        .distinct(true);
+    }
+    return qb.getMany();
+  }
+
+  async batchDetail(auth: BizAuthContext, id: string): Promise<{ batch: BizOrderImportBatchEntity; errors: BizOrderImportErrorEntity[]; rowCount: number }> {
     const batch = await this.batchRepo.findOneBy({ id });
     if (!batch) throw new NotFoundException('批次不存在');
+    // 上传者可查看自己上传的批次（含失败批次）；其余用户按数据范围收敛
+    const isUploader = batch.uploadedBy === auth.userId;
+    if (!isUploader) {
+      const cityIds = await this.visibleCityIds(auth);
+      if (cityIds) {
+        if (cityIds.length === 0) throw new ForbiddenException('数据范围不足');
+        const visibleRow = await this.rowRepo.createQueryBuilder('r')
+          .where('r.batch_id = :batchId', { batchId: id })
+          .andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds })
+          .getOne();
+        if (!visibleRow) throw new ForbiddenException('数据范围不足');
+      }
+    }
     const errors = await this.errorRepo.findBy({ batchId: id });
     const rowCount = await this.rowRepo.countBy({ batchId: id });
     return { batch, errors, rowCount };
@@ -468,8 +525,14 @@ export class BizOrderImportService {
   }
 
   /** 订单行列表（敏感列脱敏：无 SENSITIVE_ORDER_PERMISSION 时遮罩） */
-  async listRows(filter: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }, sensitive: boolean) {
+  async listRows(auth: BizAuthContext, filter: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }, sensitive: boolean) {
+    const cityIds = await this.visibleCityIds(auth);
     const qb = this.rowRepo.createQueryBuilder('r');
+    if (cityIds) {
+      if (cityIds.length === 0) return [];
+      if (filter.cityId && !cityIds.includes(filter.cityId)) throw new ForbiddenException('数据范围不足');
+      qb.andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds });
+    }
     if (filter.batchId) qb.andWhere('r.batchId = :batchId', { batchId: filter.batchId });
     if (filter.cityId) qb.andWhere('r.cityId = :cityId', { cityId: filter.cityId });
     if (filter.overrun === 'city') qb.andWhere('r.cityOverrunFlag = 1');
