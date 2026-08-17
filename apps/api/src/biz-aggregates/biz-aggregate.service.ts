@@ -533,7 +533,7 @@ export class BizAggregateService {
   }
 
   /** 合同到期/满额提醒（实时计算，不依赖手工 refresh-alerts 与汇总重算）：到期按 endDate+系统阈值，满额按订单/已审核线下完工明细实时聚合；按 auth 数据范围过滤 */
-  async analysisAlerts(auth: BizAuthContext, cityId?: string, _month?: string): Promise<Array<Record<string, unknown>>> {
+  async analysisAlerts(auth: BizAuthContext, cityId?: string): Promise<Array<Record<string, unknown>>> {
     const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
     const scope = auth.dataScope;
     // 预加载：合同→分配地市（city 范围可见性 + cityId 附加筛选）

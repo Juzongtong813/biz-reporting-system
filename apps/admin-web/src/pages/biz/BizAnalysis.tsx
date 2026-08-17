@@ -13,6 +13,12 @@ function fenToYuan(fen: number): string {
   return (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** 显示层月份统一 yyyy年mm月（数据库/接口保留 YYYY-MM） */
+export function formatMonth(v: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? ''));
+  return m ? `${m[1]}年${m[2]}月` : (v ?? '-');
+}
+
 /** 经营分析（新基线 M6）：概览/趋势/地市对比/超额清单 + 汇总重算与一致性核对 */
 export default function BizAnalysis() {
   const navigate = useNavigate();
@@ -31,7 +37,7 @@ export default function BizAnalysis() {
     const params = { month: filterMonth, cityId: filterCity };
     const [ov, tr, ct, or, al] = await Promise.all([
       bizAnalysisOverview(params),
-      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity, filterMonth),
+      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity),
     ]);
     setOverview(ov);
     setTrend(tr.items);
@@ -40,7 +46,7 @@ export default function BizAnalysis() {
     setCities(cityRows);
     setOverruns(or.items);
     setCityOptions(ct.items.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
-    setMonthOptions(tr.items.map((r: Record<string, unknown>) => ({ label: String(r.month), value: String(r.month) })));
+    setMonthOptions(tr.items.map((r: Record<string, unknown>) => ({ label: formatMonth(String(r.month)), value: String(r.month) })));
   }, [filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
@@ -97,12 +103,23 @@ export default function BizAnalysis() {
           <Text type="secondary">汇总口径：订单+线下完工-作废 · 利润 = 毛利 - 成本</Text>
         </div>
         <Space wrap>
+          <Select
+            allowClear placeholder="月份筛选（经营金额）" style={{ width: 170 }} options={monthOptions}
+            value={filterMonth} onChange={(v) => setFilterMonth(v ?? undefined)}
+          />
+          <Select
+            allowClear placeholder="地市筛选" style={{ width: 170 }} options={cityOptions}
+            value={filterCity} onChange={(v) => setFilterCity(v ?? undefined)}
+          />
+          {(filterMonth || filterCity) && <Button onClick={() => { setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
+          <Button icon={<DownloadOutlined />} onClick={onExport}>导出当前视图</Button>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button onClick={onCheck}>一致性核对</Button>
           <Button danger onClick={onRecalc}>全库重算</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
         </Space>
       </div>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>月份筛选仅影响经营金额与超额；合同数量/合同额为累计库存口径，不受月份影响；提醒为累计实时口径（到期/满额），不受月份筛选影响。</Text>
 
       <Row gutter={12} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={12} lg={4}>
@@ -165,7 +182,7 @@ export default function BizAnalysis() {
             size="small" rowKey={(r, i) => String(i)} pagination={false} dataSource={checkResult.warnings.slice(0, 20)}
             columns={[
               { title: '类型', dataIndex: 'type', key: 'type' },
-              { title: '月份', dataIndex: 'month', key: 'month' },
+              { title: '月份', dataIndex: 'month', key: 'month', render: (v: string) => formatMonth(v) },
               { title: '维度', dataIndex: 'dimension', key: 'dimension' },
               { title: '说明', dataIndex: 'detail', key: 'detail' },
             ]}
@@ -179,7 +196,7 @@ export default function BizAnalysis() {
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="month" pagination={false} dataSource={trend}
               columns={[
-                { title: '月份', dataIndex: 'month', key: 'month' },
+                { title: '月份', dataIndex: 'month', key: 'month', render: (v: string) => formatMonth(v) },
                 { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '线下完工（元）', dataIndex: 'offlineCompletionFen', key: 'of', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '毛利（元）', dataIndex: 'grossProfitFen', key: 'gp', render: (v: number) => fenToYuan(Number(v)) },

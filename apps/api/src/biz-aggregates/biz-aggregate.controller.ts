@@ -61,8 +61,8 @@ export class BizAggregateController {
 
   @Get('analysis/alerts')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async analysisAlerts(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string, @Query('month') month?: string) {
-    return { items: await this.service.analysisAlerts(auth, cityId, month) };
+  async analysisAlerts(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string) {
+    return { items: await this.service.analysisAlerts(auth, cityId) };
   }
 
   @Get('analysis/overrun-list')

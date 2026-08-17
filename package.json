@@ -53,7 +53,8 @@
     "release:preflight": "node scripts/release/preflight.mjs",
     "test:m9-negative": "node scripts/test/run-m9-negative.mjs",
     "test:m10-negative": "node scripts/test/run-m10-negative.mjs",
-    "test:m11-business": "node scripts/test/run-m11-business.mjs"
+    "test:m11-business": "node scripts/test/run-m11-business.mjs",
+    "test:m12-interaction": "node scripts/test/run-m12-interaction.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

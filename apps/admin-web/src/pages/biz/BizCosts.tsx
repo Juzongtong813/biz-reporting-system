@@ -19,6 +19,13 @@ const CATEGORY: Record<string, string> = {
   rent: '房租', reimbursement: '报销', other: '其他',
 };
 
+
+/** 显示层月份统一 yyyy年mm月（数据库/接口保留 YYYY-MM） */
+function formatMonth(v: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? ''));
+  return m ? `${m[1]}年${m[2]}月` : (v ?? '-');
+}
+
 function fenToYuan(fen: number | null): string {
   return fen == null ? '-' : (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -101,7 +108,7 @@ export default function BizCosts() {
 
   const columns = [
     { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cities.find((c) => c.id === v)?.name ?? '-' },
-    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 90 },
+    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '分类', dataIndex: 'categoryCode', key: 'categoryCode', render: (v: string) => CATEGORY[v] ?? v },
     { title: '金额（元）', dataIndex: 'amountFen', key: 'amountFen', render: (v: number) => fenToYuan(Number(v)) },
     { title: '说明', dataIndex: 'description', key: 'description', ellipsis: true },

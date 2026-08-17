@@ -17,6 +17,13 @@ const BATCH_STATUS: Record<string, { label: string; color: string }> = {
   voided: { label: '已作废', color: 'default' },
 };
 
+
+/** 显示层月份统一 yyyy年mm月（数据库/接口保留 YYYY-MM） */
+function formatMonth(v: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? ''));
+  return m ? `${m[1]}年${m[2]}月` : (v ?? '-');
+}
+
 function fenToYuan(fen: number | null): string {
   if (fen === null || fen === undefined) return '-';
   return (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -130,7 +137,7 @@ export default function BizOrders() {
     { title: '行号', dataIndex: 'sourceRowNo', key: 'sourceRowNo', width: 70 },
     { title: '采购订单编号', dataIndex: 'purchaseOrderNo', key: 'purchaseOrderNo', width: 130 },
     { title: '地市', dataIndex: 'cityName', key: 'cityName', width: 90 },
-    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 90 },
+    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '含税金额（元）', dataIndex: 'completionAmountFen', key: 'completionAmountFen', render: (v: number | null) => <span style={{ color: Number(v) < 0 ? '#c64b4b' : undefined }}>{fenToYuan(v)}</span> },
     { title: '费率快照', dataIndex: 'feeRateSnapshotBp', key: 'feeRateSnapshotBp', render: (v: number | null) => v != null ? `${(v / 100).toFixed(2)}%` : '-' },
     { title: '毛利润（元）', dataIndex: 'grossProfitFen', key: 'grossProfitFen', render: (v: number | null) => fenToYuan(v) },

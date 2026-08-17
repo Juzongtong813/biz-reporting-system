@@ -219,3 +219,27 @@ M8 完成后进入发布候选需同时满足：
 - MySQL：集成 **8/8 真实 MySQL**（含 m11）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
 - preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
+
+
+---
+
+## 治理五次复核返工（2026-08-17，e059035 复核不通过后的六次返工）
+
+### 复核结论
+治理负责人复核 e059035：后端数据范围、实时明细聚合、合同额分摊和有效额度计算均已修复，但经营分析页面缺少实际可操作的筛选与导出控件（P1×2 + P2×1）。发布候选评审保持冻结。
+
+### 返工修复（全部完成并验证）
+**P1**
+1. 组合筛选/导出控件落地：页面顶部渲染**月份选择器（yyyy年mm月）**、**地市选择器**、**清空筛选按钮**（有筛选时出现）、**导出当前视图按钮**（带下载图标，触发 CSV 下载）；明确标识月份筛选仅影响经营金额与超额；合同数量/合同额为累计库存口径；提醒为累计实时口径（不受月份筛选影响）。
+2. 提醒月份语义明确：确定为**累计实时口径**，删除 alerts 伪 month 参数（服务端/controller/前端 API 恢复 cityId 单参数），页面标注提醒不受月份筛选影响。
+
+**P2**
+3. 月份显示统一 **yyyy年mm月**：趋势表、一致性警告表、订单/线下完工/成本列表业务月份列（formatMonth 工具，数据库/接口保留 YYYY-MM）。
+
+**M12 浏览器级交互测试**（test:m12-interaction，playwright）：筛选/导出控件渲染、口径标识文案、趋势表月份格式（2026年06月）、选月份→清空筛选→恢复交互、导出触发下载。
+
+### 六次验证结果
+- SQLite：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9/M10/M11/M12 全套通过
+- MySQL：集成 **8/8 真实 MySQL**（m9/m10/m11 条件化）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
+- preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
+- 发布候选评审仍冻结，待治理负责人复核本返工

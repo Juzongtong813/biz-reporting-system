@@ -14,6 +14,13 @@ const STATUS: Record<string, { label: string; color: string }> = {
   voided: { label: '已作废', color: 'default' },
 };
 
+
+/** 显示层月份统一 yyyy年mm月（数据库/接口保留 YYYY-MM） */
+function formatMonth(v: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(v ?? ''));
+  return m ? `${m[1]}年${m[2]}月` : (v ?? '-');
+}
+
 function fenToYuan(fen: number | null): string {
   return fen == null ? '-' : (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -101,7 +108,7 @@ export default function BizOfflineCompletions() {
   const columns = [
     { title: '合同编号', dataIndex: 'contractId', key: 'contractId', render: (v: string) => contracts.find((c) => c.id === v)?.contractNo ?? v?.slice(0, 8) ?? '-' },
     { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cities.find((c) => c.id === v)?.name ?? '-' },
-    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 90 },
+    { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '金额（元）', dataIndex: 'amountFen', key: 'amountFen', render: (v: number) => fenToYuan(Number(v)) },
     { title: '说明', dataIndex: 'summary', key: 'summary', ellipsis: true },
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => { const s = STATUS[v] ?? { label: v, color: 'default' }; return <Tag color={s.color}>{s.label}</Tag>; } },

@@ -318,11 +318,8 @@ export function bizAnalysisOverrunList(params?: { month?: string; cityId?: strin
   return request.get('/biz/analysis/overrun-list', { params }).then((r) => r.data);
 }
 
-export function bizAnalysisAlerts(cityId?: string, month?: string): Promise<{ items: Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }> }> {
-  const params: Record<string, string> = {};
-  if (cityId) params.cityId = cityId;
-  if (month) params.month = month;
-  return request.get('/biz/analysis/alerts', { params }).then((r) => r.data);
+export function bizAnalysisAlerts(cityId?: string): Promise<{ items: Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }> }> {
+  return request.get('/biz/analysis/alerts', { params: cityId ? { cityId } : {} }).then((r) => r.data);
 }
 
 export function bizAggregateRecalc(scope: Record<string, unknown>, confirmAll = false): Promise<{ ok: boolean }> {
