@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Col, Modal, Row, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
-  bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList,
+  bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts,
   bizAggregateRecalc, bizAggregateCheck,
 } from '@/api/biz.api';
 
@@ -20,6 +20,7 @@ export default function BizAnalysis() {
   const [trend, setTrend] = useState<Array<Record<string, unknown>>>([]);
   const [cities, setCities] = useState<Array<Record<string, unknown>>>([]);
   const [overruns, setOverruns] = useState<Array<Record<string, unknown>>>([]);
+  const [contractAlerts, setContractAlerts] = useState<Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }>>([]);
   const [checkResult, setCheckResult] = useState<{ warningCount: number; warnings: Array<Record<string, unknown>> } | null>(null);
   const [filterMonth, setFilterMonth] = useState<string | undefined>(undefined);
   const [filterCity, setFilterCity] = useState<string | undefined>(undefined);
@@ -28,29 +29,31 @@ export default function BizAnalysis() {
 
   const load = useCallback(async () => {
     const params = { month: filterMonth, cityId: filterCity };
-    const [ov, tr, ct, or] = await Promise.all([
+    const [ov, tr, ct, or, al] = await Promise.all([
       bizAnalysisOverview(params),
-      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(),
+      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList(), bizAnalysisAlerts(),
     ]);
     setOverview(ov);
     setTrend(tr.items);
-    const cityRows = filterCity ? ct.items.filter((r) => r.cityId === filterCity) : ct.items;
+    setContractAlerts(al.items);
+    const cityRows = filterCity ? ct.items.filter((r: Record<string, unknown>) => r.cityId === filterCity) : ct.items;
     setCities(cityRows);
     setOverruns(or.items);
-    setCityOptions(ct.items.map((r) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
-    setMonthOptions(tr.items.map((r) => ({ label: String(r.month), value: String(r.month) })));
+    setCityOptions(ct.items.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
+    setMonthOptions(tr.items.map((r: Record<string, unknown>) => ({ label: String(r.month), value: String(r.month) })));
   }, [filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
 
   /** CSV 导出当前地市指标视图（元，千分位两位小数） */
   const onExport = () => {
-    const header = ['地市', '订单完工(元)', '线下完工(元)', '毛利(元)', '成本(元)', '净利(元)', '超额标记'];
+    const header = ['地市', '合同数量', '合同额(元)', '订单完工(元)', '线下完工(元)', '毛利(元)', '成本(元)', '净利(元)', '超额标记'];
     const rows = cities.map((r) => {
       const overrun = overruns.find((o) => o.type === 'city' && o.cityId === r.cityId);
-      return [String(r.cityId ?? '').slice(0, 8), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
+      return [String(r.cityId ?? '').slice(0, 8), String(Number(r.contractCount) || 0), fenToYuan(Number(r.contractAmountFen) || 0), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
     });
-    const csv = '\uFEFF' + [header, ...rows].map((r) => r.join(',')).join('\n');
+    const escapeCsv = (v: string) => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
+    const csv = '\uFEFF' + [header, ...rows].map((r) => r.map(escapeCsv).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -138,15 +141,20 @@ export default function BizAnalysis() {
         </Col>
       </Row>
 
-      {overruns.length > 0 && (
-        <Card size="small" title="超额提醒" style={{ marginBottom: 16, borderLeft: '3px solid #c64b4b' }}>
+      {(contractAlerts.length > 0 || overruns.length > 0) && (
+        <Card size="small" title="提醒中心" style={{ marginBottom: 16, borderLeft: '3px solid #c64b4b' }}>
           <Space wrap>
+            {contractAlerts.slice(0, 10).map((a, i) => (
+              <Tag key={`a${i}`} color={a.alertType === 'expired' || a.alertType === 'overfull' ? 'red' : a.alertType === 'expiring' ? 'orange' : 'blue'}>
+                {a.alertType === 'expiring' ? '即将到期' : a.alertType === 'expired' ? '已到期' : a.alertType === 'nearly_full' ? '即将满额' : '满额完成'} {String(a.contractNo ?? a.contractId ?? '').slice(0, 14)}
+              </Tag>
+            ))}
             {overruns.slice(0, 8).map((o, i) => (
-              <Tag key={i} color={o.type === 'contract' ? 'red' : 'orange'}>
+              <Tag key={`o${i}`} color={o.type === 'contract' ? 'red' : 'orange'}>
                 {o.type === 'contract' ? `合同 ${String(o.contractNo ?? o.id ?? '').slice(0, 12)}` : `地市 ${String(o.cityId ?? '').slice(0, 8)}`} 超额 {fenToYuan(Number(o.overrunFen))}
               </Tag>
             ))}
-            {overruns.length > 8 && <Text type="secondary">…共 {overruns.length} 项</Text>}
+            {(contractAlerts.length > 10 || overruns.length > 8) && <Text type="secondary">…共 {contractAlerts.length + overruns.length} 项</Text>}
           </Space>
         </Card>
       )}
@@ -186,6 +194,8 @@ export default function BizAnalysis() {
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
                 { title: '地市', dataIndex: 'cityName', key: 'cityName', render: (_: unknown, r: Record<string, unknown>) => String(r.cityName ?? r.cityId ?? '-').slice(0, 12) },
+                { title: '合同数', dataIndex: 'contractCount', key: 'cc', render: (v: number) => Number(v) || 0 },
+                { title: '合同额（元）', dataIndex: 'contractAmountFen', key: 'ca', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '线下完工（元）', dataIndex: 'offlineCompletionFen', key: 'of', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '毛利（元）', dataIndex: 'grossProfitFen', key: 'gp', render: (v: number) => fenToYuan(Number(v)) },

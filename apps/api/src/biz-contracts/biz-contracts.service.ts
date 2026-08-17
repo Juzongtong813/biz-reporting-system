@@ -157,13 +157,26 @@ export class BizContractsService {
     const contract = await this.getContractOrFail(id);
     await this.assertContractVisible(auth, contract);
 
-    const allocations = await this.allocationRepo.findBy({ contractId: id });
-    const feeRates = await this.feeRateRepo.findBy({ contractId: id });
+    // 数据范围裁剪：地市用户只看自己地市的分配/费率/完工；省范围看省下辖市；all/contract 全量
+    let visibleCityIds: Set<string> | null = null;
+    if (auth.dataScope.scopeType === 'city') {
+      visibleCityIds = auth.dataScope.cityId ? new Set([auth.dataScope.cityId]) : new Set();
+    } else if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
+      const provinceCities = await this.cityRepo.createQueryBuilder('ct')
+        .select('ct.id', 'id')
+        .where('ct.provinceId IN (:...provinceIds)', { provinceIds: auth.dataScope.provinceIds })
+        .getRawMany();
+      visibleCityIds = new Set(provinceCities.map((c) => c.id));
+    }
+    const inScope = (cityId: string | null | undefined) => !visibleCityIds || (cityId != null && visibleCityIds.has(cityId));
+
+    const allocations = (await this.allocationRepo.findBy({ contractId: id })).filter((a) => inScope(a.cityId));
+    const feeRates = (await this.feeRateRepo.findBy({ contractId: id })).filter((f) => inScope(f.cityId));
     const alerts = await this.alertRepo.findBy({ contractId: id, currentStatus: 'active' });
 
-    // 有效完工（订单未作废 + 线下完工已审核未作废）
-    const orders = await this.orderRowRepo.findBy({ contractId: id, isVoid: false });
-    const offlines = await this.offlineRepo.findBy({ contractId: id, status: 'approved' });
+    // 有效完工（订单未作废 + 线下完工已审核未作废；按可见地市过滤）
+    const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false })).filter((o) => inScope(o.cityId));
+    const offlines = (await this.offlineRepo.findBy({ contractId: id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const orderCompletionFen = orders.reduce((s, o) => s + (Number(o.completionAmountFen) || 0), 0);
     const offlineCompletionFen = offlines.reduce((s, o) => s + Number(o.amountFen), 0);
     const totalCompletionFen = orderCompletionFen + offlineCompletionFen;
@@ -224,7 +237,7 @@ export class BizContractsService {
         overrunFen,
       },
       // M6：成本/净利（按合同分配地市汇总已审核成本）
-      finance: await this.financeForContract(contract),
+      finance: await this.financeForContract(contract, visibleCityIds),
     };
   }
 
@@ -447,8 +460,9 @@ export class BizContractsService {
   // ================= 预警 =================
 
   /** 合同维度财务参考（成本不关联合同：按分配地市汇总为【参考值】，一市多合同会重复计入，不用于净利润口径） */
-  private async financeForContract(contract: BizContractEntity): Promise<{ referenceCostFen: number; grossProfitFen: number; referenceNetProfitFen: number; isReference: boolean }> {
-    const allocations = await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' });
+  private async financeForContract(contract: BizContractEntity, visibleCityIds?: Set<string> | null): Promise<{ referenceCostFen: number; grossProfitFen: number; referenceNetProfitFen: number; isReference: boolean }> {
+    const inScope = (cityId: string | null | undefined) => !visibleCityIds || (cityId != null && visibleCityIds.has(cityId));
+    const allocations = (await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' })).filter((a) => inScope(a.cityId));
     const cityIds = allocations.map((a) => a.cityId);
     let costFen = 0;
     if (cityIds.length > 0) {
@@ -459,8 +473,8 @@ export class BizContractsService {
         .getRawOne();
       costFen = Number(costs?.total ?? 0);
     }
-    const orders = await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false });
-    const offlines = await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' });
+    const orders = (await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false })).filter((o) => inScope(o.cityId));
+    const offlines = (await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0)
       + offlines.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);
     return { referenceCostFen: costFen, grossProfitFen, referenceNetProfitFen: grossProfitFen - costFen, isReference: true };

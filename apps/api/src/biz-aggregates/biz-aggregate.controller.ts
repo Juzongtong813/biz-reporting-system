@@ -59,6 +59,12 @@ export class BizAggregateController {
     return { items: await this.service.byCity(auth, month) };
   }
 
+  @Get('analysis/alerts')
+  @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
+  async analysisAlerts(@BizAuthUser() auth: BizAuthContext) {
+    return { items: await this.service.analysisAlerts(auth) };
+  }
+
   @Get('analysis/overrun-list')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
   async overrunList(@BizAuthUser() auth: BizAuthContext) {

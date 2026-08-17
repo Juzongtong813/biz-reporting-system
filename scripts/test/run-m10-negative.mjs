@@ -23,10 +23,15 @@ const requireFromApi = createRequire(path.join(apiRoot, 'package.json'));
 const { DataSource } = requireFromApi('typeorm');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m10-neg-'));
-const database = path.join(testRoot, 'm10.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'm10.sqlite');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: path.join(testRoot, 'src'),
   JWT_SECRET: 'm10-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm10-test-hmac-key-0123456789abcdef',
@@ -213,7 +218,82 @@ try {
   assert.equal(res.status, 200);
   assert.equal(res.data.orderCompletionFen, 100_000_00, 'M10 server-side city filter: only jinan order 100000');
 
-  console.log('M10_NEGATIVE_OK cross-scope approve/reject/void/restore + contract-detail + contract-recalc + batch-stats-scope + server-filter all passed');
+
+  // ============ P1-3 补充：成本 void/restore 跨范围 403 ============
+  await api('POST', `/biz/costs/${cost.data.id}/approve`, { token: superToken });
+  assert.equal((await api('POST', `/biz/costs/${cost.data.id}/void`, { token: adminToken, body: { reason: 'x' } })).status, 403, 'M10 cross-scope cost void rejected');
+  assert.ok([200, 201].includes((await api('POST', `/biz/costs/${cost.data.id}/void`, { token: superToken, body: { reason: 'super' } })).status), 'M10 super cost void ok');
+  assert.equal((await api('POST', `/biz/costs/${cost.data.id}/restore`, { token: adminToken })).status, 403, 'M10 cross-scope cost restore rejected');
+
+  // ============ P1-3 补充：失败列表范围过滤（listFailures 按合同实际省份/分配地市判断） ============
+  {
+    const ds = useMysql
+      ? new DataSource({ type: 'mysql', host: process.env.MIGRATION_TEST_MYSQL_HOST, port: Number(process.env.MIGRATION_TEST_MYSQL_PORT), username: process.env.MIGRATION_TEST_MYSQL_USER, password: process.env.MIGRATION_TEST_MYSQL_PASSWORD, database })
+      : new DataSource({ type: 'better-sqlite3', database });
+    await ds.initialize();
+    const ins = async (suffix, scopeDesc) => {
+      await ds.query(`INSERT INTO biz_aggregate_failures (id, business_object_type, business_object_id, scope_desc, error, status) VALUES (?, 'offline_completion', ?, ?, 'M10 test failure', 'open')`, [`m10f-${suffix}`, `m10obj-${suffix}`, scopeDesc]);
+    };
+    await ins('jinan', JSON.stringify({ cityId: jinanId, month: '2026-06' }));
+    await ins('dezhou-city', JSON.stringify({ cityId: dezhouId, month: '2026-06' }));
+    await ins('dezhou-contract', JSON.stringify({ contractId: offContract.data.id, month: '2026-06' }));
+    await ds.destroy();
+  }
+  res = await api('GET', '/biz/aggregates/failures', { token: adminToken }); // 济南 city scope
+  const adminFailIds = (res.data.items ?? []).map((f) => f.id);
+  assert.ok(adminFailIds.includes('m10f-jinan'), 'M10 failure list includes own city');
+  assert.ok(!adminFailIds.includes('m10f-dezhou-city'), 'M10 failure list hides other city direct record');
+  assert.ok(!adminFailIds.includes('m10f-dezhou-contract'), 'M10 failure list hides other-city contract (contractId-only)');
+  res = await api('GET', '/biz/aggregates/failures', { token: superToken });
+  const superFailIds = (res.data.items ?? []).map((f) => f.id);
+  assert.ok(['m10f-jinan', 'm10f-dezhou-city', 'm10f-dezhou-contract'].every((x) => superFailIds.includes(x)), 'M10 super sees all failures');
+
+  // ============ P1-3 补充：一致性检查范围一致（不产生跨范围 missing_aggregate） ============
+  const off2 = await api('POST', '/biz/offline-completions', { token: cityToken, body: {
+    contractId, cityId: dezhouId, businessMonth: '2026-07', amountFen: 30_000_00, summary: '德州完工2',
+  } });
+  await api('POST', `/biz/offline-completions/${off2.data.id}/submit`, { token: cityToken });
+  await api('POST', `/biz/offline-completions/${off2.data.id}/approve`, { token: superToken });
+  res = await api('POST', '/biz/aggregates/check', { token: adminToken });
+  assert.ok([200, 201].includes(res.status), `M10 checkConsistency accessible for scoped admin: ${JSON.stringify(res.data)}`);
+  const adminWarnKeys = (res.data.warnings ?? []).map((w) => `${w.type}|${String(w.dimension ?? '')}`);
+  assert.ok(!adminWarnKeys.some((k) => k.includes(dezhouId)), `M10 checkConsistency hides cross-city missing_aggregate: ${JSON.stringify(adminWarnKeys.slice(0, 5))}`);
+
+  // ============ P1-3 补充：共享合同裁剪（地市用户只看自己地市） ============
+  res = await api('GET', `/biz/contracts/${contractId}`, { token: adminToken }); // 济南 city scope，合同有济南分配
+  assert.equal(res.status, 200, 'M10 shared contract visible to jinan admin');
+  assert.equal(res.data.allocations.length, 1, `M10 shared contract allocations clipped to jinan: ${JSON.stringify(res.data.allocations.map((a) => a.cityId))}`);
+  assert.equal(res.data.allocations[0].cityId, jinanId, 'M10 clipped allocation is jinan');
+  assert.equal(res.data.feeRates.length, 1, 'M10 fee rates clipped to jinan');
+  assert.equal(res.data.feeRates[0].cityId, jinanId, 'M10 clipped fee rate is jinan');
+  assert.equal(res.data.progress.orderCompletionFen, 100_000_00, `M10 clipped completion only jinan order 100000: ${res.data.progress.orderCompletionFen}`);
+  res = await api('GET', `/biz/contracts/${contractId}`, { token: superToken });
+  assert.equal(res.data.allocations.length, 2, 'M10 super sees all allocations');
+  assert.equal(res.data.progress.orderCompletionFen, 150_000_00, 'M10 super sees full completion 150000');
+
+  // ============ P1-3 补充：省级跨省合同（province 范围访问外省 → 403） ============
+  await api('PUT', `/biz/admin/users/${adminUserId}/data-scopes`, { token: superToken, body: { scopes: [{ provinceId: shandongId }] } });
+  res = await api('POST', '/biz/auth/login', { body: { username: 'm10_admin', password: 'M10-secret-1' } });
+  adminToken = res.data.accessToken;
+  // 种子只有山东省；直插浙江省记录（测试库专用），构造省范围外的合同
+  const zjProvinceId = randomUUID();
+  {
+    const ds = useMysql
+      ? new DataSource({ type: 'mysql', host: process.env.MIGRATION_TEST_MYSQL_HOST, port: Number(process.env.MIGRATION_TEST_MYSQL_PORT), username: process.env.MIGRATION_TEST_MYSQL_USER, password: process.env.MIGRATION_TEST_MYSQL_PASSWORD, database })
+      : new DataSource({ type: 'better-sqlite3', database });
+    await ds.initialize();
+    await ds.query(`INSERT INTO biz_provinces (id, code, name, status) VALUES (?, '330000', '浙江省', 'active')`, [zjProvinceId]);
+    await ds.destroy();
+  }
+  const zjContract = await api('POST', '/biz/contracts', { token: superToken, body: {
+    contractNo: 'HT-M10-ZJ', contractName: '浙江合同', taxInclusiveAmountFen: 300_000_00,
+    provinceId: zjProvinceId, startDate: '2026-01-01', endDate: '2026-12-31',
+  } });
+  assert.equal((await api('GET', `/biz/contracts/${zjContract.data.id}`, { token: adminToken })).status, 403, 'M10 cross-province contract detail rejected');
+  res = await api('POST', '/biz/aggregates/recalc', { token: adminToken, body: { scope: { contractId: zjContract.data.id } } });
+  assert.equal(res.status, 403, 'M10 cross-province contract recalc rejected');
+
+  console.log('M10_NEGATIVE_OK cross-scope 4x4 ops + contract-detail-clip + contract-recalc + failures-scope + check-scope + cross-province + batch-stats-scope + server-filter all passed');
 } finally {
   if (apiProcess && apiProcess.exitCode === null) apiProcess.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 1000));

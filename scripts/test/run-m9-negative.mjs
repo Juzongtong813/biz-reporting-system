@@ -24,11 +24,16 @@ const { DataSource } = requireFromApi('typeorm');
 const XLSX = requireFromApi('xlsx');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m9-neg-'));
-const database = path.join(testRoot, 'm9.sqlite');
+const useMysql = !!process.env.BIZ_TEST_MYSQL_DATABASE;
+const database = useMysql ? process.env.BIZ_TEST_MYSQL_DATABASE : path.join(testRoot, 'm9.sqlite');
 const storageRoot = path.join(testRoot, 'source-files');
 const env = {
   ...process.env,
-  NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  NODE_ENV: 'test', DB_TYPE: useMysql ? 'mysql' : 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
+  DB_HOST: useMysql ? process.env.MIGRATION_TEST_MYSQL_HOST : undefined,
+  DB_PORT: useMysql ? process.env.MIGRATION_TEST_MYSQL_PORT : undefined,
+  DB_USERNAME: useMysql ? process.env.MIGRATION_TEST_MYSQL_USER : undefined,
+  DB_PASSWORD: useMysql ? process.env.MIGRATION_TEST_MYSQL_PASSWORD : undefined,
   FACT_SOURCE_STORAGE_ROOT: storageRoot,
   JWT_SECRET: 'm9-test-jwt-secret-0123456789abcdef',
   AUTH_SECURITY_HMAC_KEY: 'm9-test-hmac-key-0123456789abcdef',
@@ -170,9 +175,13 @@ try {
   res = await api('POST', `/biz/offline-completions/${off.data.id}/approve`, { token: adminToken });
   assert.equal(res.status, 201, 'approve offline');
   {
-    const ds = new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
+    const ds = useMysql
+      ? new DataSource({ type: 'mysql', host: process.env.MIGRATION_TEST_MYSQL_HOST, port: Number(process.env.MIGRATION_TEST_MYSQL_PORT), username: process.env.MIGRATION_TEST_MYSQL_USER, password: process.env.MIGRATION_TEST_MYSQL_PASSWORD, database })
+      : new DataSource({ type: 'better-sqlite3', database, synchronize: false, entities: [path.join(apiRoot, 'dist', '**', '*.entity.js')] });
     await ds.initialize();
-    const offEntity = await ds.getRepository('BizOfflineCompletionEntity').findOneBy({ id: off.data.id });
+    const offEntity = useMysql
+      ? (await ds.query('SELECT id, fee_rate_snapshot_bp AS feeRateSnapshotBp, gross_profit_fen AS grossProfitFen FROM biz_offline_completions WHERE id = ?', [off.data.id]))[0]
+      : await ds.getRepository('BizOfflineCompletionEntity').findOneBy({ id: off.data.id });
     assert.equal(Number(offEntity.feeRateSnapshotBp), 1200, 'M9 fee snapshot 1200bp');
     assert.equal(Number(offEntity.grossProfitFen), 6_000_00, 'M9 offline gross = 50000 x 12% = 6000');
     await ds.destroy();

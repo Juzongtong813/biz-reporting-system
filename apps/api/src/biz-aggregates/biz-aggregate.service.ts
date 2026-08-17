@@ -193,7 +193,7 @@ export class BizAggregateService {
   }
 
   /** 从明细聚合到汇总行（成本按地市维度，不关联合同） */
-  private async collectAggRows(scope: RecalcScope): Promise<AggRow[]> {
+  private async collectAggRows(scope: RecalcScope, auth?: BizAuthContext): Promise<AggRow[]> {
     const orderQb = this.orderRowRepo.createQueryBuilder('o')
       .select('o.provinceId', 'provinceId')
       .addSelect('o.cityId', 'cityId')
@@ -213,6 +213,11 @@ export class BizAggregateService {
     // 完工表无 province_id 列：省级范围用 地市→省份 子查询过滤（修复省级重算查询）
     if (scope.provinceId) offlineQb.andWhere('f.cityId IN (SELECT id FROM biz_cities WHERE province_id = :offlineProvinceId)', { offlineProvinceId: scope.provinceId });
     else this.applyScope(offlineQb, scope, 'f');
+    // auth 数据范围过滤（checkConsistency 明细侧与汇总侧使用完全相同范围，防止跨范围 missing_aggregate 泄露）
+    if (auth) {
+      this.applyAggScope(orderQb, auth, 'o');
+      this.applyAggScope(offlineQb, auth, 'f');
+    }
 
     // 预加载地市→省份映射（完工/成本表无 province_id 列）
     const { CityEntity } = await import('../main-data/city.entity');
@@ -252,6 +257,7 @@ export class BizAggregateService {
     if (scope.cityId) costQb.andWhere('c.cityId = :cityId', { cityId: scope.cityId });
     if (scope.provinceId) costQb.andWhere('c.cityId IN (SELECT id FROM biz_cities WHERE province_id = :costProvinceId)', { costProvinceId: scope.provinceId });
     if (scope.month) costQb.andWhere('c.businessMonth = :month', { month: scope.month });
+    if (auth) this.applyAggScope(costQb, auth, 'c');
     const costRows = (await costQb.groupBy('c.cityId, c.businessMonth').getRawMany()) as Array<{ cityId: string; businessMonth: string; costFen: string }>;
     for (const r of costRows) {
       // 成本行独立（contractId=NULL，不关联合同；一个地市多个合同时成本不可拆分）
@@ -274,18 +280,32 @@ export class BizAggregateService {
   async listFailures(auth: BizAuthContext): Promise<BizAggregateFailureEntity[]> {
     const all = await this.failureRepo.find({ order: { createdAt: 'DESC' }, take: 200 });
     const scope = auth.dataScope;
+    // 预加载：合同→省份、合同→分配地市（失败记录可见性按合同实际省份与分配地市判断，禁止放行任意 contractId）
+    const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true } });
+    const provinceByContract = new Map(contracts.map((c) => [c.id, c.provinceId]));
+    const allocs = await this.allocRepo.find({ where: { status: 'active' }, select: { contractId: true, cityId: true } });
+    const citiesByContract = new Map<string, Set<string>>();
+    for (const a of allocs) {
+      if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
+      citiesByContract.get(a.contractId)!.add(a.cityId);
+    }
     const visible = all.filter((f) => {
       if (scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
-      try {
-        const s = JSON.parse(f.scopeDesc ?? '{}') as RecalcScope;
-        if (s.contractId || s.cityId || s.provinceId) {
-          if (scope.scopeType === 'city') return s.cityId === scope.cityId || s.contractId != null;
-          if (scope.scopeType === 'province' && scope.provinceIds.length > 0) return s.provinceId ? scope.provinceIds.includes(s.provinceId) : true;
-        }
-        return false;
-      } catch {
+      let s: RecalcScope;
+      try { s = JSON.parse(f.scopeDesc ?? '{}') as RecalcScope; } catch { return false; }
+      if (scope.scopeType === 'city') {
+        // 直接地市维度：必须等于绑定地市；合同维度：合同必须已分配绑定地市
+        if (s.cityId != null) return s.cityId === scope.cityId;
+        if (s.contractId != null) return citiesByContract.get(s.contractId)?.has(scope.cityId ?? '') ?? false;
         return false;
       }
+      if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
+        // 直接省份维度：必须在范围内；合同维度：合同实际省份必须在范围内（禁止仅 contractId 即放行）
+        if (s.provinceId != null) return scope.provinceIds.includes(s.provinceId);
+        if (s.contractId != null) return provinceByContract.has(s.contractId) && scope.provinceIds.includes(provinceByContract.get(s.contractId)!);
+        return false;
+      }
+      return false;
     });
     return visible.slice(0, 50);
   }
@@ -301,7 +321,7 @@ export class BizAggregateService {
     const targetMonths = months.map((m) => m.month).sort();
     for (const month of targetMonths) {
       const scope = { month };
-      const detailRows = await this.collectAggRows(scope);
+      const detailRows = await this.collectAggRows(scope, auth);
       const aggQb = this.aggRepo.createQueryBuilder('a');
       this.applyAggScope(aggQb, auth);
       const aggRows = await aggQb.andWhere('a.businessMonth = :month', { month }).getMany();
@@ -324,17 +344,17 @@ export class BizAggregateService {
 
   // ================= 分析聚合 API =================
 
-  /** 分析域数据范围过滤：all 不限；city→地市；province→省下辖市；contract 无地域维度→拒绝 */
-  private applyAggScope(qb: { andWhere: (cond: string, params?: Record<string, unknown>) => unknown }, auth: BizAuthContext): void {
+  /** 分析域数据范围过滤：all 不限；city→地市；province→省下辖市；contract 无地域维度→拒绝（alias 参数化，明细侧复用） */
+  private applyAggScope(qb: { andWhere: (cond: string, params?: Record<string, unknown>) => unknown }, auth: BizAuthContext, alias = 'a'): void {
     const scope = auth.dataScope;
     if (scope.scopeType === 'all') return;
     if (scope.scopeType === 'contract') throw new ForbiddenException('当前账号无经营分析数据范围');
     if (scope.scopeType === 'city') {
-      qb.andWhere('a.cityId = :scopeCityId', { scopeCityId: scope.cityId });
+      qb.andWhere(`${alias}.cityId = :scopeCityId`, { scopeCityId: scope.cityId });
       return;
     }
     if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
-      qb.andWhere('a.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...scopeProvinceIds))', { scopeProvinceIds: scope.provinceIds });
+      qb.andWhere(`${alias}.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...scopeProvinceIds))`, { scopeProvinceIds: scope.provinceIds });
     }
   }
 
@@ -397,10 +417,58 @@ export class BizAggregateService {
       .addSelect('SUM(a.grossProfitFen)', 'grossProfitFen')
       .addSelect('SUM(a.costFen)', 'costFen')
       .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
+      .addSelect('COUNT(DISTINCT a.contractId)', 'contractCount')
       .leftJoin('biz_cities', 'city', 'city.id = a.cityId')
       .groupBy('a.cityId');
     if (month) qb.andWhere('a.businessMonth = :month', { month });
-    return qb.getRawMany();
+    const rows = await qb.getRawMany();
+    // 地市合同额：按 合同额 × (该地市分配配额/合同总配额) 分摊，跨地市合同不重复计入
+    const allocs = await this.allocRepo.find({ where: { status: 'active' } });
+    const totalQuotaByContract = new Map<string, number>();
+    for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
+    const contracts = await this.contractRepo.find({ select: { id: true, taxInclusiveAmountFen: true } });
+    const amountByContract = new Map(contracts.map((c) => [c.id, Number(c.taxInclusiveAmountFen) || 0]));
+    const contractAmountByCity = new Map<string, number>();
+    for (const a of allocs) {
+      const quota = Number(a.quotaFen) || 0;
+      const totalQuota = totalQuotaByContract.get(a.contractId) || 0;
+      const allocCount = allocs.filter((x) => x.contractId === a.contractId).length || 1;
+      const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
+      contractAmountByCity.set(a.cityId, (contractAmountByCity.get(a.cityId) ?? 0) + (amountByContract.get(a.contractId) ?? 0) * share);
+    }
+    return rows.map((r) => ({
+      ...r,
+      contractCount: Number(r.contractCount) || 0,
+      contractAmountFen: Math.round(contractAmountByCity.get(r.cityId) ?? 0),
+    }));
+  }
+
+  /** 合同到期/满额提醒：nearly_full/overfull/expiring/expired（复用合同 tags，按 auth 数据范围过滤） */
+  async analysisAlerts(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {
+    const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
+    const scope = auth.dataScope;
+    // 预加载：合同→分配地市（city 范围可见性）
+    const allocs = await this.allocRepo.find({ where: { status: 'active' } });
+    const citiesByContract = new Map<string, Set<string>>();
+    for (const a of allocs) {
+      if (!citiesByContract.has(a.contractId)) citiesByContract.set(a.contractId, new Set());
+      citiesByContract.get(a.contractId)!.add(a.cityId);
+    }
+    const visible = contracts.filter((c) => {
+      if (scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
+      if (scope.scopeType === 'city') return citiesByContract.get(c.id)?.has(scope.cityId ?? '') ?? false;
+      if (scope.scopeType === 'province' && scope.provinceIds.length > 0) return scope.provinceIds.includes(c.provinceId);
+      return false;
+    });
+    const alerts: Array<Record<string, unknown>> = [];
+    for (const c of visible) {
+      const tags = (c.tags ?? []) as string[];
+      const remindTypes = tags.filter((t) => ['nearly_full', 'overfull', 'expiring', 'expired'].includes(t));
+      for (const tag of remindTypes) {
+        alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: tag, endDate: c.endDate, status: c.status });
+      }
+    }
+    return alerts.slice(0, 100);
   }
 
   async overrunList(auth: BizAuthContext): Promise<Array<Record<string, unknown>>> {

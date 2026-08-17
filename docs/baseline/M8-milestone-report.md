@@ -137,3 +137,30 @@ M8 完成后进入发布候选需同时满足：
 - MySQL：集成 7/7（含 m9/m10）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
 - preflight PASS（含 gate env，BLK-1 resolved）
 - 发布候选评审仍冻结，待治理负责人复核本返工
+
+
+---
+
+## 治理二次复核返工（2026-08-17，0730ef4 复核不通过后的三次返工）
+
+### 复核结论
+治理负责人复核 0730ef4：仍不批准重启发布候选评审（P0×2 + P1×3 + P2×1）。发布候选评审保持冻结。
+
+### 返工修复（全部完成并验证）
+**P0**
+1. 汇总诊断范围过滤修复：`listFailures` 按**合同实际省份与分配地市**判断可见性（预加载 contract→province、contract→分配城市；地市用户不再放行任意 contractId 记录；省级用户对仅 contractId 记录需合同省份在范围内）；`checkConsistency` 明细侧 `collectAggRows(scope, auth)` 与汇总侧使用**完全相同的数据范围**（applyAggScope 别名参数化，order/offline/cost 三路同滤），不再生成跨范围 missing_aggregate 警告。
+2. 共享合同详情数据裁剪：地市用户通过合同可见性后，详情只返回**自己地市的分配/费率/订单/线下完工**（visibleCityIds 裁剪 allocations/feeRates/orders/offlines/finance）；省范围按省下辖市裁剪；super 全量对照。
+
+**P1**
+3. CSV 转义实际落地：`escapeCsv`（千分位逗号/引号/换行 → 引号包裹）写入 BizAnalysis onExport，随代码提交。
+4. 经营提醒与地市指标补齐：新增 `analysisAlerts`（复用合同 tags：即将到期/已到期/即将满额/满额完成，按 auth 范围过滤合同可见性）+ controller `analysis/alerts` 端点 + 前端「提醒中心」卡（到期/满额 + 超额合并）；地市汇总新增**合同数量（COUNT DISTINCT）、合同额（按分配配额比例分摊，跨地市不重复）、总完工额**；前端地市表 + CSV 同步新增列。
+5. M10 覆盖补齐：成本 void/restore 跨范围 403；失败列表范围过滤（city 见自己城市/隐藏仅德州合同记录，super 全见）；一致性检查不产生跨范围 missing_aggregate；共享合同裁剪断言（济南只看济南分配/费率/完工 10 万，super 全量 15 万）；省级跨省合同（直插浙江，山东范围 admin 详情/重算 403）。**m9/m10 测试脚本改为真 MySQL 条件化**（env + DataSource 直连双模式），MySQL 集成 7/7 为真实 MySQL 验证。
+
+**P2**
+6. 合同详情前端接入成本参考值：BizContractDetail.finance 类型 + 抽屉「完工毛利/所分配地市成本参考/参考净利」+ 参考值语义说明（成本不关联合同，一市多合同重复计入，不用于净利润口径）。
+
+### 三次验证结果
+- SQLite：typecheck/build 4 包、unit 20、architecture 0 违规、ledger 18、M2/M3/M5/M6/M7/M8/M9/M10 全套通过
+- MySQL：集成 **7/7 真实 MySQL**（m9/m10 已条件化）、正式 gate（001-017 ISOLATION_OK + FAILURE_LEDGER_OK）
+- preflight PASS（checksum/ledger/secrets + 12/12 + 含 gate env，BLK-1 resolved）
+- 发布候选评审仍冻结，待治理负责人复核本返工

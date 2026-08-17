@@ -338,6 +338,16 @@ export default function BizContracts() {
                         {detail.progress.overrunFen > 0 ? <Tag color="red">{fenToYuan(detail.progress.overrunFen)}</Tag> : '-'}
                       </Descriptions.Item>
                     </Descriptions>
+                    {detail.finance && (
+                      <Descriptions bordered size="small" column={3} style={{ marginTop: 12 }}>
+                        <Descriptions.Item label="完工毛利（元）">{fenToYuan(detail.finance.grossProfitFen)}</Descriptions.Item>
+                        <Descriptions.Item label="所分配地市成本参考（元）">{fenToYuan(detail.finance.referenceCostFen)}</Descriptions.Item>
+                        <Descriptions.Item label="参考净利（元）">{fenToYuan(detail.finance.referenceNetProfitFen)}</Descriptions.Item>
+                      </Descriptions>
+                    )}
+                    {detail.finance?.isReference && (
+                      <Text type="secondary" style={{ display: 'block', marginTop: 6 }}>注：成本不关联合同，按所分配地市汇总为参考值；一地市分配多合同时会重复计入，不用于净利润口径。</Text>
+                    )}
                     <div style={{ marginTop: 12 }}>
                       {detail.alerts.map((a) => <Tag key={a.alertType} color="orange">{ALERT_LABEL[a.alertType] ?? a.alertType}</Tag>)}
                       {detail.alerts.length === 0 && <Text type="secondary">无预警</Text>}
