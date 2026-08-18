@@ -54,22 +54,17 @@ export default function BizLogin() {
   return (
     <main className="biz-login-page">
       <section className="biz-login-shell" aria-label="经营数据中台登录">
-        <div className="biz-login-brand-panel">
-          <header className="biz-login-company">
-            <span className="biz-login-logo"><img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术有限公司" /></span>
+        <div className="biz-login-brand">
+          <span className="biz-login-logo"><img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术有限公司" /></span>
+          <div>
             <strong>中屹技术有限公司</strong>
-          </header>
-          <div className="biz-login-brand-copy">
             <span>经营协同 · 数据治理</span>
-            <Title level={1}>中屹技术欢迎您</Title>
-            <Text>低调、谨慎、务实</Text>
           </div>
-          <Text className="biz-login-trust"><SafetyOutlined /> 身份验证与业务权限由系统统一管理</Text>
         </div>
 
         <div className="biz-login-form-panel">
           <header className="biz-login-form-heading">
-            <span>经营数据中台</span>
+            <span className="v3-eyebrow">经营数据中台</span>
             <Title level={2}>登录工作台</Title>
             <Text>请输入系统管理员分配的账号和密码</Text>
           </header>

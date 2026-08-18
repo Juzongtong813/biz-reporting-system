@@ -41,18 +41,20 @@ export default function BizMaintenancePortal() {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F5F7F8', padding: 48 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
+    <div className="v3-portal">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={3} style={{ margin: 0 }}>维护管理</Title>
-          <Text type="secondary">二级模块门户 · 当前账号：{userName}</Text>
+          <div className="v3-page-description">二级模块门户 · 当前账号：{userName}</div>
         </div>
-        <Button onClick={() => navigate('/biz/portal')}>返回一级门户</Button>
+        <div className="v3-page-head-actions">
+          <Button onClick={() => navigate('/biz/portal')}>返回一级门户</Button>
+        </div>
       </div>
       {modules.length === 0 ? (
         <Empty description="当前账号无任何二级模块权限" />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16, maxWidth: 780 }}>
+        <div className="v3-portal-grid">
           {modules.map((m) => (
             <Card
               key={m.code}
@@ -60,9 +62,9 @@ export default function BizMaintenancePortal() {
               onClick={() => navigate(m.code === 'operation' ? '/biz/operation' : `/biz/placeholder/${m.code}`)}
               style={{ textAlign: 'center', padding: 16 }}
             >
-              <div style={{ color: '#173A53', marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: '#173A53' }}>{m.name}</div>
-              {m.code === 'operation' && <div style={{ color: '#0F766E', fontSize: 12, marginTop: 4 }}>进入实际业务</div>}
+              <div className="biz-module-icon" style={{ marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
+              <div className="biz-module-title">{m.name}</div>
+              {m.code === 'operation' && <div className="biz-module-tag">进入实际业务</div>}
             </Card>
           ))}
         </div>

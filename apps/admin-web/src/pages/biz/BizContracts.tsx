@@ -200,13 +200,13 @@ export default function BizContracts() {
   ];
 
   return (
-    <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+    <div className="v3-content">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>合同管理</Title>
-          <Text type="secondary">新基线（biz_）· 合同号唯一 · 生效后合同额锁定</Text>
+          <div className="v3-page-description">新基线（biz_）· 合同号唯一 · 生效后合同额锁定</div>
         </div>
-        <Space wrap>
+        <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>
           <Select
             allowClear placeholder="状态筛选" style={{ width: 140 }} value={statusFilter}

@@ -173,13 +173,15 @@ export default function BizAdmin() {
   if (!canManage) return <Result status="403" title="无权限访问" subTitle="账号与权限管理仅 super_admin 可操作。" />;
 
   return (
-    <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+    <div className="v3-content">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>账号与权限管理</Title>
-          <Text type="secondary">新基线（biz_）· 仅 super_admin 可操作</Text>
+          <div className="v3-page-description">新基线（biz_）· 仅 super_admin 可操作</div>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
+        <div className="v3-page-head-actions">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
+        </div>
       </div>
       <Tabs
         defaultActiveKey="users"

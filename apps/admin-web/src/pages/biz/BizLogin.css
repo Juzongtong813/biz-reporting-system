@@ -1,48 +1,49 @@
 .biz-login-page {
-  position: relative;
   display: grid;
   min-height: 100vh;
   min-height: 100dvh;
   place-items: center;
-  padding: 40px;
-  overflow: hidden;
-  isolation: isolate;
-  background: #1f3438 url('/login-sky-clouds.jpg') center / cover no-repeat;
+  padding: 24px;
+  background: linear-gradient(135deg, #eef3f1 0%, #f6f8f9 55%, #eaf1f5 100%);
 }
-.biz-login-page::before { position: absolute; inset: 0; z-index: -1; content: ''; background: linear-gradient(180deg, rgba(22, 38, 45, .28), rgba(22, 38, 45, .14) 40%, rgba(22, 38, 45, .52)); }
-.biz-login-shell { display: grid; width: min(920px, 100%); min-height: 548px; grid-template-columns: minmax(330px, .92fr) minmax(420px, 1.08fr); overflow: hidden; border: 1px solid rgba(255, 255, 255, .45); border-radius: 6px; background: rgba(250, 252, 251, .88); box-shadow: 0 24px 64px rgba(15, 35, 39, .32); backdrop-filter: blur(18px) saturate(120%); }
-.biz-login-brand-panel { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; padding: 40px 42px 34px; background: rgba(30, 47, 52, .94); color: #eef3f3; }
-.biz-login-company { display: flex; align-items: center; gap: 11px; font-size: 13px; }
-.biz-login-company strong { font-weight: 600; }
-.biz-login-logo { display: grid; width: 38px; height: 38px; place-items: center; overflow: hidden; border-radius: 4px; background: #fff; }
-.biz-login-logo img { display: block; width: 34px; height: auto; }
-.biz-login-brand-copy { margin: auto 0; }
-.biz-login-brand-copy > span, .biz-login-form-heading > span { color: #83d2a5; font-size: 11px; font-weight: 650; letter-spacing: .08em; }
-.biz-login-brand-copy h1 { max-width: 9em; margin: 12px 0 16px; color: #fff; font-size: 34px; font-weight: 650; line-height: 1.22; }
-.biz-login-brand-copy .ant-typography { color: #b8c4c7; font-size: 13px; }
-.biz-login-trust { color: #a6b2b5; font-size: 11px; line-height: 1.5; }
-.biz-login-trust .anticon { margin-right: 6px; color: #83d2a5; }
-.biz-login-form-panel { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 48px 62px 36px; }
-.biz-login-form-heading { margin-bottom: 27px; }
-.biz-login-form-heading h2 { margin: 6px 0 7px; color: #293238; font-size: 25px; line-height: 1.3; }
-.biz-login-form-heading .ant-typography { color: #68737b; font-size: 12px; }
-.biz-login-form-panel .ant-form-item { margin-bottom: 18px; }
+.biz-login-shell {
+  width: min(420px, 100%);
+  background: #fff;
+  border: 1px solid var(--v3-border, #dfe4e7);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(19, 31, 35, .10);
+  overflow: hidden;
+}
+.biz-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 28px 18px;
+  border-bottom: 1px solid var(--v3-border, #dfe4e7);
+  background: linear-gradient(180deg, #f3f7f4, #fff);
+}
+.biz-login-brand strong { font-size: 14px; font-weight: 600; color: var(--v3-fg, #293238); }
+.biz-login-brand span { display: block; margin-top: 2px; color: var(--v3-muted, #68737b); font-size: 11px; }
+.biz-login-logo { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 4px; background: #fff; border: 1px solid var(--v3-border, #dfe4e7); }
+.biz-login-logo img { display: block; width: 30px; height: auto; }
+.biz-login-form-panel { padding: 26px 28px 30px; }
+.biz-login-form-heading { margin-bottom: 22px; }
+.biz-login-form-heading .ant-typography { margin: 0; }
+.biz-login-form-heading h2 { margin: 6px 0 6px; color: var(--v3-fg, #293238); font-size: 22px; line-height: 1.3; }
+.biz-login-form-heading .ant-typography:last-child { color: var(--v3-muted, #68737b); font-size: 12px; }
+.biz-login-form-panel .ant-form-item { margin-bottom: 16px; }
 .biz-login-form-panel .ant-form-item-label > label { color: #465157; font-size: 12px; font-weight: 600; }
-.biz-login-form-panel .ant-input-affix-wrapper { min-height: 44px; border-radius: 4px; }
+.biz-login-form-panel .ant-input-affix-wrapper { min-height: 42px; border-radius: 4px; }
 .biz-login-form-panel .ant-input-prefix { margin-right: 9px; color: #818d93; }
-.biz-login-alert { margin: -10px 0 18px; border-radius: 4px; }
-.biz-login-remember.ant-form-item { margin: -1px 0 20px; }
-.biz-login-remember .ant-checkbox-wrapper { color: #68737b; font-size: 12px; }
-.biz-login-submit.ant-btn { min-height: 44px; border-radius: 4px; background: #2f9e62; font-weight: 600; box-shadow: 0 5px 12px rgba(47, 158, 98, .24); }
+.biz-login-alert { margin: -4px 0 16px; border-radius: 4px; }
+.biz-login-remember.ant-form-item { margin: -2px 0 18px; }
+.biz-login-remember .ant-checkbox-wrapper { color: var(--v3-muted, #68737b); font-size: 12px; }
+.biz-login-submit.ant-btn { min-height: 42px; border-radius: 4px; background: var(--v3-accent, #2f9e62); font-weight: 600; box-shadow: 0 4px 10px rgba(47, 158, 98, .20); }
 .biz-login-submit.ant-btn:hover { background: #278854 !important; }
-.biz-login-note { margin: 23px 0 0; color: #98a1a6; font-size: 10px; text-align: center; }
-.biz-login-footer { position: absolute; bottom: 14px; color: rgba(255, 255, 255, .84); font-size: 11px; text-shadow: 0 1px 6px rgba(15, 35, 39, .5); }
+.biz-login-note { margin: 18px 0 0; color: #98a1a6; font-size: 11px; text-align: center; }
+.biz-login-footer { margin-top: 16px; color: var(--v3-muted, #68737b); font-size: 11px; text-align: center; }
 @media (max-width: 760px) {
-  .biz-login-page { place-items: start center; padding: 18px 14px; overflow: auto; }
-  .biz-login-shell { grid-template-columns: 1fr; }
-  .biz-login-brand-panel { min-height: 250px; padding: 28px 26px 24px; }
-  .biz-login-brand-copy { margin: 30px 0; }
-  .biz-login-brand-copy h1 { max-width: none; margin: 8px 0 10px; font-size: 28px; }
-  .biz-login-form-panel { padding: 34px 26px 30px; }
-  .biz-login-footer { display: none; }
+  .biz-login-page { padding: 16px; }
+  .biz-login-shell { width: 100%; }
+  .biz-login-form-panel { padding: 22px 20px 26px; }
 }

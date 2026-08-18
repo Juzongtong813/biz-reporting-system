@@ -80,15 +80,16 @@ export default function BizLayout() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {!isMobile && (
-        <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={208} style={{ position: 'sticky', top: 0, height: '100vh' }}>
-          <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 600, fontSize: 14 }}>
-            {collapsed ? '中台' : '维护管理经营数据中台'}
+        <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={200} style={{ position: 'sticky', top: 0, height: '100vh' }}>
+          <div className="biz-sider-brand">
+            <img className="biz-sider-logo" src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术" />
+            {!collapsed && <span className="biz-sider-name">维护管理经营数据中台</span>}
           </div>
           {menu}
         </Sider>
       )}
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e8edf0', height: 48, lineHeight: '48px' }}>
+        <Header className="biz-header" style={{ background: '#fff', padding: '0 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e8edf0', height: 48, lineHeight: '48px' }}>
           <Space>
             {isMobile && <Button type="text" icon={<MenuOutlined />} onClick={() => setMobileOpen(true)} />}
             {isMobile && <Text strong>经营数据中台</Text>}

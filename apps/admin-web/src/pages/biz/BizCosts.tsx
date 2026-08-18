@@ -129,13 +129,13 @@ export default function BizCosts() {
   ];
 
   return (
-    <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+    <div className="v3-content">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>地市成本</Title>
-          <Text type="secondary">独立核算不关联合同 · 分类必填 · 审核授权（默认 super_admin，可授权 admin）</Text>
+          <div className="v3-page-description">独立核算不关联合同 · 分类必填 · 审核授权（默认 super_admin，可授权 admin）</div>
         </div>
-        <Space wrap>
+        <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增成本</Button>

@@ -57,13 +57,13 @@ export default function BizSettings() {
   ];
 
   return (
-    <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+    <div className="v3-content">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>系统设置</Title>
-          <Text type="secondary">到期预警阈值等配置（仅 super_admin 可修改）</Text>
+          <div className="v3-page-description">到期预警阈值等配置（仅 super_admin 可修改）</div>
         </div>
-        <Space wrap>
+        <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
         </Space>

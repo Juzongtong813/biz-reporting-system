@@ -42,13 +42,15 @@ export default function BizPortal() {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F5F7F8', padding: 48 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
+    <div className="v3-portal">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={3} style={{ margin: 0 }}>一级模块门户</Title>
-          <Text type="secondary">当前账号：{userName}</Text>
+          <div className="v3-page-description">当前账号：{userName}</div>
         </div>
-        <Button onClick={() => { clearBizToken(); navigate('/biz/login'); }}>退出登录</Button>
+        <div className="v3-page-head-actions">
+          <Button onClick={() => { clearBizToken(); navigate('/biz/login'); }}>退出登录</Button>
+        </div>
       </div>
       {overview && (
         <Card size="small" style={{ marginBottom: 16, maxWidth: 760 }}>
@@ -62,7 +64,7 @@ export default function BizPortal() {
       {modules.length === 0 ? (
         <Empty description="当前账号无任何一级模块权限" />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16, maxWidth: 760 }}>
+        <div className="v3-portal-grid">
           {modules.map((m) => (
             <Card
               key={m.code}
@@ -70,8 +72,8 @@ export default function BizPortal() {
               onClick={() => navigate(m.code === 'maintenance' ? '/biz/maintenance' : `/biz/placeholder/${m.code}`)}
               style={{ textAlign: 'center', padding: 16 }}
             >
-              <div style={{ color: '#173A53', marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: '#173A53' }}>{m.name}</div>
+              <div className="biz-module-icon" style={{ marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
+              <div className="biz-module-title">{m.name}</div>
             </Card>
           ))}
         </div>

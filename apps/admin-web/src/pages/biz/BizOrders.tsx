@@ -147,13 +147,13 @@ export default function BizOrders() {
   ];
 
   return (
-    <div style={{ padding: 24, background: '#F5F7F8', minHeight: '100vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
+    <div className="v3-content">
+      <div className="v3-page-head">
+        <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>订单管理</Title>
-          <Text type="secondary">仅电商版 34 列模板 · 仅 super_admin/admin 上传 · 上传即导入确认</Text>
+          <div className="v3-page-description">仅电商版 34 列模板 · 仅 super_admin/admin 上传 · 上传即导入确认</div>
         </div>
-        <Space wrap>
+        <Space className="v3-page-head-actions" wrap>
           <Select
             allowClear placeholder="超额筛选" style={{ width: 150 }} value={overrunFilter}
             onChange={(v) => setOverrunFilter(v)}
