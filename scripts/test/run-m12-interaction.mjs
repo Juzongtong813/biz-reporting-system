@@ -120,8 +120,8 @@ async function runBrowserScenario({ browserName, browserType, webBase, jinan, ji
     });
 
     await page.goto(`${webBase}/#/biz/login`, { waitUntil: 'networkidle' });
-    await page.getByPlaceholder('账号').fill('m12_super');
-    await page.getByPlaceholder('密码').fill('M12-secret-1');
+    await page.getByTestId('biz-login-username').fill('m12_super');
+    await page.getByTestId('biz-login-password').fill('M12-secret-1');
     await page.getByTestId('biz-login-submit').click();
     await page.waitForURL('**/#/biz/portal', { timeout: 10_000 });
     await page.goto(`${webBase}/#/biz/analysis`, { waitUntil: 'networkidle' });

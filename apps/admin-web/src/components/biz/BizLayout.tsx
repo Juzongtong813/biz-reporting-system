@@ -61,6 +61,9 @@ export default function BizLayout() {
 
   const selectedKey = menuItems.find((i) => i.key && location.pathname.startsWith(String(i.key)))?.key ?? '/biz/operation';
 
+  // 一级、二级门户独立呈现模块卡片，进入具体模块后才显示业务侧栏。
+  const isModulePortal = location.pathname === '/biz/portal' || location.pathname === '/biz/maintenance';
+
   const menu = (
     <Menu
       mode="inline"
@@ -71,6 +74,8 @@ export default function BizLayout() {
       onClick={({ key }) => { navigate(String(key)); if (isMobile) setMobileOpen(false); }}
     />
   );
+
+  if (isModulePortal) return <Outlet />;
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

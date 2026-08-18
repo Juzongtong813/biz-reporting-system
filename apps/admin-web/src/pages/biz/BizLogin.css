@@ -1,0 +1,48 @@
+.biz-login-page {
+  position: relative;
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 40px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #1f3438 url('/login-sky-clouds.jpg') center / cover no-repeat;
+}
+.biz-login-page::before { position: absolute; inset: 0; z-index: -1; content: ''; background: linear-gradient(180deg, rgba(22, 38, 45, .28), rgba(22, 38, 45, .14) 40%, rgba(22, 38, 45, .52)); }
+.biz-login-shell { display: grid; width: min(920px, 100%); min-height: 548px; grid-template-columns: minmax(330px, .92fr) minmax(420px, 1.08fr); overflow: hidden; border: 1px solid rgba(255, 255, 255, .45); border-radius: 6px; background: rgba(250, 252, 251, .88); box-shadow: 0 24px 64px rgba(15, 35, 39, .32); backdrop-filter: blur(18px) saturate(120%); }
+.biz-login-brand-panel { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; padding: 40px 42px 34px; background: rgba(30, 47, 52, .94); color: #eef3f3; }
+.biz-login-company { display: flex; align-items: center; gap: 11px; font-size: 13px; }
+.biz-login-company strong { font-weight: 600; }
+.biz-login-logo { display: grid; width: 38px; height: 38px; place-items: center; overflow: hidden; border-radius: 4px; background: #fff; }
+.biz-login-logo img { display: block; width: 34px; height: auto; }
+.biz-login-brand-copy { margin: auto 0; }
+.biz-login-brand-copy > span, .biz-login-form-heading > span { color: #83d2a5; font-size: 11px; font-weight: 650; letter-spacing: .08em; }
+.biz-login-brand-copy h1 { max-width: 9em; margin: 12px 0 16px; color: #fff; font-size: 34px; font-weight: 650; line-height: 1.22; }
+.biz-login-brand-copy .ant-typography { color: #b8c4c7; font-size: 13px; }
+.biz-login-trust { color: #a6b2b5; font-size: 11px; line-height: 1.5; }
+.biz-login-trust .anticon { margin-right: 6px; color: #83d2a5; }
+.biz-login-form-panel { display: flex; min-width: 0; flex-direction: column; justify-content: center; padding: 48px 62px 36px; }
+.biz-login-form-heading { margin-bottom: 27px; }
+.biz-login-form-heading h2 { margin: 6px 0 7px; color: #293238; font-size: 25px; line-height: 1.3; }
+.biz-login-form-heading .ant-typography { color: #68737b; font-size: 12px; }
+.biz-login-form-panel .ant-form-item { margin-bottom: 18px; }
+.biz-login-form-panel .ant-form-item-label > label { color: #465157; font-size: 12px; font-weight: 600; }
+.biz-login-form-panel .ant-input-affix-wrapper { min-height: 44px; border-radius: 4px; }
+.biz-login-form-panel .ant-input-prefix { margin-right: 9px; color: #818d93; }
+.biz-login-alert { margin: -10px 0 18px; border-radius: 4px; }
+.biz-login-remember.ant-form-item { margin: -1px 0 20px; }
+.biz-login-remember .ant-checkbox-wrapper { color: #68737b; font-size: 12px; }
+.biz-login-submit.ant-btn { min-height: 44px; border-radius: 4px; background: #2f9e62; font-weight: 600; box-shadow: 0 5px 12px rgba(47, 158, 98, .24); }
+.biz-login-submit.ant-btn:hover { background: #278854 !important; }
+.biz-login-note { margin: 23px 0 0; color: #98a1a6; font-size: 10px; text-align: center; }
+.biz-login-footer { position: absolute; bottom: 14px; color: rgba(255, 255, 255, .84); font-size: 11px; text-shadow: 0 1px 6px rgba(15, 35, 39, .5); }
+@media (max-width: 760px) {
+  .biz-login-page { place-items: start center; padding: 18px 14px; overflow: auto; }
+  .biz-login-shell { grid-template-columns: 1fr; }
+  .biz-login-brand-panel { min-height: 250px; padding: 28px 26px 24px; }
+  .biz-login-brand-copy { margin: 30px 0; }
+  .biz-login-brand-copy h1 { max-width: none; margin: 8px 0 10px; font-size: 28px; }
+  .biz-login-form-panel { padding: 34px 26px 30px; }
+  .biz-login-footer { display: none; }
+}

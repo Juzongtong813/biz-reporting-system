@@ -71,9 +71,9 @@ const checkOverflow = async (page) => page.evaluate(() => {
 
 async function login(page, username, password, webBase) {
   await page.goto(`${webBase}/#/biz/login`, { waitUntil: 'networkidle' });
-  await page.getByPlaceholder('账号').fill(username);
-  await page.getByPlaceholder('密码').fill(password);
-  await page.getByRole('button', { name: '登 录' }).click();
+  await page.getByTestId('biz-login-username').fill(username);
+  await page.getByTestId('biz-login-password').fill(password);
+  await page.getByTestId('biz-login-submit').click();
   await page.waitForURL('**/#/biz/portal', { timeout: 10_000 });
 }
 
@@ -152,6 +152,13 @@ try {
     for (const p of pages) {
       await page.goto(`${webBase}/${p.route}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(600);
+      if (p.file === 'portal') assert.equal(await page.locator('.ant-layout-sider').count(), 0, 'module portal must not show business sidebar');
+      if (p.file === 'admin') {
+        await page.getByRole('button', { name: '重置密码' }).first().click();
+        const resetDialog = page.getByRole('dialog', { name: '重置密码' });
+        await resetDialog.getByRole('textbox').waitFor();
+        assert.equal(await resetDialog.getByRole('textbox').count(), 1, 'reset password uses an in-page input');
+      }
       await page.screenshot({ path: path.join(screenshotDir, `${p.file}-${vp.name}.png`) });
       const overflow = await checkOverflow(page);
       if (overflow.overflowX) report.push({ page: p.file, vp: vp.name, issue: `horizontal overflow ${overflow.scrollWidth} > ${overflow.clientWidth}` });
@@ -164,6 +171,8 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     await login(page, 'm7_city', 'M7-secret-1', webBase);
+    await page.goto(`${webBase}/#/biz/operation`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(600);
     // 菜单不应包含权限管理（operation.user.manage）
     const menuText = await page.locator('.ant-menu').innerText();
     assert.ok(!menuText.includes('权限管理'), 'city_user menu must NOT include 权限管理');

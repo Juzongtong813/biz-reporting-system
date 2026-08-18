@@ -55,9 +55,13 @@ export default function BizAdmin() {
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetUserId, setResetUserId] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
   const [permDetail, setPermDetail] = useState<{ roleCode: string; base: string[]; effective: string[] } | null>(null);
   const [form] = Form.useForm();
+  const [resetForm] = Form.useForm<{ password: string }>();
   const [createRole, setCreateRole] = useState<string>('admin');
   const [roleRows, setRoleRows] = useState<Array<Record<string, unknown>>>([]);
   const [moduleRows, setModuleRows] = useState<Array<Record<string, unknown>>>([]);
@@ -118,17 +122,26 @@ export default function BizAdmin() {
   };
 
   const onResetPassword = async (id: string) => {
-    Modal.confirm({
-      title: '重置密码',
-      content: '重置后旧会话将立即失效，新密码默认 6 位以上，请输入：',
-      okText: '确认重置',
-      onOk: () => new Promise<void>((resolve, reject) => {
-        // 简单实现：固定提示走抽屉式输入过于繁琐，此处用 window.prompt 简化
-        const pwd = window.prompt('请输入新密码（至少 6 位）');
-        if (!pwd || pwd.length < 6) { message.warning('密码最低 6 位'); reject(); return; }
-        bizAdminResetPassword(id, pwd).then(() => { message.success('已重置'); void load(); resolve(); }).catch((e) => { message.error('重置失败'); reject(e); });
-      }),
-    });
+    resetForm.resetFields();
+    setResetUserId(id);
+    setResetOpen(true);
+  };
+
+  const onSubmitResetPassword = async ({ password }: { password: string }) => {
+    if (!resetUserId) return;
+    setResetLoading(true);
+    try {
+      await bizAdminResetPassword(resetUserId, password);
+      message.success('密码已重置，请使用新密码重新登录');
+      setResetOpen(false);
+      setResetUserId(null);
+      void load();
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '重置密码失败，请稍后重试');
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   const onViewPerm = async (id: string) => {
@@ -243,6 +256,24 @@ export default function BizAdmin() {
           <Button type="primary" htmlType="submit" block>创建</Button>
         </Form>
       </Drawer>
+
+      <Modal
+        title="重置密码"
+        open={resetOpen}
+        confirmLoading={resetLoading}
+        okText="确认重置"
+        cancelText="取消"
+        onCancel={() => { setResetOpen(false); setResetUserId(null); }}
+        onOk={() => { void resetForm.validateFields().then(onSubmitResetPassword).catch(() => undefined); }}
+        destroyOnClose
+      >
+        <p>重置后旧会话将立即失效。新密码至少 6 位，请在下方输入。</p>
+        <Form form={resetForm} layout="vertical" onFinish={onSubmitResetPassword}>
+          <Form.Item name="password" label="新密码" rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}>
+            <Input.Password autoComplete="new-password" placeholder="请输入新密码" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Drawer title="用户最终权限" open={permOpen} onClose={() => setPermOpen(false)} width={480}>
         {permDetail && (
