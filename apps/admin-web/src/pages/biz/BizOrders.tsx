@@ -151,7 +151,6 @@ export default function BizOrders() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>订单管理</Title>
-          <div className="v3-page-description">仅电商版 34 列模板 · 仅 super_admin/admin 上传 · 上传即导入确认</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Select

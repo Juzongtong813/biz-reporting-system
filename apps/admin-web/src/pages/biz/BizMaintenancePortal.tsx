@@ -45,7 +45,6 @@ export default function BizMaintenancePortal() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={3} style={{ margin: 0 }}>维护管理</Title>
-          <div className="v3-page-description">二级模块门户 · 当前账号：{userName}</div>
         </div>
         <div className="v3-page-head-actions">
           <Button onClick={() => navigate('/biz/portal')}>返回一级门户</Button>

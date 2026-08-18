@@ -49,7 +49,6 @@ export default function BizPortal() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={3} style={{ margin: 0 }}>一级模块门户</Title>
-          <div className="v3-page-description">当前账号：{userName}</div>
         </div>
         <div className="v3-page-head-actions">
           <Button onClick={() => { clearBizToken(); navigate('/biz/login'); }}>退出登录</Button>

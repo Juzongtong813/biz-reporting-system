@@ -39,7 +39,7 @@ export default function BizOfflineCompletions() {
     setLoading(true);
     try {
       const [off, c, ct] = await Promise.all([
-        bizOfflineList(), bizContractList(), bizAdminCities(),
+        bizOfflineList(), bizContractList(), bizAdminCities().catch(() => ({ items: [] })),
       ]);
       setItems(off.items);
       setContracts(c.items.map((x) => ({ id: x.id, contractNo: x.contractNo })));
@@ -132,7 +132,6 @@ export default function BizOfflineCompletions() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>线下完工</Title>
-          <div className="v3-page-description">地市用户仅本地市 · 金额大于 0 · 月份非未来 · 合同已分配本地市</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>

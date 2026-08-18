@@ -36,6 +36,7 @@
     "test:baseline-smoke": "node scripts/test/run-baseline-data-smoke.mjs",
     "test:m2-rbac-auth": "node scripts/test/run-m2-rbac-auth.mjs",
     "auth:biz-init-super-admin": "node scripts/auth/biz-init-super-admin.mjs",
+    "demo:seed": "node scripts/auth/biz-seed-demo-data.mjs",
     "release:integrity:report": "node scripts/release/check-release-integrity.mjs",
     "release:integrity:gate": "node scripts/release/check-release-integrity.mjs --gate",
     "release:integrity:checkpoint": "node scripts/release/check-release-integrity.mjs --checkpoint",

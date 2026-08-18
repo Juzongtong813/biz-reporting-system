@@ -61,7 +61,6 @@ export default function BizSettings() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>系统设置</Title>
-          <div className="v3-page-description">到期预警阈值等配置（仅 super_admin 可修改）</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>

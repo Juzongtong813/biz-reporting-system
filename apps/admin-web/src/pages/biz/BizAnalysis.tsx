@@ -121,7 +121,6 @@ export default function BizAnalysis() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>经营分析</Title>
-          <div className="v3-page-description">汇总口径：订单 + 线下完工 - 作废 · 利润 = 毛利 - 成本</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>

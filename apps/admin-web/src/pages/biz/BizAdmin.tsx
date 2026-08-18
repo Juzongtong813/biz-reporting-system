@@ -177,7 +177,6 @@ export default function BizAdmin() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>账号与权限管理</Title>
-          <div className="v3-page-description">新基线（biz_）· 仅 super_admin 可操作</div>
         </div>
         <div className="v3-page-head-actions">
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>

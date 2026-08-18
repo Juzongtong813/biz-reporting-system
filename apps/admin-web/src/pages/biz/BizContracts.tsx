@@ -55,7 +55,8 @@ export default function BizContracts() {
     try {
       const [list, p, c] = await Promise.all([
         bizContractList(statusFilter ? { status: statusFilter } : {}),
-        bizAdminProvinces(), bizAdminCities(),
+        bizAdminProvinces().catch(() => ({ items: [] })),
+        bizAdminCities().catch(() => ({ items: [] })),
       ]);
       setItems(list.items);
       setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
@@ -204,7 +205,6 @@ export default function BizContracts() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>合同管理</Title>
-          <div className="v3-page-description">新基线（biz_）· 合同号唯一 · 生效后合同额锁定</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>

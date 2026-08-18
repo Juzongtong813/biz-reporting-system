@@ -42,7 +42,10 @@ export default function BizCosts() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [costs, ct] = await Promise.all([bizCostList(), bizAdminCities()]);
+      const [costs, ct] = await Promise.all([
+        bizCostList(),
+        bizAdminCities().catch(() => ({ items: [] })),
+      ]);
       setItems(costs.items);
       setCities(ct.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
     } finally {
@@ -133,7 +136,6 @@ export default function BizCosts() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>地市成本</Title>
-          <div className="v3-page-description">独立核算不关联合同 · 分类必填 · 审核授权（默认 super_admin，可授权 admin）</div>
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>

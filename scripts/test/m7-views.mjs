@@ -127,6 +127,29 @@ try {
     await fetch(`${apiBase}/biz/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` }, body: JSON.stringify(dto) });
   }
 
+  const demoMonth = new Date().toISOString().slice(0, 7);
+  const contractResponse = await fetch(`${apiBase}/biz/contracts`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+    body: JSON.stringify({ contractNo: 'M7-VIEW-CONTRACT', contractName: 'M7 view regression contract', taxInclusiveAmountFen: 100000, provinceId: shandong, startDate: `${demoMonth}-01`, endDate: '2026-12-31' }),
+  });
+  assert.equal(contractResponse.status, 201, 'M7 contract fixture must be created');
+  const viewContract = await contractResponse.json();
+  const allocationResponse = await fetch(`${apiBase}/biz/contracts/${viewContract.id}/allocations`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+    body: JSON.stringify({ cityId: jinan, quotaFen: 100000 }),
+  });
+  assert.equal(allocationResponse.status, 201, 'M7 allocation fixture must be created');
+  const offlineResponse = await fetch(`${apiBase}/biz/offline-completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+    body: JSON.stringify({ contractId: viewContract.id, cityId: jinan, businessMonth: demoMonth, amountFen: 10000, summary: 'M7 view offline fixture' }),
+  });
+  assert.equal(offlineResponse.status, 201, 'M7 offline fixture must be created');
+  const costResponse = await fetch(`${apiBase}/biz/costs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+    body: JSON.stringify({ cityId: jinan, businessMonth: demoMonth, categoryCode: 'labor', amountFen: 5000, description: 'M7 view cost fixture' }),
+  });
+  assert.equal(costResponse.status, 201, 'M7 cost fixture must be created');
+
   const browser = await chromium.launch();
   const viewports = [
     { name: 'desktop', width: 1440, height: 900 },
@@ -158,6 +181,7 @@ try {
     for (const p of pages) {
       await page.goto(`${webBase}/${p.route}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(600);
+      assert.equal(await page.locator('.v3-page-head .v3-page-description').count(), 0, `${p.file} must not show a page description under its title`);
       if (p.file === 'portal') {
         assert.equal(await page.locator('.ant-layout-sider').count(), 0, 'module portal must not show business sidebar');
         assert.equal(await page.getByText('经营概览', { exact: true }).count(), 0, 'module portal must not show the removed overview card');
@@ -172,6 +196,22 @@ try {
       await page.screenshot({ path: path.join(screenshotDir, `${p.file}-${vp.name}.png`) });
       const overflow = await checkOverflow(page);
       if (overflow.overflowX) report.push({ page: p.file, vp: vp.name, issue: `horizontal overflow ${overflow.scrollWidth} > ${overflow.clientWidth}` });
+    }
+    await context.close();
+  }
+
+  // admin：省市字典接口无用户管理权限时，业务列表仍应正常显示。
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await login(page, 'm7_admin', testPassword, webBase);
+    for (const fixture of [
+      { route: '#/biz/operation', text: 'M7-VIEW-CONTRACT' },
+      { route: '#/biz/offline-completions', text: 'M7 view offline fixture' },
+      { route: '#/biz/costs', text: 'M7 view cost fixture' },
+    ]) {
+      await page.goto(`${webBase}/${fixture.route}`, { waitUntil: 'networkidle' });
+      await page.getByText(fixture.text, { exact: true }).waitFor({ timeout: 10_000 });
     }
     await context.close();
   }
