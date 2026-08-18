@@ -214,8 +214,14 @@ try {
     cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm12_super', BIZ_SUPER_ADMIN_PASSWORD: 'M12-secret-1' }, stdio: 'inherit',
   });
   const fixtureDb = new Database(database);
-  const renamedCity = fixtureDb.prepare('UPDATE biz_cities SET name = ? WHERE code = ?').run('=1+1', '371400');
-  assert.equal(renamedCity.changes, 1, 'M12 formula-injection city fixture updated');
+  // P2-1 公式注入回归数据：SQL 直插带「前置空白符」的公式前缀城市名（admin API 会对 name trim，无法构造该场景）
+  const shandongRow = fixtureDb.prepare("SELECT id FROM biz_provinces WHERE code = '370000'").get();
+  assert.ok(shandongRow, 'M12 shandong province fixture available');
+  const injectedCityId = crypto.randomUUID();
+  const insertInjected = fixtureDb.prepare(
+    "INSERT INTO biz_cities (id, province_id, code, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))",
+  ).run(injectedCityId, shandongRow.id, '379999', '  =1+1');
+  assert.equal(insertInjected.changes, 1, 'M12 formula-injection city fixture inserted');
   fixtureDb.close();
 
   const apiPort = await freePort();
@@ -260,14 +266,17 @@ try {
   };
   await createContract({ contractNo: 'HT-M12-JINAN', contractName: 'M12 济南交互合同', cityId: jinan.id, amountFen: 500_000_00, completionFen: 100_000_00 });
   await createContract({ contractNo: 'HT-M12-DEZHOU', contractName: 'M12 德州交互合同', cityId: dezhou.id, amountFen: 300_000_00, completionFen: 200_000_00 });
+  // 注入城市合同：合同额 300,000.00 元、完工 50,000.00 元（毛利 50,000.00）；
+  // 再注入成本 100,000.00 元 → 净利 = 50,000.00 - 100,000.00 = -50,000.00 元（负数金额列保持数值语义）
+  await createContract({ contractNo: 'HT-M12-INJ', contractName: 'M12 公式注入合同', cityId: injectedCityId, amountFen: 300_000_00, completionFen: 50_000_00 });
   const negativeCost = await api(apiBase, 'POST', '/biz/costs', { token: superToken, body: {
-    cityId: dezhou.id, businessMonth: '2026-06', categoryCode: 'labor', amountFen: 100_000_00, description: 'M12 CSV numeric fixture',
+    cityId: injectedCityId, businessMonth: '2026-06', categoryCode: 'labor', amountFen: 100_000_00, description: 'P2-1 注入负净利',
   } });
-  assert.equal(negativeCost.status, 201, 'M12 negative CSV fixture cost created');
+  assert.equal(negativeCost.status, 201, 'P2-1 negative CSV fixture cost created');
   const submittedCost = await api(apiBase, 'POST', `/biz/costs/${negativeCost.data.id}/submit`, { token: superToken });
-  assert.ok([200, 201].includes(submittedCost.status), 'M12 negative CSV fixture cost submitted');
+  assert.ok([200, 201].includes(submittedCost.status), 'P2-1 negative CSV fixture cost submitted');
   const approvedCost = await api(apiBase, 'POST', `/biz/costs/${negativeCost.data.id}/approve`, { token: superToken });
-  assert.ok([200, 201].includes(approvedCost.status), 'M12 negative CSV fixture cost approved');
+  assert.ok([200, 201].includes(approvedCost.status), 'P2-1 negative CSV fixture cost approved');
   await api(apiBase, 'POST', '/biz/aggregates/recalc', { token: superToken, body: { scope: {}, confirmAll: true } });
   const byCity = (await api(apiBase, 'GET', '/biz/analysis/by-city?month=2026-06', { token: superToken })).data.items;
   const cityDisplayName = (cityId) => {
