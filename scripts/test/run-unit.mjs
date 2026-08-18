@@ -32,6 +32,7 @@ const localTests = [
   'apps/api/test/security-headers.test.mjs',
   'apps/api/test/workbook-policy.test.cjs',
   'scripts/test/migrate-import-job-files.test.mjs',
+  'scripts/test/m7-screenshot-output.test.mjs',
 ];
 
 const i1EnvironmentNames = [

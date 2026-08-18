@@ -23,6 +23,7 @@ pnpm-debug.log*
 # Build cache
 .turbo/
 *.tsbuildinfo
+.artifacts/
 
 # Development database
 *.sqlite

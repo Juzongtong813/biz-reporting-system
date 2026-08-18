@@ -4,7 +4,7 @@
  *  - 登录 → 门户 → 合同/订单/完工/成本/分析/设置/权限管理 全链路
  *  - 每页检查水平溢出（无滚动条溢出/遮挡）
  *  - 四角色权限：super 全可见；city_user 菜单隐藏 + 直接 URL 403
- * 截图输出：docs/baseline/screenshots/
+ * 截图默认输出：.artifacts/m7-screenshots/；仅 M7_UPDATE_BASELINES=1 时更新基线。
  */
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -14,6 +14,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { resolveM7ScreenshotOutput } from './m7-screenshot-output.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const apiRoot = path.join(repoRoot, 'apps', 'api');
@@ -24,15 +26,19 @@ const { chromium } = requireRoot('@playwright/test');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m7-views-'));
 const database = path.join(testRoot, 'm7.sqlite');
-const screenshotDir = path.join(repoRoot, 'docs', 'baseline', 'screenshots');
+const testPassword = randomBytes(24).toString('base64url');
+const screenshotOutput = resolveM7ScreenshotOutput(repoRoot);
+const screenshotDir = screenshotOutput.directory;
+if (screenshotOutput.mode === 'artifact') rmSync(screenshotDir, { recursive: true, force: true });
 mkdirSync(screenshotDir, { recursive: true });
+console.log(`M7_SCREENSHOT_OUTPUT mode=${screenshotOutput.mode} directory=${screenshotDir}`);
 
 const env = {
   ...process.env,
   NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
   FACT_SOURCE_STORAGE_ROOT: path.join(testRoot, 'src'),
-  JWT_SECRET: 'm7-test-jwt-secret-0123456789abcdef',
-  AUTH_SECURITY_HMAC_KEY: 'm7-test-hmac-key-0123456789abcdef',
+  JWT_SECRET: randomBytes(32).toString('base64url'),
+  AUTH_SECURITY_HMAC_KEY: randomBytes(32).toString('base64url'),
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients',
   PORT: '0',
 };
@@ -81,7 +87,7 @@ try {
   const { execFileSync } = await import('node:child_process');
   execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env, stdio: 'inherit' });
   execFileSync(process.execPath, ['scripts/auth/biz-init-super-admin.mjs'], {
-    cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm7_super', BIZ_SUPER_ADMIN_PASSWORD: 'M7-secret-1' }, stdio: 'inherit',
+    cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm7_super', BIZ_SUPER_ADMIN_PASSWORD: testPassword }, stdio: 'inherit',
   });
 
   const apiPort = await freePort();
@@ -108,15 +114,15 @@ try {
   await waitForHttp(`${webBase}/`);
 
   // 创建 admin/city_user 账号
-  const loginRes = await fetch(`${apiBase}/biz/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'm7_super', password: 'M7-secret-1' }) });
+  const loginRes = await fetch(`${apiBase}/biz/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'm7_super', password: testPassword }) });
   const superToken = (await loginRes.json()).accessToken;
   const provinces = await (await fetch(`${apiBase}/biz/admin/provinces`, { headers: { Authorization: `Bearer ${superToken}` } })).json();
   const cities = await (await fetch(`${apiBase}/biz/admin/cities`, { headers: { Authorization: `Bearer ${superToken}` } })).json();
   const shandong = provinces.items.find((p) => p.code === '370000').id;
   const jinan = cities.items.find((c) => c.code === '370100').id;
   for (const dto of [
-    { username: 'm7_admin', password: 'M7-secret-1', name: '管理员', roleCode: 'admin' },
-    { username: 'm7_city', password: 'M7-secret-1', name: '地市用户', roleCode: 'city_user', cityId: jinan },
+    { username: 'm7_admin', password: testPassword, name: '管理员', roleCode: 'admin' },
+    { username: 'm7_city', password: testPassword, name: '地市用户', roleCode: 'city_user', cityId: jinan },
   ]) {
     await fetch(`${apiBase}/biz/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` }, body: JSON.stringify(dto) });
   }
@@ -148,7 +154,7 @@ try {
     await page.screenshot({ path: path.join(screenshotDir, `login-${vp.name}.png`) });
 
     // super_admin 登录
-    await login(page, 'm7_super', 'M7-secret-1', webBase);
+    await login(page, 'm7_super', testPassword, webBase);
     for (const p of pages) {
       await page.goto(`${webBase}/${p.route}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(600);
@@ -170,7 +176,7 @@ try {
   {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
-    await login(page, 'm7_city', 'M7-secret-1', webBase);
+    await login(page, 'm7_city', testPassword, webBase);
     await page.goto(`${webBase}/#/biz/operation`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(600);
     // 菜单不应包含权限管理（operation.user.manage）
