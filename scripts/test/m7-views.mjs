@@ -158,7 +158,11 @@ try {
     for (const p of pages) {
       await page.goto(`${webBase}/${p.route}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(600);
-      if (p.file === 'portal') assert.equal(await page.locator('.ant-layout-sider').count(), 0, 'module portal must not show business sidebar');
+      if (p.file === 'portal') {
+        assert.equal(await page.locator('.ant-layout-sider').count(), 0, 'module portal must not show business sidebar');
+        assert.equal(await page.getByText('经营概览', { exact: true }).count(), 0, 'module portal must not show the removed overview card');
+        assert.equal(await page.getByText('经营管理', { exact: true }).count(), 1, 'module portal must show operation as a first-level entry');
+      }
       if (p.file === 'admin') {
         await page.getByRole('button', { name: '重置密码' }).first().click();
         const resetDialog = page.getByRole('dialog', { name: '重置密码' });

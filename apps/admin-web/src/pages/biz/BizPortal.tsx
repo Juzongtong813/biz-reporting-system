@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Empty, Result, Space, Spin, Typography } from 'antd';
-import { ApartmentOutlined, ToolOutlined } from '@ant-design/icons';
+import { Button, Card, Empty, Result, Spin, Typography } from 'antd';
+import { ApartmentOutlined, BarChartOutlined, ToolOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { bizMe, bizPortalModules, bizAnalysisOverview, type BizModuleItem } from '@/api/biz.api';
+import { bizMe, bizPortalModules, type BizModuleItem } from '@/api/biz.api';
 import { clearBizToken } from '@/utils/biz-auth';
 
 const { Title, Text } = Typography;
@@ -10,6 +10,7 @@ const { Title, Text } = Typography;
 const MODULE_ICON: Record<string, React.ReactNode> = {
   engineering: <ToolOutlined style={{ fontSize: 28 }} />,
   maintenance: <ApartmentOutlined style={{ fontSize: 28 }} />,
+  operation: <BarChartOutlined style={{ fontSize: 28 }} />,
 };
 
 /** 一级模块门户（新基线）：登录后始终进入；只展示有权模块 */
@@ -19,15 +20,17 @@ export default function BizPortal() {
   const [modules, setModules] = useState<BizModuleItem[]>([]);
   const [userName, setUserName] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<{ contractCount: number; totalContractAmountFen: number; totalCompletionFen: number; netProfitFen: number } | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const [me, data] = await Promise.all([bizMe(), bizPortalModules()]);
         setUserName(me.username);
-        setModules(data.level1);
-        void bizAnalysisOverview().then(setOverview).catch(() => {});
+        const operation = data.level2.find((module) => module.code === 'operation');
+        const level1 = operation && !data.level1.some((module) => module.code === operation.code)
+          ? [...data.level1, { ...operation, level: 'level1', parentId: null }]
+          : data.level1;
+        setModules(level1);
         setLoading(false);
       } catch {
         setError('登录已失效，请重新登录');
@@ -52,15 +55,6 @@ export default function BizPortal() {
           <Button onClick={() => { clearBizToken(); navigate('/biz/login'); }}>退出登录</Button>
         </div>
       </div>
-      {overview && (
-        <Card size="small" style={{ marginBottom: 16, maxWidth: 760 }}>
-          <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
-            <Text strong>经营概览</Text>
-            <Text>合同 {overview.contractCount} 个 · 合同额 {(overview.totalContractAmountFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元 · 总完工 {(overview.totalCompletionFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元 · 净利 {(overview.netProfitFen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} 元</Text>
-            <Button size="small" type="link" onClick={() => navigate('/biz/analysis')}>进入经营分析 →</Button>
-          </Space>
-        </Card>
-      )}
       {modules.length === 0 ? (
         <Empty description="当前账号无任何一级模块权限" />
       ) : (
@@ -69,7 +63,7 @@ export default function BizPortal() {
             <Card
               key={m.code}
               hoverable
-              onClick={() => navigate(m.code === 'maintenance' ? '/biz/maintenance' : `/biz/placeholder/${m.code}`)}
+              onClick={() => navigate(m.code === 'maintenance' ? '/biz/maintenance' : m.code === 'operation' ? '/biz/operation' : `/biz/placeholder/${m.code}`)}
               style={{ textAlign: 'center', padding: 16 }}
             >
               <div className="biz-module-icon" style={{ marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
