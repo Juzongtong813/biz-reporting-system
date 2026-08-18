@@ -69,8 +69,14 @@ export default function BizAnalysis() {
         const overrun = overruns.find((o) => o.type === 'city' && o.cityId === r.cityId);
         return [String(r.cityName ?? r.cityId ?? '-'), String(Number(r.contractCount) || 0), fenToYuan(Number(r.contractAmountFen) || 0), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
       });
-      const escapeCsv = (v: string) => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
-      const csv = '\uFEFF' + [header, ...rows].map((r) => r.map(escapeCsv).join(',')).join('\n');
+      // Neutralize formula-like text fields while preserving numeric amount semantics.
+      const escapeCsv = (v: string, isNumeric: boolean) => {
+        const neutral = (!isNumeric && /^\s*[=+\-@]/.test(v)) ? "'" + v : v;
+        return /[",\n]/.test(neutral) ? '"' + neutral.replace(/"/g, '""') + '"' : neutral;
+      };
+      const csv = '\uFEFF' + [header, ...rows]
+        .map((r) => r.map((v, i) => escapeCsv(v, i >= 1 && i <= 7)).join(','))
+        .join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

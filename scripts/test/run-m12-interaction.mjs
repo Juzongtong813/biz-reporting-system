@@ -15,7 +15,9 @@ import assert from 'node:assert/strict';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const requireRoot = createRequire(path.join(repoRoot, 'package.json'));
 const requireWeb = createRequire(path.join(repoRoot, 'apps', 'admin-web', 'package.json'));
+const requireApi = createRequire(path.join(repoRoot, 'apps', 'api', 'package.json'));
 const { chromium, webkit } = requireRoot('@playwright/test');
+const Database = requireApi('better-sqlite3');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m12-interact-'));
 const database = path.join(testRoot, 'm12.sqlite');
@@ -171,6 +173,26 @@ async function runBrowserScenario({ browserName, browserType, webBase, jinan, ji
     assert.equal(await cityTable.locator('tbody tr').filter({ hasText: dezhouName }).count(), 1, `${browserName}: clear-filter restores ${dezhouName} to city result`);
     assert.equal(await page.getByTestId('analysis-clear-filter').count(), 0, `${browserName}: clear-filter hides after reset`);
 
+    // P2-1: formula-like text is neutralized while negative numeric values remain numeric.
+    const fullDownloadPromise = page.waitForEvent('download', { timeout: 10_000 });
+    await page.getByTestId('analysis-export').click();
+    const fullDownload = await fullDownloadPromise;
+    assert.match(fullDownload.suggestedFilename(), /^经营分析-地市指标-累计\.csv$/, `${browserName}: full export filename uses 累计`);
+    const fullPath = await fullDownload.path();
+    assert.ok(fullPath, `${browserName}: full download path available`);
+    const fullLines = readFileSync(fullPath, 'utf8').replace(/^\uFEFF/, '').trim().split(/\r?\n/);
+    assert.equal(fullLines.length, 4, `${browserName}: full CSV header plus three city rows`);
+    const fullRows = fullLines.slice(1).map(parseCsvLine);
+    const injected = fullRows.find((r) => r[0].includes('1+1'));
+    assert.ok(injected, `${browserName}: injected formula city present in full export`);
+    assert.ok(!/^[=+\-@]/.test(injected[0]), `${browserName}: injected city name has no bare formula prefix`);
+    assert.ok(injected[0].startsWith("'"), `${browserName}: injected city name neutralized with quote prefix`);
+    assert.equal(injected[2], '300,000.00', `${browserName}: injected city contract amount stays numeric`);
+    assert.match(injected[7], /^-\d{1,3}(,\d{3})*\.\d{2}$/, `${browserName}: injected city negative net profit stays numeric`);
+    assert.ok(!injected[7].startsWith("'"), `${browserName}: negative net profit is not quoted as text`);
+    const jinanFullRow = fullRows.find((r) => r[0] === jinanName);
+    assert.equal(jinanFullRow[2], '500,000.00', `${browserName}: jinan contract amount stays numeric in full export`);
+
     await page.goto(`${webBase}/#/biz/operation`, { waitUntil: 'networkidle' });
     await page.getByTestId('contract-detail-HT-M12-JINAN').click();
     await page.getByTestId('contract-start-date').waitFor();
@@ -191,6 +213,10 @@ try {
   execFileSync(process.execPath, ['scripts/auth/biz-init-super-admin.mjs'], {
     cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm12_super', BIZ_SUPER_ADMIN_PASSWORD: 'M12-secret-1' }, stdio: 'inherit',
   });
+  const fixtureDb = new Database(database);
+  const renamedCity = fixtureDb.prepare('UPDATE biz_cities SET name = ? WHERE code = ?').run('=1+1', '371400');
+  assert.equal(renamedCity.changes, 1, 'M12 formula-injection city fixture updated');
+  fixtureDb.close();
 
   const apiPort = await freePort();
   const webPort = await freePort();
@@ -234,6 +260,14 @@ try {
   };
   await createContract({ contractNo: 'HT-M12-JINAN', contractName: 'M12 济南交互合同', cityId: jinan.id, amountFen: 500_000_00, completionFen: 100_000_00 });
   await createContract({ contractNo: 'HT-M12-DEZHOU', contractName: 'M12 德州交互合同', cityId: dezhou.id, amountFen: 300_000_00, completionFen: 200_000_00 });
+  const negativeCost = await api(apiBase, 'POST', '/biz/costs', { token: superToken, body: {
+    cityId: dezhou.id, businessMonth: '2026-06', categoryCode: 'labor', amountFen: 100_000_00, description: 'M12 CSV numeric fixture',
+  } });
+  assert.equal(negativeCost.status, 201, 'M12 negative CSV fixture cost created');
+  const submittedCost = await api(apiBase, 'POST', `/biz/costs/${negativeCost.data.id}/submit`, { token: superToken });
+  assert.ok([200, 201].includes(submittedCost.status), 'M12 negative CSV fixture cost submitted');
+  const approvedCost = await api(apiBase, 'POST', `/biz/costs/${negativeCost.data.id}/approve`, { token: superToken });
+  assert.ok([200, 201].includes(approvedCost.status), 'M12 negative CSV fixture cost approved');
   await api(apiBase, 'POST', '/biz/aggregates/recalc', { token: superToken, body: { scope: {}, confirmAll: true } });
   const byCity = (await api(apiBase, 'GET', '/biz/analysis/by-city?month=2026-06', { token: superToken })).data.items;
   const cityDisplayName = (cityId) => {
