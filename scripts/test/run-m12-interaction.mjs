@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const requireRoot = createRequire(path.join(repoRoot, 'package.json'));
@@ -21,12 +22,13 @@ const Database = requireApi('better-sqlite3');
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'biz-m12-interact-'));
 const database = path.join(testRoot, 'm12.sqlite');
+const testAdminPassword = randomBytes(24).toString('base64url');
 const env = {
   ...process.env,
   NODE_ENV: 'test', DB_TYPE: 'sqlite', DB_DATABASE: database, DB_SYNC: 'false',
   FACT_SOURCE_STORAGE_ROOT: path.join(testRoot, 'src'),
-  JWT_SECRET: 'm12-test-jwt-secret-0123456789abcdef',
-  AUTH_SECURITY_HMAC_KEY: 'm12-test-hmac-key-0123456789abcdef',
+  JWT_SECRET: randomBytes(32).toString('base64url'),
+  AUTH_SECURITY_HMAC_KEY: randomBytes(32).toString('base64url'),
   JWT_ISSUER: 'biz-reporting-api', JWT_AUDIENCE: 'biz-reporting-clients', PORT: '0',
 };
 
@@ -105,7 +107,7 @@ async function chooseOption(page, testId, label) {
   await option.click();
 }
 
-async function runBrowserScenario({ browserName, browserType, webBase, jinan, jinanName, dezhouName }) {
+async function runBrowserScenario({ browserName, browserType, webBase, jinan, jinanName, dezhouName, password }) {
   const executablePath = browserType.executablePath();
   if (!existsSync(executablePath)) {
     throw new Error(`${browserName} browser is not installed at ${executablePath}; run pnpm exec playwright install chromium webkit`);
@@ -123,7 +125,7 @@ async function runBrowserScenario({ browserName, browserType, webBase, jinan, ji
 
     await page.goto(`${webBase}/#/biz/login`, { waitUntil: 'networkidle' });
     await page.getByTestId('biz-login-username').fill('m12_super');
-    await page.getByTestId('biz-login-password').fill('M12-secret-1');
+    await page.getByTestId('biz-login-password').fill(password);
     await page.getByTestId('biz-login-submit').click();
     await page.waitForURL('**/#/biz/portal', { timeout: 10_000 });
     await page.goto(`${webBase}/#/biz/analysis`, { waitUntil: 'networkidle' });
@@ -211,13 +213,13 @@ try {
   const { execFileSync } = await import('node:child_process');
   execFileSync(process.execPath, ['scripts/db/migrate.mjs', 'up'], { cwd: repoRoot, env, stdio: 'inherit' });
   execFileSync(process.execPath, ['scripts/auth/biz-init-super-admin.mjs'], {
-    cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm12_super', BIZ_SUPER_ADMIN_PASSWORD: 'M12-secret-1' }, stdio: 'inherit',
+    cwd: repoRoot, env: { ...env, BIZ_SUPER_ADMIN_USERNAME: 'm12_super', BIZ_SUPER_ADMIN_PASSWORD: testAdminPassword }, stdio: 'inherit',
   });
   const fixtureDb = new Database(database);
   // P2-1 公式注入回归数据：SQL 直插带「前置空白符」的公式前缀城市名（admin API 会对 name trim，无法构造该场景）
   const shandongRow = fixtureDb.prepare("SELECT id FROM biz_provinces WHERE code = '370000'").get();
   assert.ok(shandongRow, 'M12 shandong province fixture available');
-  const injectedCityId = crypto.randomUUID();
+  const injectedCityId = randomUUID();
   const insertInjected = fixtureDb.prepare(
     "INSERT INTO biz_cities (id, province_id, code, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', datetime('now'), datetime('now'))",
   ).run(injectedCityId, shandongRow.id, '379999', '  =1+1');
@@ -241,7 +243,7 @@ try {
   viteProcess.stderr.on('data', (chunk) => process.stderr.write(`[vite] ${chunk}`));
   await waitForHttp(`${webBase}/`);
 
-  const login = await api(apiBase, 'POST', '/biz/auth/login', { body: { username: 'm12_super', password: 'M12-secret-1' } });
+  const login = await api(apiBase, 'POST', '/biz/auth/login', { body: { username: 'm12_super', password: testAdminPassword } });
   assert.equal(login.status, 201, 'M12 test super admin login');
   const superToken = login.data.accessToken;
   const provinces = (await api(apiBase, 'GET', '/biz/admin/provinces', { token: superToken })).data;
@@ -286,7 +288,7 @@ try {
   };
 
   for (const [browserName, browserType] of [['chromium', chromium], ['webkit', webkit]]) {
-    await runBrowserScenario({ browserName, browserType, webBase, jinan: jinan.id, jinanName: cityDisplayName(jinan.id), dezhouName: cityDisplayName(dezhou.id) });
+    await runBrowserScenario({ browserName, browserType, webBase, jinan: jinan.id, jinanName: cityDisplayName(jinan.id), dezhouName: cityDisplayName(dezhou.id), password: testAdminPassword });
   }
   console.log('M12_INTERACTION_OK chromium+webkit filter/export/contract-date all passed');
 } finally {
