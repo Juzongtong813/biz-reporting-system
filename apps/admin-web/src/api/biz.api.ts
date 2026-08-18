@@ -7,7 +7,7 @@
 import axios, { type AxiosRequestConfig } from 'axios';
 import { getBizToken } from '@/utils/biz-auth';
 
-const request = axios.create({ baseURL: '/api' });
+const request = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' });
 
 request.interceptors.request.use((config) => {
   const token = getBizToken();

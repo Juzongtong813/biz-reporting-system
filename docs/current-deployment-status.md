@@ -16,10 +16,17 @@ The Biz Operations order-import flow stores uploaded files only in a task-scoped
 - API service: `biz-reporting-api-prod`
 - Legacy main schema and existing API services are preserved and must not be modified by this deployment.
 
-## Release conditions
+## Verified deployment evidence
 
-1. Configure distinct production database, JWT, and HMAC secrets on the new API service.
-2. Deploy the API and verify `/api/health/live` plus `/api/health/ready` against `biz_reporting_prod`.
-3. Deploy an isolated frontend path pointing to the new API.
-4. Re-run the formal non-local MySQL gate and the Chromium/WebKit browser checks in an environment where those runtimes are available.
-5. Complete production smoke testing and rollback rehearsal before switching production traffic.
+- API deployment: `biz-reporting-api-prod`, deployment `008` succeeded; deployment `009` applied the isolated frontend CORS origin with the same verified image.
+- API health: `GET /api/health/live` and `GET /api/health/ready` both returned HTTP 200. Readiness reported both `database: up` and `storage: up`.
+- Frontend deployment: `biz-reporting-prod`, build `2601797812`, status `SUCCESS`.
+- Isolated frontend URL: `https://biz-reporting-prod-zy-data-d2g9g1ghr47ac6254.webapps.tcloudbase.com`.
+- Browser smoke: the isolated frontend login page loaded and the initialized `super_admin` account completed login. The two-level portal and all business and system-management navigation entries were visible after login.
+- Frontend API routing: the production bundle is configured with the isolated API base URL, rather than relying on the legacy `/api` same-origin route.
+
+## Remaining release conditions
+
+1. Keep the generated initial administrator password in the designated secure handoff channel and require a password change before giving the account to an operator.
+2. Complete the governance-owned production rollback rehearsal and record the result before any business data import or broad user rollout.
+3. Bind an approved custom domain when one is available; the current CloudBase test domain remains suitable only for controlled release validation.

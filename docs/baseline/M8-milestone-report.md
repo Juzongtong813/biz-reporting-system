@@ -274,4 +274,20 @@ M8 完成后进入发布候选需同时满足：
 - 新生产 schema：`biz_reporting_prod`，追加式迁移 `001-017` 共 18 条，账本最新版本 `017_biz_order_batch_scope`。
 - 数据库账号：应用运行账号为 `biz_prod_runtime`，仅授予新 schema 的 `SELECT/INSERT/UPDATE/DELETE`；迁移账号已在迁移完成后删除。
 - 新 API 服务：`biz-reporting-api-prod` 已创建并以 0% 流量构建；旧 API 服务未切流、未删除。
-- 当前阻塞：CloudRun MCP 部署接口返回的 `VolumesConf` 为空，尚未确认 `/mnt/fact-source-files` 的真实持久化挂载；在挂载完成并通过 `/api/health/ready` 前不得切流。
+- 原存储阻塞已解除：订单文件在任务级临时目录解析后删除，运行时不依赖 `/mnt/fact-source-files` 或持久卷；`/api/health/ready` 已返回 HTTP 200。
+
+---
+
+## 隔离生产部署证据（2026-08-18）
+
+- 隔离 API `biz-reporting-api-prod` 已成功部署；`/api/health/live` 和 `/api/health/ready` 均返回 HTTP 200，数据库与临时上传存储检查均为 up。
+- 隔离前端 `biz-reporting-prod` 已成功部署（build `2601797812`），并直接指向隔离 API 地址。
+- 隔离 API 已加入该前端域名的 CORS 白名单。
+- 浏览器冒烟通过：隔离登录页正常渲染，初始化 `super_admin` 已完成登录，登录后两级门户以及获授权的业务、系统管理导航均正常显示。
+- 本节不改变既有业务口径、数据范围、权限或迁移测试结论；仅补齐隔离部署与登录冒烟的实测证据。
+
+### 发布前人工条件
+
+1. 通过批准的安全渠道交付初始管理员密码，并在首次运营人员使用时完成改密。
+2. 治理负责人必须在业务数据导入或广泛启用前完成并记录回滚演练。
+3. 对外正式使用前仍需绑定已批准的自定义域名；当前 CloudBase 测试域名仅用于受控验证。
