@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useBizPermission } from '@/utils/biz-permission';
 import {
   Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, message,
 } from 'antd';
@@ -37,6 +38,7 @@ function formatYearMonth(value: string | null | undefined): string {
 /** 合同管理（新基线 M3）：列表 + 全屏详情弹窗 */
 export default function BizContracts() {
   const navigate = useNavigate();
+  const canUploadOrder = useBizPermission('operation.order.upload');
   const [items, setItems] = useState<BizContractItem[]>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
@@ -207,7 +209,7 @@ export default function BizContracts() {
           <Title level={4} style={{ margin: 0 }}>合同管理</Title>
         </div>
         <Space className="v3-page-head-actions" wrap>
-          <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>
+          {canUploadOrder === true && <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>}
           <Select
             allowClear placeholder="状态筛选" style={{ width: 140 }} value={statusFilter}
             onChange={(v) => setStatusFilter(v)}

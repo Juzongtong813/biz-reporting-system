@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBizPermission } from '@/utils/biz-permission';
-import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload, message } from 'antd';
+import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd';
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
   bizOrderBatches, bizOrderBatchDetail, bizOrderUpload, bizOrderBatchVoid, bizOrderBatchRestore, bizOrderRows,
 } from '@/api/biz.api';
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
 const BATCH_STATUS: Record<string, { label: string; color: string }> = {
   parsing: { label: '解析中', color: 'processing' },
@@ -41,6 +41,12 @@ export default function BizOrders() {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
 
+  // 页面级权限保护：无上传权限的账号直接跳回经营管理，避免停留在无意义页面。
+  // canUpload === null 时保持加载态，防止权限判定前闪现订单内容。
+  useEffect(() => {
+    if (canUpload === false) navigate('/biz/operation', { replace: true });
+  }, [canUpload, navigate]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -51,7 +57,10 @@ export default function BizOrders() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (canUpload !== true) return;
+    void load();
+  }, [load, canUpload]);
 
   const loadRows = useCallback(async () => {
     setRowsLoading(true);
@@ -63,7 +72,20 @@ export default function BizOrders() {
     }
   }, [overrunFilter]);
 
-  useEffect(() => { void loadRows(); }, [loadRows]);
+  useEffect(() => {
+    if (canUpload !== true) return;
+    void loadRows();
+  }, [loadRows, canUpload]);
+
+  if (canUpload !== true) {
+    return (
+      <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}>
+        <Spin tip={canUpload === false ? '当前账号无订单上传权限，正在返回…' : '正在加载权限…'}>
+          <div style={{ minHeight: 120, minWidth: 240 }} />
+        </Spin>
+      </div>
+    );
+  }
 
   const onUpload = async (file: File) => {
     const idempotencyKey = `up-${dayjs().format('YYYYMMDDHHmmss')}-${Math.random().toString(36).slice(2, 10)}`;
@@ -167,7 +189,6 @@ export default function BizOrders() {
         </Space>
       </div>
 
-      {canUpload !== false && (
       <Card title="上传订单文件（.xlsx，≤50MB，≤20 万行，单工作表）" style={{ marginBottom: 16 }}>
         <Upload.Dragger
           accept=".xlsx"
@@ -180,8 +201,6 @@ export default function BizOrders() {
           <p className="ant-upload-hint">上传即视为导入确认（无内容审核）；整批校验任一错误零写入</p>
         </Upload.Dragger>
       </Card>
-      )}
-      {canUpload === false && <Card title="上传订单文件" style={{ marginBottom: 16 }}><Text type="secondary">当前账号无上传权限（仅 super_admin/admin 可上传）</Text></Card>}
 
       <Card title="导入批次" style={{ marginBottom: 16 }}>
         <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={loading} columns={columns} dataSource={batches} pagination={{ pageSize: 8 }} />

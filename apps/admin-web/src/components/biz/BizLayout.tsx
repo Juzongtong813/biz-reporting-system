@@ -47,7 +47,7 @@ export default function BizLayout() {
     { key: 'group-ops', type: 'group' as const, label: '经营管理' },
     ...filterByPermission([
       { key: '/biz/operation', label: '合同管理', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
-      { key: '/biz/orders', label: '订单管理', icon: <InboxOutlined />, permission: 'operation.order.read' },
+      { key: '/biz/orders', label: '订单管理', icon: <InboxOutlined />, permission: 'operation.order.upload' },
       { key: '/biz/offline-completions', label: '线下完工', icon: <TeamOutlined />, permission: 'operation.completion.read' },
       { key: '/biz/costs', label: '地市成本', icon: <WalletOutlined />, permission: 'operation.cost.read' },
       { key: '/biz/analysis', label: '经营分析', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },

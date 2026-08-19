@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, Card, Drawer, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { bizOfflineList, bizOfflineCreate, bizOfflineSubmit, bizOfflineApprove, bizOfflineReject, bizOfflineVoid, bizOfflineRestore, bizContractList, bizAdminCities } from '@/api/biz.api';
+import { bizOfflineList, bizOfflineCreate, bizOfflineSubmit, bizOfflineApprove, bizOfflineReject, bizOfflineVoid, bizOfflineRestore, bizContractList, bizContractDetail } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
 
@@ -30,26 +30,59 @@ export default function BizOfflineCompletions() {
   const navigate = useNavigate();
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
   const [contracts, setContracts] = useState<Array<{ id: string; contractNo: string }>>([]);
-  const [cities, setCities] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm();
+  const selectedContractId = Form.useWatch('contractId', form);
+
+  // 地市选项：不调用无权限的管理员城市字典接口，改由所选合同的详情 allocations 生成
+  // （后端已按数据范围过滤，city_user 只能看到其范围内的地市）。
+  const [cityOptions, setCityOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [cityLoading, setCityLoading] = useState(false);
+  // 前端 cityName 缓存（cityId -> cityName），复用合同详情数据，供列表"地市"列显示名称。
+  const cityNameRef = useRef<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [off, c, ct] = await Promise.all([
-        bizOfflineList(), bizContractList(), bizAdminCities().catch(() => ({ items: [] })),
-      ]);
+      const [off, c] = await Promise.all([bizOfflineList(), bizContractList()]);
       setItems(off.items);
       setContracts(c.items.map((x) => ({ id: x.id, contractNo: x.contractNo })));
-      setCities(ct.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** 选择合同后加载该合同可见地市（仅 status === 'active' 的分配） */
+  const loadContractCities = useCallback(async (contractId: string) => {
+    setCityLoading(true);
+    setCityOptions([]);
+    form.setFieldValue('cityId', undefined); // 切换合同必须清空旧 cityId
+    try {
+      const detail = await bizContractDetail(contractId);
+      const allocs = (detail.allocations ?? []).filter((a) => a.status === 'active');
+      for (const a of allocs) cityNameRef.current[a.cityId] = a.cityName;
+      const opts = allocs.map((a) => ({ id: a.cityId, name: a.cityName }));
+      setCityOptions(opts);
+      // 合同只有一个可见地市时自动选中
+      if (opts.length === 1) form.setFieldValue('cityId', opts[0].id);
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '合同地市加载失败');
+    } finally {
+      setCityLoading(false);
+    }
+  }, [form]);
+
+  const cityPlaceholder = !selectedContractId
+    ? '请先选择合同'
+    : cityLoading
+      ? '地市加载中…'
+      : cityOptions.length === 0
+        ? '该合同暂无可填报地市'
+        : '请选择地市';
 
   const onCreate = async (values: Record<string, unknown>) => {
     try {
@@ -107,7 +140,7 @@ export default function BizOfflineCompletions() {
 
   const columns = [
     { title: '合同编号', dataIndex: 'contractId', key: 'contractId', render: (v: string) => contracts.find((c) => c.id === v)?.contractNo ?? v?.slice(0, 8) ?? '-' },
-    { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cities.find((c) => c.id === v)?.name ?? '-' },
+    { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cityNameRef.current[v] ?? (v ? String(v).slice(0, 8) : '-') },
     { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '金额（元）', dataIndex: 'amountFen', key: 'amountFen', render: (v: number) => fenToYuan(Number(v)) },
     { title: '说明', dataIndex: 'summary', key: 'summary', ellipsis: true },
@@ -146,10 +179,22 @@ export default function BizOfflineCompletions() {
       <Drawer title="新建线下完工（草稿）" open={createOpen} onClose={() => setCreateOpen(false)} width={420}>
         <Form form={form} layout="vertical" onFinish={onCreate}>
           <Form.Item name="contractId" label="合同" rules={[{ required: true }]}>
-            <Select showSearch optionFilterProp="label" options={contracts.map((c) => ({ value: c.id, label: c.contractNo }))} />
+            <Select
+              data-testid="offline-contract-select"
+              showSearch optionFilterProp="label"
+              options={contracts.map((c) => ({ value: c.id, label: c.contractNo }))}
+              onChange={(v) => { if (v) void loadContractCities(String(v)); }}
+            />
           </Form.Item>
           <Form.Item name="cityId" label="地市" rules={[{ required: true }]}>
-            <Select options={cities.map((c) => ({ value: c.id, label: c.name }))} />
+            <Select
+              data-testid="offline-city-select"
+              loading={cityLoading}
+              disabled={!selectedContractId}
+              placeholder={cityPlaceholder}
+              options={cityOptions.map((c) => ({ value: c.id, label: c.name }))}
+              notFoundContent={!cityLoading && selectedContractId && cityOptions.length === 0 ? '该合同暂无可填报地市' : undefined}
+            />
           </Form.Item>
           <Form.Item name="businessMonth" label="业务月份（YYYY-MM）" rules={[{ required: true }]}><Input placeholder="2026-06" /></Form.Item>
           <Form.Item name="amountFen" label="完工金额（元）" rules={[{ required: true }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>

@@ -55,16 +55,21 @@ export default function BizLogin() {
     <main className="biz-login-page">
       <section className="biz-login-shell" aria-label="经营数据中台登录">
         <div className="biz-login-brand">
-          <span className="biz-login-logo"><img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术有限公司" /></span>
-          <div>
-            <strong>中屹技术有限公司</strong>
-            <span>经营协同 · 数据治理</span>
+          <div className="biz-login-brand-lockup">
+            <span className="biz-login-logo"><img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="中屹技术有限公司" /></span>
+            <div className="biz-login-company">
+              <strong>中屹技术有限公司</strong>
+            </div>
+          </div>
+          <div className="biz-login-product-copy">
+            <span className="biz-login-eyebrow">经营协同 · 数据治理</span>
+            <Title level={1}>中屹技术有限公司欢迎您！</Title>
+            <Text>低调 · 谦逊 · 谨慎 · 务实</Text>
           </div>
         </div>
 
         <div className="biz-login-form-panel">
           <header className="biz-login-form-heading">
-            <span className="v3-eyebrow">经营数据中台</span>
             <Title level={2}>登录工作台</Title>
             <Text>请输入系统管理员分配的账号和密码</Text>
           </header>
@@ -83,14 +88,18 @@ export default function BizLogin() {
             <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
               <Input.Password data-testid="biz-login-password" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
-            <Form.Item name="rememberUsername" valuePropName="checked" className="biz-login-remember">
-              <Checkbox>记住账号</Checkbox>
-            </Form.Item>
+            <div className="biz-login-options">
+              <Form.Item name="rememberUsername" valuePropName="checked" className="biz-login-remember">
+                <Checkbox>记住账号</Checkbox>
+              </Form.Item>
+              <Text>仅保存用户名</Text>
+            </div>
             <Button data-testid="biz-login-submit" className="biz-login-submit" type="primary" htmlType="submit" block loading={loading} icon={<LoginOutlined />}>
               登录
             </Button>
           </Form>
-          <p className="biz-login-note">仅限获授权人员使用，操作将记录至审计日志</p>
+          <p className="biz-login-boundary">当前支持系统管理员与地市用户账号。账号创建、停用与密码重置由系统管理员统一处理。</p>
+          <div className="biz-login-security"><SafetyOutlined /><span>身份验证与业务权限由系统统一管理</span></div>
         </div>
       </section>
       <footer className="biz-login-footer">中屹技术有限公司 · 内部业务系统</footer>

@@ -45,6 +45,46 @@ const env = {
 
 let apiProcess;
 let viteProcess;
+let apiBase = '';
+
+// ---- 订单 fixture（供订单页展示 demo 订单）----
+const XLSX = requireFromApi('xlsx');
+const ORDER_HEADER = ['省份名称','地市名称','采购订单编号','供应商名称','订单主状态','含税总金额','物料名称','物料编码','合同编号','净价','运保费','建安费','费用类型','税率','税额','含税单价','采购数量','计量单位','收货人','收货人联系方式','收货人详细地址','通知人','下单时间','通知时间','附言信息','项目编号','项目名称','站址编号','站址信息','收货状态','商品名称','商品编号','物料源头贴签标识','是否补样订单'];
+
+function buildOrderXlsxBuffer(po, contractNo, cityName, provinceName, amount, orderTime) {
+  const row = new Array(34).fill('');
+  row[0] = provinceName; row[1] = cityName; row[2] = po; row[3] = 'M7测试供应商';
+  row[4] = '已提交'; row[5] = String(amount); row[6] = '物料A'; row[7] = `MAT-${po}`;
+  row[8] = contractNo; row[9] = String(amount / 1.13); row[10] = '0'; row[11] = '0'; row[12] = '货物';
+  row[13] = '13%'; row[14] = '0'; row[15] = '0'; row[16] = '1'; row[17] = '件';
+  row[18] = '张收货'; row[19] = '13800138000'; row[20] = '山东省济南市测试路1号';
+  row[21] = '通知人'; row[22] = orderTime; row[23] = orderTime; row[24] = '';
+  row[25] = `PRJ-${po}`; row[26] = `项目-${po}`; row[27] = `SITE-${po}`; row[28] = '测试站址';
+  row[29] = '已收货'; row[30] = '商品A'; row[31] = `SKU-${po}`; row[32] = '是'; row[33] = '否';
+  const ws = XLSX.utils.aoa_to_sheet([ORDER_HEADER, row]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '电商化订单列表');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+async function uploadOrderAndWait(token, buffer, idempotencyKey) {
+  const form = new FormData();
+  form.append('idempotencyKey', idempotencyKey);
+  form.append('file', new Blob([buffer]), 'm7-orders.xlsx');
+  const res = await fetch(`${apiBase}/biz/orders/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+  assert.equal(res.status, 201, `M7 order fixture upload must succeed: ${res.status}`);
+  const { batchId } = await res.json();
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const detail = await (await fetch(`${apiBase}/biz/orders/batches/${batchId}`, { headers: { Authorization: `Bearer ${token}` } })).json();
+    if (detail.batch?.status !== 'parsing') {
+      assert.equal(detail.batch?.status, 'imported', `M7 order fixture batch must import: ${detail.batch?.failureReason ?? ''} errors=${JSON.stringify(detail.errors ?? []).slice(0, 600)}`);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error('M7 order fixture batch timeout');
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -92,7 +132,7 @@ try {
 
   const apiPort = await freePort();
   const webPort = await freePort();
-  const apiBase = `http://127.0.0.1:${apiPort}/api`;
+  apiBase = `http://127.0.0.1:${apiPort}/api`;
   const webBase = `http://127.0.0.1:${webPort}`;
 
   apiProcess = spawn(process.execPath, ['apps/api/dist/main.js'], {
@@ -139,6 +179,16 @@ try {
     body: JSON.stringify({ cityId: jinan, quotaFen: 100000 }),
   });
   assert.equal(allocationResponse.status, 201, 'M7 allocation fixture must be created');
+  const rateResponse = await fetch(`${apiBase}/biz/contracts/${viewContract.id}/fee-rates`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+    body: JSON.stringify({ cityId: jinan, effectiveMonth: demoMonth, rateBp: 1200, changeReason: 'M7 view fixture' }),
+  });
+  assert.equal(rateResponse.status, 201, 'M7 fee-rate fixture must be created');
+  // 激活合同：bizContractList 仅返回 active 合同，未激活的 draft 合同不会出现在列表中
+  const activateResponse = await fetch(`${apiBase}/biz/contracts/${viewContract.id}/activate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
+  });
+  assert.equal(activateResponse.status, 201, 'M7 contract must be activated');
   const offlineResponse = await fetch(`${apiBase}/biz/offline-completions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${superToken}` },
     body: JSON.stringify({ contractId: viewContract.id, cityId: jinan, businessMonth: demoMonth, amountFen: 10000, summary: 'M7 view offline fixture' }),
@@ -149,6 +199,10 @@ try {
     body: JSON.stringify({ cityId: jinan, businessMonth: demoMonth, categoryCode: 'labor', amountFen: 5000, description: 'M7 view cost fixture' }),
   });
   assert.equal(costResponse.status, 201, 'M7 cost fixture must be created');
+
+  // 订单 fixture：super_admin 上传一行订单，供订单页展示 demo 订单（M7-PO-001）
+  const orderBuffer = buildOrderXlsxBuffer('M7-PO-001', 'M7-VIEW-CONTRACT', '济南市', '山东省', 1000, `${demoMonth}-15 10:00:00`);
+  await uploadOrderAndWait(superToken, orderBuffer, `m7-order-${Date.now()}`);
 
   const browser = await chromium.launch();
   const viewports = [
@@ -174,10 +228,20 @@ try {
 
     // 登录页
     await page.goto(`${webBase}/#/biz/login`, { waitUntil: 'networkidle' });
+    assert.equal(await page.getByRole('heading', { name: '中屹技术有限公司欢迎您！' }).count(), 1, 'login page must show the prototype welcome heading');
+    const loginBackground = await page.locator('.biz-login-page').evaluate((element) => getComputedStyle(element).backgroundImage);
+    assert.match(loginBackground, /login-sky-clouds\.jpg/, 'login page must use the prototype cloud background');
     await page.screenshot({ path: path.join(screenshotDir, `login-${vp.name}.png`) });
 
     // super_admin 登录
     await login(page, 'm7_super', testPassword, webBase);
+    // super_admin 侧边栏应包含订单管理（前端入口以 operation.order.upload 为准，super 通配可见）
+    // 仅桌面视口断言：移动端菜单在未打开的 Drawer 中，不渲染 .ant-menu
+    if (vp.name === 'desktop') {
+      await page.goto(`${webBase}/#/biz/operation`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(600);
+      assert.ok((await page.locator('.ant-menu').innerText()).includes('订单管理'), 'super_admin menu must include 订单管理');
+    }
     for (const p of pages) {
       await page.goto(`${webBase}/${p.route}`, { waitUntil: 'networkidle' });
       await page.waitForTimeout(600);
@@ -186,6 +250,9 @@ try {
         assert.equal(await page.locator('.ant-layout-sider').count(), 0, 'module portal must not show business sidebar');
         assert.equal(await page.getByText('经营概览', { exact: true }).count(), 0, 'module portal must not show the removed overview card');
         assert.equal(await page.getByText('经营管理', { exact: true }).count(), 1, 'module portal must show operation as a first-level entry');
+      }
+      if (p.file === 'orders') {
+        await page.getByText('M7-PO-001').first().waitFor({ timeout: 10_000 });
       }
       if (p.file === 'admin') {
         await page.getByRole('button', { name: '重置密码' }).first().click();
@@ -211,12 +278,36 @@ try {
       { route: '#/biz/costs', text: 'M7 view cost fixture' },
     ]) {
       await page.goto(`${webBase}/${fixture.route}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(1000);
       await page.getByText(fixture.text, { exact: true }).waitFor({ timeout: 10_000 });
     }
     await context.close();
   }
 
-  // city_user：菜单隐藏 + 直接 URL 权限验证
+  // admin：订单入口可见 + 线下完工地市下拉来自合同分配（不依赖 /biz/admin/cities 字典）
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    await login(page, 'm7_admin', testPassword, webBase);
+    await page.goto(`${webBase}/#/biz/operation`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(600);
+    assert.ok((await page.locator('.ant-menu').innerText()).includes('订单管理'), 'admin menu must include 订单管理');
+    await page.goto(`${webBase}/#/biz/offline-completions`, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: '新建完工' }).click();
+    await page.locator('.ant-drawer-body').waitFor({ timeout: 5000 });
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="offline-contract-select"] .ant-select-selector').click();
+    await page.locator('.ant-select-item-option').filter({ hasText: 'M7-VIEW-CONTRACT' }).first().click();
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="offline-city-select"] .ant-select-selector').click();
+    const adminCityOptions = await page.locator('.ant-select-item-option').allInnerTexts();
+    assert.ok(adminCityOptions.length > 0, 'admin offline city dropdown must have options');
+    assert.ok(adminCityOptions.some((t) => t.includes('济南市')), `admin offline city options must include 济南市, got: ${adminCityOptions.join(',')}`);
+    await page.keyboard.press('Escape');
+    await context.close();
+  }
+
+  // city_user：菜单隐藏 + 直接 URL 权限验证 + 订单入口隐藏 + 线下完工地市来自合同分配
   {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
@@ -226,6 +317,7 @@ try {
     // 菜单不应包含权限管理（operation.user.manage）
     const menuText = await page.locator('.ant-menu').innerText();
     assert.ok(!menuText.includes('权限管理'), 'city_user menu must NOT include 权限管理');
+    assert.ok(!menuText.includes('订单管理'), 'city_user menu must NOT include 订单管理');
     assert.ok(!menuText.includes('系统设置') || true, 'city_user may see settings read menu');
     // 直接 URL 访问无权限页面 → 前端 403 结果页（后端 403 提示）
     await page.goto(`${webBase}/#/biz/admin`, { waitUntil: 'networkidle' });
@@ -233,6 +325,34 @@ try {
     const bodyText = await page.locator('body').innerText();
     assert.ok(bodyText.includes('无权限访问') || bodyText.includes('权限不足') || bodyText.includes('403'), `city_user direct /biz/admin must show 403, got: ${bodyText.slice(0, 80)}`);
     await page.screenshot({ path: path.join(screenshotDir, 'city-403-direct-url.png') });
+    // 直接访问订单路由 → 页面级权限保护跳回经营管理，不渲染上传区域与订单列表
+    await page.goto(`${webBase}/#/biz/orders`, { waitUntil: 'networkidle' });
+    await page.waitForURL('**/#/biz/operation', { timeout: 10_000 });
+    await page.waitForTimeout(600);
+    const bodyAfterOrderRedirect = await page.locator('body').innerText();
+    assert.ok(!bodyAfterOrderRedirect.includes('上传订单文件'), 'city_user direct /biz/orders must not render upload area');
+    assert.ok(!bodyAfterOrderRedirect.includes('导入批次'), 'city_user direct /biz/orders must not render batch list');
+    assert.ok(!bodyAfterOrderRedirect.includes('M7-PO-001'), 'city_user direct /biz/orders must not render order rows');
+    await page.screenshot({ path: path.join(screenshotDir, 'city-orders-redirect.png') });
+    // 线下完工：打开新建抽屉，选择合同后地市下拉来自合同分配（不调用 /api/biz/admin/cities）
+    await page.goto(`${webBase}/#/biz/offline-completions`, { waitUntil: 'networkidle' });
+    let adminCitiesCalled = false;
+    page.on('request', (req) => {
+      if (req.url().includes('/biz/admin/cities')) adminCitiesCalled = true;
+    });
+    await page.getByRole('button', { name: '新建完工' }).click();
+    await page.locator('.ant-drawer-body').waitFor({ timeout: 5000 });
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="offline-contract-select"] .ant-select-selector').click();
+    await page.locator('.ant-select-item-option').filter({ hasText: 'M7-VIEW-CONTRACT' }).first().click();
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="offline-city-select"] .ant-select-selector').click();
+    const cityOptionsText = await page.locator('.ant-select-item-option').allInnerTexts();
+    assert.ok(cityOptionsText.length > 0, 'city_user offline city dropdown must have options');
+    assert.ok(cityOptionsText.some((t) => t.includes('济南市')), `city_user offline city options must include 济南市, got: ${cityOptionsText.join(',')}`);
+    await page.keyboard.press('Escape');
+    assert.equal(adminCitiesCalled, false, 'offline completions must NOT call /api/biz/admin/cities');
+    await page.screenshot({ path: path.join(screenshotDir, 'city-offline-create-cities.png') });
     await context.close();
   }
 
