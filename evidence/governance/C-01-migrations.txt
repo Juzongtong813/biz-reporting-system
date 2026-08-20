@@ -2,8 +2,9 @@ task_id: C-01
 batch: PG-20260802
 self_declared_status: PASS
 internal_gate: PASS
-commit: 18f3b35f2047
+commit: 975a1d1
 manifest_digest: 6f3f0c4475b9377d
 command: corepack pnpm migration-files:check && corepack pnpm test:migrations:ledger
 exit_code: 0
 result: 19 migration files and SQLite ledger/idempotency contract passed.
+
