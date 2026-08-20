@@ -55,7 +55,7 @@ if (!skipBuild) {
     console.error(`FATAL: 未找到 vite bin ${localVite}`);
     process.exit(2);
   }
-  const result = spawnSync(process.execPath, [localVite, 'build'], {
+  const result = spawnSync(process.execPath, [localVite, 'build', '--base', '/dataofearth/'], {
     cwd: ADMIN_WEB,
     stdio: 'inherit',
   });

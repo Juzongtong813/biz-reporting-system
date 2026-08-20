@@ -16,5 +16,6 @@
   "014_biz_system_settings": "bf80769c8118a206488e846c1348eebdc2ba764fe28d77698775f058f2751c3c",
   "015_import_job_legacy_fields": "3b739bc827034ee03583a138473e710a56f20395fcd51dbd8a7e9061ea439a50",
   "016_biz_offline_rate_snapshot": "1d20fb67f26bf07131cc4dad99c3119e9600a449d2fb834c8c01bde6ee13e682",
-  "017_biz_order_batch_scope": "0950b4d825ff049dcce78551eaccb31e54a9d5ab65d41e5237b6cc223b7e76a8"
+  "017_biz_order_batch_scope": "0950b4d825ff049dcce78551eaccb31e54a9d5ab65d41e5237b6cc223b7e76a8",
+  "018_biz_order_row_validation": "a3ea807ce8f42a3ea96e41094b30fc19124d32b58df5a9730bf7b56eb5a69cfb"
 }

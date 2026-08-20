@@ -1,7 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not } from 'typeorm';
+import { DataSource, Repository, Not, In } from 'typeorm';
 import { randomUUID } from 'node:crypto';
+import * as XLSX from 'xlsx';
 import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole } from '@biz-reporting/shared-types';
 import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
@@ -15,6 +16,7 @@ import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entit
 import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
 import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
+import { readWorkbookSafe } from '../common/files/workbook-policy';
 
 export interface CreateContractDto {
   contractNo: string;
@@ -90,6 +92,7 @@ export class BizContractsService {
     @InjectRepository(BizSystemSettingEntity)
     private readonly settingRepo: Repository<BizSystemSettingEntity>,
     private readonly rbac: RbacService,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ================= 基础 =================
@@ -124,13 +127,17 @@ export class BizContractsService {
   // ================= 列表与详情 =================
 
   /** 合同列表（按数据范围过滤；city_user 仅已分配本地市） */
-  async list(auth: BizAuthContext, filter: { provinceId?: string; cityId?: string; status?: string }): Promise<BizContractEntity[]> {
+  async list(auth: BizAuthContext, filter: { provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<BizContractEntity[]> {
     await this.rbac.assertProvinceScope(auth, filter.provinceId);
     if (filter.cityId) await this.rbac.assertCityScope(auth, filter.cityId);
 
     const query = this.contractRepo.createQueryBuilder('c');
     if (filter.status) query.andWhere('c.status = :status', { status: filter.status });
     if (filter.provinceId) query.andWhere('c.provinceId = :provinceId', { provinceId: filter.provinceId });
+    const keyword = filter.keyword?.trim();
+    if (keyword) {
+      query.andWhere('(c.contractNo LIKE :keyword OR c.contractName LIKE :keyword)', { keyword: `%${keyword}%` });
+    }
 
     if (auth.roleCode === PlatformRole.CITY_USER) {
       // 地市用户：只返回分配给本地市的合同
@@ -175,7 +182,7 @@ export class BizContractsService {
     const alerts = await this.alertRepo.findBy({ contractId: id, currentStatus: 'active' });
 
     // 有效完工（订单未作废 + 线下完工已审核未作废；按可见地市过滤）
-    const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false })).filter((o) => inScope(o.cityId));
+    const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
     const offlines = (await this.offlineRepo.findBy({ contractId: id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const orderCompletionFen = orders.reduce((s, o) => s + (Number(o.completionAmountFen) || 0), 0);
     const offlineCompletionFen = offlines.reduce((s, o) => s + Number(o.amountFen), 0);
@@ -280,6 +287,300 @@ export class BizContractsService {
     return contract;
   }
 
+  async importWorkbook(auth: BizAuthContext, filename: string, buffer: Buffer): Promise<{ created: number; contractNos: string[] }> {
+    if (!filename.toLowerCase().endsWith('.xlsx')) throw new BadRequestException('仅支持 .xlsx 合同模板文件');
+    if (!['super_admin', 'admin', 'contract_manager'].includes(auth.roleCode)) {
+      throw new ForbiddenException('当前账号无合同导入权限');
+    }
+
+    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: 5_001 });
+    if (workbook.SheetNames.length !== 1) throw new BadRequestException('合同导入文件必须包含一个工作表');
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
+    const header = (rows[0] ?? []).map((value) => String(value).trim());
+    const indexes = this.contractImportIndexes(header);
+    const required = ['合同编号', '合同名称', '含税合同额（元）', '所属省份'];
+    const missing = required.filter((name) => indexes.get(name) === undefined);
+    if (missing.length > 0) throw new BadRequestException(`缺少必填列：${missing.join('、')}`);
+
+    const provinceByName = new Map<string, string>();
+    for (const province of await this.provinceRepo.find()) {
+      provinceByName.set(province.name.trim(), province.id);
+      provinceByName.set(province.code.trim(), province.id);
+    }
+
+    const pending: Array<CreateContractDto & { rowNo: number }> = [];
+    const seen = new Set<string>();
+    const errors: string[] = [];
+    rows.slice(1).forEach((source, offset) => {
+      const rowNo = offset + 2;
+      const values = Array.isArray(source) ? source.map((value) => String(value ?? '').trim()) : [];
+      if (values.every((value) => !value)) return;
+      const read = (name: string) => {
+        const index = indexes.get(name);
+        return index === undefined ? '' : values[index] ?? '';
+      };
+      const contractNo = read('合同编号');
+      const contractName = read('合同名称');
+      const amountText = read('含税合同额（元）').replace(/,/g, '');
+      const amount = Number(amountText);
+      const provinceText = read('所属省份');
+      const provinceId = provinceByName.get(provinceText);
+      if (!contractNo || !contractName || !provinceId || !Number.isFinite(amount) || amount < 0) {
+        errors.push(`第 ${rowNo} 行：合同编号、合同名称、所属省份和非负含税合同额为必填项`);
+        return;
+      }
+      if (seen.has(contractNo)) {
+        errors.push(`第 ${rowNo} 行：合同编号 ${contractNo} 在文件中重复`);
+        return;
+      }
+      seen.add(contractNo);
+      const startDate = this.normalizeContractDate(read('开始日期'));
+      const endDate = this.normalizeContractDate(read('结束日期'));
+      if ((read('开始日期') && !startDate) || (read('结束日期') && !endDate)) {
+        errors.push(`第 ${rowNo} 行：开始日期或结束日期格式无效，应为 YYYY-MM-DD`);
+        return;
+      }
+      pending.push({
+        rowNo,
+        contractNo,
+        contractName,
+        taxInclusiveAmountFen: Math.round(amount * 100),
+        provinceId,
+        startDate,
+        endDate,
+      });
+    });
+    if (pending.length === 0 && errors.length === 0) throw new BadRequestException('合同导入文件没有数据行');
+    if (errors.length > 0) throw new BadRequestException(errors.slice(0, 20).join('；'));
+
+    const existing = await this.contractRepo.createQueryBuilder('c')
+      .select('c.contractNo', 'contractNo')
+      .where('c.contractNo IN (:...contractNos)', { contractNos: pending.map((row) => row.contractNo) })
+      .getRawMany<{ contractNo: string }>();
+    if (existing.length > 0) throw new BadRequestException(`合同编号已存在：${existing.map((row) => row.contractNo).join('、')}`);
+
+    const imported = pending.map((row) => ({ ...row, id: randomUUID() }));
+    await this.dataSource.transaction(async (manager) => {
+      await manager.insert(BizContractEntity, imported.map((row) => ({
+        id: row.id,
+        contractNo: row.contractNo,
+        contractName: row.contractName,
+        taxInclusiveAmountFen: row.taxInclusiveAmountFen,
+        taxExclusiveAmountFen: null,
+        provinceId: row.provinceId,
+        startDate: row.startDate ?? null,
+        endDate: row.endDate ?? null,
+        status: ContractStatus.DRAFT,
+        tags: [],
+        amountLocked: false,
+        parentContractId: null,
+        versionNo: 1,
+        createdBy: auth.userId,
+        updatedBy: auth.userId,
+      })));
+      await manager.insert(BizOperationLogEntity, imported.map((row) => ({
+        id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import',
+        targetType: 'contract', targetId: row.id, resultStatus: 'success',
+      })));
+    });
+    return { created: pending.length, contractNos: pending.map((row) => row.contractNo) };
+  }
+
+  async importWorkbookWithAllocations(auth: BizAuthContext, filename: string, buffer: Buffer): Promise<{ created: number; contractNos: string[]; allocations: number; feeRates: number; issues: string[] }> {
+    if (!filename.toLowerCase().endsWith('.xlsx')) throw new BadRequestException('仅支持 .xlsx 合同文件');
+    if (!['super_admin', 'admin', 'contract_manager'].includes(auth.roleCode)) throw new ForbiddenException('当前账号无合同导入权限');
+
+    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: 5_001 });
+    if (workbook.SheetNames.length !== 1) throw new BadRequestException('合同导入文件必须包含一个工作表');
+    const sourceRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    const header = (sourceRows[0] ?? []).map((value) => String(value).trim());
+    const indexOf = (aliases: string[]) => header.findIndex((value) => aliases.includes(this.normalizeImportHeader(value)));
+    const indexes = {
+      province: indexOf(['省份名称', '所属省份', '省份']),
+      city: indexOf(['地市名称', '地市', '市公司']),
+      contractNo: indexOf(['合同编号', '合同号']),
+      contractName: indexOf(['合同名称', '合同名']),
+      amount: indexOf(['合同含税金额', '合同含税总额（元）', '含税合同额（元）', '含税合同额', '合同金额（元）', '合同金额']),
+      period: indexOf(['合同期限', '合同日期', '合同起止日期']),
+      startDate: indexOf(['开始日期', '合同开始日期']),
+      endDate: indexOf(['结束日期', '合同结束日期']),
+      rate: indexOf(['管理费比例', '管理费率', '费率']),
+    };
+    const missing = Object.entries(indexes).filter(([key, value]) => ['province', 'city', 'contractNo', 'contractName', 'amount', 'rate'].includes(key) && value < 0).map(([key]) => key);
+    if (missing.length) throw new BadRequestException(`缺少合同导入必填列：${missing.join('、')}`);
+
+    const provinceByKey = new Map<string, string>();
+    for (const province of await this.provinceRepo.find()) {
+      provinceByKey.set(this.normalizeAreaName(province.name), province.id);
+      provinceByKey.set(province.code.trim(), province.id);
+    }
+    const cityByKey = new Map<string, CityEntity>();
+    for (const city of await this.cityRepo.find()) {
+      cityByKey.set(`${city.provinceId}:${this.normalizeAreaName(city.name)}`, city);
+      cityByKey.set(`${city.provinceId}:${city.code.trim()}`, city);
+    }
+
+    type ImportRow = { rowNo: number; contractNo: string; contractName: string; amountFen: number; provinceId: string; cityId?: string; rateBp?: number; startDate: string | null; endDate: string | null };
+    const rows: ImportRow[] = [];
+    const errors: string[] = [];
+    const issues: string[] = [];
+    sourceRows.slice(1).forEach((source, offset) => {
+      const values = Array.isArray(source) ? source : [];
+      if (values.every((value) => String(value ?? '').trim() === '')) return;
+      const read = (index: number) => index < 0 ? '' : String(values[index] ?? '').trim();
+      const rowNo = offset + 2;
+      const provinceText = read(indexes.province);
+      const cityText = read(indexes.city);
+      const amountText = read(indexes.amount).replace(/[￥¥元,，]/g, '').trim();
+      const rateText = read(indexes.rate).replace(/％/g, '%').trim();
+      const provinceId = provinceByKey.get(this.normalizeAreaName(provinceText));
+      const city = provinceId ? cityByKey.get(`${provinceId}:${this.normalizeAreaName(cityText)}`) : undefined;
+      const amount = Number(amountText);
+      const rateBp = this.parseImportRate(rateText);
+      const period = this.parseImportPeriod(read(indexes.period));
+      const startDate = this.normalizeContractDate(read(indexes.startDate)) ?? period.startDate;
+      const endDate = this.normalizeContractDate(read(indexes.endDate)) ?? period.endDate;
+      const contractNo = read(indexes.contractNo);
+      const contractName = read(indexes.contractName);
+      const rowErrors: string[] = [];
+      const rowIssues: string[] = [];
+      if (!contractNo) rowErrors.push('合同编号为空');
+      if (!contractName) rowErrors.push('合同名称为空');
+      if (!provinceId) rowErrors.push(`省份无法匹配：${provinceText || '空'}`);
+      if (!Number.isFinite(amount) || amount < 0) rowErrors.push(`含税金额无效：${amountText || '空'}`);
+      if (!city) rowIssues.push(`地市无法匹配：${cityText || '空'}（省级公司不能替代具体地市）`);
+      if (rateBp == null) rowIssues.push(`管理费率无效：${rateText || '空'}`);
+      if ((read(indexes.startDate) && !startDate) || (read(indexes.endDate) && !endDate) || (read(indexes.period) && !startDate && !endDate)) rowIssues.push('合同期限无法解析，需在生效前补充起止日期');
+      if (rowErrors.length) {
+        errors.push(`第 ${rowNo} 行：${rowErrors.join('；')}`);
+        return;
+      }
+      if (rowIssues.length) issues.push(`第 ${rowNo} 行：${rowIssues.join('；')}`);
+      rows.push({ rowNo, contractNo, contractName, amountFen: Math.round(amount * 100), provinceId: provinceId as string, cityId: city?.id, rateBp: rateBp ?? undefined, startDate, endDate });
+    });
+    if (!rows.length && !errors.length) throw new BadRequestException('合同导入文件没有数据行');
+    if (errors.length && !rows.length) throw new BadRequestException(errors.slice(0, 20).join('；'));
+    issues.push(...errors);
+
+    const grouped = new Map<string, ImportRow[]>();
+    for (const row of rows) grouped.set(row.contractNo, [...(grouped.get(row.contractNo) ?? []), row]);
+    const existing = await this.contractRepo.findBy({ contractNo: In([...grouped.keys()]) });
+    for (const contract of existing) {
+      grouped.delete(contract.contractNo);
+      issues.push(`合同编号 ${contract.contractNo} 已存在，本次未重复导入`);
+    }
+
+    const contracts = [...grouped.entries()].map(([contractNo, contractRows]) => {
+      const first = contractRows[0];
+      if (contractRows.some((row) => row.contractName !== first.contractName || row.provinceId !== first.provinceId || row.startDate !== first.startDate || row.endDate !== first.endDate)) {
+        issues.push(`合同编号 ${contractNo} 的名称、省份或期限不一致，已按首行基础信息保存，需管理员核对`);
+      }
+      const cityRates = new Map<string, number>();
+      for (const row of contractRows) {
+        if (!row.cityId || row.rateBp == null) continue;
+        const existingRate = cityRates.get(row.cityId);
+        if (existingRate != null && existingRate !== row.rateBp) issues.push(`合同编号 ${contractNo} 同一地市存在不同管理费率，已保留首个费率`);
+        else cityRates.set(row.cityId, row.rateBp);
+      }
+      return { id: randomUUID(), first, contractRows, amountFen: contractRows.reduce((sum, row) => sum + row.amountFen, 0) };
+    });
+    let allocationCount = 0;
+    let feeRateCount = 0;
+    await this.dataSource.transaction(async (manager) => {
+      await manager.insert(BizContractEntity, contracts.map(({ id, first, amountFen }) => ({ id, contractNo: first.contractNo, contractName: first.contractName, taxInclusiveAmountFen: amountFen, taxExclusiveAmountFen: null, provinceId: first.provinceId, startDate: first.startDate, endDate: first.endDate, status: ContractStatus.DRAFT, tags: [], amountLocked: false, parentContractId: null, versionNo: 1, createdBy: auth.userId, updatedBy: auth.userId })));
+      const allocations = contracts.flatMap(({ id, contractRows }) => {
+        const quotaByCity = new Map<string, number>();
+        for (const row of contractRows) if (row.cityId) quotaByCity.set(row.cityId, (quotaByCity.get(row.cityId) ?? 0) + row.amountFen);
+        return [...quotaByCity.entries()].map(([cityId, quotaFen]) => ({ id: randomUUID(), contractId: id, cityId, quotaFen, status: 'active', versionNo: 1 }));
+      });
+      const rates = contracts.flatMap(({ id, contractRows, first }) => {
+        const rateByCity = new Map<string, number>();
+        for (const row of contractRows) if (row.cityId && row.rateBp != null && !rateByCity.has(row.cityId)) rateByCity.set(row.cityId, row.rateBp);
+        return [...rateByCity.entries()].map(([cityId, rateBp]) => ({ id: randomUUID(), contractId: id, cityId, effectiveMonth: first.startDate?.slice(0, 7) ?? '2026-01', rateBp, changeReason: 'Excel导入' }));
+      });
+      allocationCount = allocations.length;
+      feeRateCount = rates.length;
+      if (allocations.length) await manager.insert(BizContractCityAllocationEntity, allocations);
+      if (rates.length) await manager.insert(BizContractFeeRateEntity, rates);
+      await manager.insert(BizOperationLogEntity, contracts.map(({ id }) => ({ id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import', targetType: 'contract', targetId: id, resultStatus: 'success' })));
+    });
+    return { created: contracts.length, contractNos: contracts.map(({ first }) => first.contractNo), allocations: allocationCount, feeRates: feeRateCount, issues };
+  }
+
+  async batchClearDrafts(auth: BizAuthContext, ids: string[]): Promise<{ cleared: number; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+    const uniqueIds = [...new Set((ids ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('请至少选择一份合同');
+    const contracts = await this.contractRepo.findBy({ id: In(uniqueIds) });
+    const byId = new Map(contracts.map((contract) => [contract.id, contract]));
+    const skipped: Array<{ id: string; contractNo?: string; reason: string }> = [];
+    const clearIds: string[] = [];
+    for (const id of uniqueIds) {
+      const contract = byId.get(id);
+      if (!contract) { skipped.push({ id, reason: '合同不存在' }); continue; }
+      if (contract.status !== ContractStatus.DRAFT) { skipped.push({ id, contractNo: contract.contractNo, reason: '仅能清空草稿合同' }); continue; }
+      const [orders, completions] = await Promise.all([this.orderRowRepo.countBy({ contractId: id }), this.offlineRepo.countBy({ contractId: id })]);
+      if (orders || completions) { skipped.push({ id, contractNo: contract.contractNo, reason: '合同已有订单或线下完工，不能清空' }); continue; }
+      clearIds.push(id);
+    }
+    if (clearIds.length) await this.dataSource.transaction(async (manager) => {
+      await manager.delete(BizContractFeeRateEntity, { contractId: In(clearIds) });
+      await manager.delete(BizContractCityAllocationEntity, { contractId: In(clearIds) });
+      await manager.delete(BizContractAlertEntity, { contractId: In(clearIds) });
+      await manager.delete(BizOperationLogEntity, { targetType: 'contract', targetId: In(clearIds) });
+      await manager.delete(BizContractEntity, { id: In(clearIds) });
+      await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.batch_clear_drafts', targetType: 'contract_batch', targetId: randomUUID(), resultStatus: 'success' });
+    });
+    return { cleared: clearIds.length, skipped };
+  }
+
+  private normalizeImportHeader(value: string): string {
+    return value.replace(/\s/g, '').replace(/\(/g, '（').replace(/\)/g, '）');
+  }
+
+  private normalizeAreaName(value: string): string {
+    return value.trim().replace(/\s/g, '').replace(/分公司$/, '').replace(/公司$/, '').replace(/市$/, '').replace(/省$/, '');
+  }
+
+  private parseImportRate(value: string): number | null {
+    const text = value.trim().replace(/,/g, '');
+    if (!text) return null;
+    const numeric = Number(text.replace(/%$/, ''));
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    const percent = text.endsWith('%') ? numeric : numeric <= 1 ? numeric * 100 : numeric;
+    if (percent > 100) return null;
+    return Math.round(percent * 100);
+  }
+
+  private parseImportPeriod(value: string): { startDate: string | null; endDate: string | null } {
+    const matches = value.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/g) ?? [];
+    return { startDate: this.normalizeContractDate(matches[0] ?? ''), endDate: this.normalizeContractDate(matches[1] ?? '') };
+  }
+
+  private contractImportIndexes(header: string[]): Map<string, number> {
+    const aliases: Record<string, string[]> = {
+      '合同编号': ['合同编号', '合同号'],
+      '合同名称': ['合同名称', '合同名'],
+      '含税合同额（元）': ['含税合同额（元）', '含税合同额(元)', '含税合同额', '合同金额（元）', '合同金额'],
+      '所属省份': ['所属省份', '省份', '省份名称'],
+      '开始日期': ['开始日期', '合同开始日期'],
+      '结束日期': ['结束日期', '合同结束日期'],
+    };
+    const normalize = (value: string) => value.replace(/\s/g, '').replace(/\(/g, '（').replace(/\)/g, '）');
+    const normalized = header.map(normalize);
+    return new Map(Object.entries(aliases).flatMap(([field, names]) => {
+      const index = normalized.findIndex((value) => names.some((name) => value === normalize(name)));
+      return index < 0 ? [] : [[field, index] as const];
+    }));
+  }
+
+  private normalizeContractDate(value: string): string | null {
+    if (!value) return null;
+    const parsed = new Date(value.replace(/[/.]/g, '-'));
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 10);
+  }
+
   /** 编辑：草稿可改合同额；生效后合同额永久锁定（amountLocked=true 时拒绝金额修改） */
   async update(auth: BizAuthContext, id: string, dto: UpdateContractDto): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
@@ -302,14 +603,14 @@ export class BizContractsService {
   // ================= 状态机 =================
 
   /** 完整性校验：编号/名称/含税金额>0/起止日期/已分配地市均有费率 */
-  private async assertCompleteness(contract: BizContractEntity): Promise<void> {
+  private async completenessIssues(contract: BizContractEntity): Promise<string[]> {
     const missing: string[] = [];
     if (!contract.contractNo?.trim()) missing.push('合同编号');
     if (!contract.contractName?.trim()) missing.push('合同名称');
     if (!Number(contract.taxInclusiveAmountFen) || Number(contract.taxInclusiveAmountFen) <= 0) missing.push('含税合同金额(>0)');
     if (!contract.startDate) missing.push('合同开始日期');
     if (!contract.endDate) missing.push('合同结束日期');
-    if (missing.length) throw new BadRequestException(`合同资料不完整，缺少：${missing.join('、')}`);
+    if (missing.length) return missing;
 
     const allocations = await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' });
     if (allocations.length === 0) throw new BadRequestException('合同资料不完整，缺少：地市分配');
@@ -317,8 +618,14 @@ export class BizContractsService {
       const rate = await this.feeRateRepo.findOneBy({
         contractId: contract.id, cityId: alloc.cityId,
       });
-      if (!rate) throw new BadRequestException(`地市费率不完整，缺少：${alloc.cityId}`);
+      if (!rate) missing.push(`地市费率(${alloc.cityId})`);
     }
+    return missing;
+  }
+
+  private async assertCompleteness(contract: BizContractEntity): Promise<void> {
+    const missing = await this.completenessIssues(contract);
+    if (missing.length) throw new BadRequestException(`合同资料不完整，缺少：${missing.join('、')}`);
   }
 
   /** 生效：draft → active；合同额锁定；versionNo++ */
@@ -333,6 +640,29 @@ export class BizContractsService {
     await this.contractRepo.save(contract);
     await this.recordOp(auth.userId, 'contract.activate', id);
     return contract;
+  }
+
+  async batchActivate(auth: BizAuthContext, ids: string[], dryRun = false): Promise<{ checked: number; activated: string[]; failed: Array<{ id: string; contractNo?: string; reason: string }> }> {
+    const uniqueIds = [...new Set((ids ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('请至少选择一份草稿合同');
+    const activated: string[] = [];
+    const failed: Array<{ id: string; contractNo?: string; reason: string }> = [];
+    for (const id of uniqueIds) {
+      const contract = await this.contractRepo.findOneBy({ id });
+      if (!contract) { failed.push({ id, reason: '合同不存在' }); continue; }
+      if (contract.status !== ContractStatus.DRAFT) { failed.push({ id, contractNo: contract.contractNo, reason: '仅草稿合同可生效' }); continue; }
+      const issues = await this.completenessIssues(contract);
+      if (issues.length) { failed.push({ id, contractNo: contract.contractNo, reason: `合同资料不完整，缺少：${issues.join('、')}` }); continue; }
+      if (dryRun) { activated.push(id); continue; }
+      contract.status = ContractStatus.ACTIVE;
+      contract.amountLocked = true;
+      contract.versionNo += 1;
+      contract.updatedBy = auth.userId;
+      await this.contractRepo.save(contract);
+      await this.recordOp(auth.userId, 'contract.activate', id);
+      activated.push(id);
+    }
+    return { checked: uniqueIds.length, activated, failed };
   }
 
   /** 确认完成：active → completed（进度必须 ≥100%，管理员确认） */
@@ -479,7 +809,7 @@ export class BizContractsService {
         .getRawOne();
       costFen = Number(costs?.total ?? 0);
     }
-    const orders = (await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false })).filter((o) => inScope(o.cityId));
+    const orders = (await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
     const offlines = (await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0)
       + offlines.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);

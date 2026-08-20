@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Headers, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { BizAuthGuard } from './biz-auth.guard';
-import { BizAuthService, BizLoginRequest } from './biz-auth.service';
+import { BizAuthService, BizChangeOwnPasswordRequest, BizLoginRequest } from './biz-auth.service';
 import { BizAuthContext } from '../rbac/rbac.service';
 import { BizAuthUser } from './biz-auth-user.decorator';
 
@@ -31,5 +31,16 @@ export class BizAuthController {
   @UseGuards(BizAuthGuard)
   async me(@BizAuthUser() auth: BizAuthContext) {
     return this.authService.me(auth);
+  }
+
+  @Patch('me/password')
+  @Public()
+  @UseGuards(BizAuthGuard)
+  async changeOwnPassword(
+    @BizAuthUser() auth: BizAuthContext,
+    @Body() dto: BizChangeOwnPasswordRequest,
+  ) {
+    await this.authService.changeOwnPassword(auth, dto);
+    return { ok: true };
   }
 }

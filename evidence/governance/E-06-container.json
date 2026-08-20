@@ -1,0 +1,13 @@
+{
+  "$meta": {
+    "task_id": "E-06",
+    "batch": "PG-20260802",
+    "self_declared_status": "PARTIAL",
+    "internal_gate": "BLOCKED",
+    "commit": "18f3b35f2047",
+    "manifest_digest": "6f3f0c4475b9377d"
+  },
+  "command": "corepack pnpm exec node scripts/test/check-container-runtime.mjs",
+  "exit_code": 0,
+  "result": "Static non-root/container checks passed; Docker daemon build and mount verification remain PENDING_DOCKER."
+}

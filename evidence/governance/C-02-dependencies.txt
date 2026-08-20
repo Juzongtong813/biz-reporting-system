@@ -1,0 +1,9 @@
+task_id: C-02
+batch: PG-20260802
+self_declared_status: PARTIAL
+internal_gate: BLOCKED
+commit: 18f3b35f2047
+manifest_digest: 6f3f0c4475b9377d
+command: corepack pnpm --filter @biz-reporting/shared-types build && corepack pnpm --filter @biz-reporting/api build && corepack pnpm --filter @biz-reporting/admin-web build
+exit_code: 0
+result: Approved dependency build path passed; external production audit was not run.

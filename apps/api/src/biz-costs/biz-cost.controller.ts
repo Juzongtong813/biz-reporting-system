@@ -5,7 +5,7 @@ import { BizPermissionsGuard } from '../biz-auth/biz-permissions.guard';
 import { BizPermissions } from '../biz-auth/biz-permissions.decorator';
 import { BizAuthUser } from '../biz-auth/biz-auth-user.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
-import { BizCostService, CostEntryDto } from './biz-cost.service';
+import { BizCostService, CostEntryDto, MonthlyCostDto } from './biz-cost.service';
 import { BizPermissionCode } from '@biz-reporting/shared-types';
 
 /**
@@ -20,8 +20,14 @@ export class BizCostController {
 
   @Get()
   @BizPermissions(BizPermissionCode.OPERATION_COST_READ)
-  async list(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string, @Query('status') status?: string) {
-    return { items: await this.service.list(auth, { cityId, status }) };
+  async list(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string, @Query('status') status?: string, @Query('businessMonth') businessMonth?: string) {
+    return { items: await this.service.list(auth, { cityId, status, businessMonth }) };
+  }
+
+  @Get('categories/list')
+  @BizPermissions(BizPermissionCode.OPERATION_COST_READ)
+  async categories() {
+    return { items: await this.service.listCategories() };
   }
 
   @Get(':id')
@@ -34,6 +40,12 @@ export class BizCostController {
   @BizPermissions(BizPermissionCode.OPERATION_COST_CREATE)
   async create(@BizAuthUser() auth: BizAuthContext, @Body() dto: CostEntryDto) {
     return this.service.create(auth, dto);
+  }
+
+  @Post('monthly')
+  @BizPermissions(BizPermissionCode.OPERATION_COST_CREATE)
+  async saveMonthly(@BizAuthUser() auth: BizAuthContext, @Body() dto: MonthlyCostDto) {
+    return this.service.saveMonthly(auth, dto);
   }
 
   @Patch(':id')

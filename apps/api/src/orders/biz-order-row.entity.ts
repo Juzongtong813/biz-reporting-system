@@ -122,6 +122,12 @@ export class BizOrderRowEntity {
   @Column({ name: 'source_row_json', type: 'json', nullable: true })
   sourceRowJson: string[] | null;
 
+  @Column({ name: 'validation_status', type: 'varchar', length: 16, default: 'valid' })
+  validationStatus: 'valid' | 'needs_review';
+
+  @Column({ name: 'validation_error', type: 'text', nullable: true })
+  validationError: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;
 }

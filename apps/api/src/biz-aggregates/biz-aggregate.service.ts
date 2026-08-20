@@ -201,7 +201,8 @@ export class BizAggregateService {
       .addSelect('o.businessMonth', 'businessMonth')
       .addSelect('SUM(o.completionAmountFen)', 'orderCompletionFen')
       .addSelect('SUM(o.grossProfitFen)', 'grossProfitFen')
-      .where('o.isVoid = 0');
+      .where('o.isVoid = 0')
+      .andWhere('o.validationStatus = :orderValidationStatus', { orderValidationStatus: 'valid' });
     const offlineQb = this.offlineRepo.createQueryBuilder('f')
       .select('f.cityId', 'cityId')
       .addSelect('f.contractId', 'contractId')
@@ -549,6 +550,7 @@ export class BizAggregateService {
       .select('o.contractId', 'contractId')
       .addSelect('SUM(o.completionAmountFen)', 'amount')
       .where('o.isVoid = 0')
+      .andWhere('o.validationStatus = :orderValidationStatus', { orderValidationStatus: 'valid' })
       .groupBy('o.contractId')
       .getRawMany();
     const offlineRows = await this.offlineRepo.createQueryBuilder('f')

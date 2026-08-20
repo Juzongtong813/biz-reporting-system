@@ -11,11 +11,18 @@ import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 import { CityEntity } from '../main-data/city.entity';
 
 export interface CostEntryDto {
-  cityId: string;
+  cityId?: string | null;
   businessMonth: string; // YYYY-MM
   categoryCode: string;
   amountFen: number;
   description?: string | null;
+}
+
+export interface MonthlyCostDto {
+  cityId?: string | null;
+  businessMonth: string;
+  submit?: boolean;
+  entries: Array<{ categoryCode: string; amountFen?: number | null; description?: string | null }>;
 }
 
 /**
@@ -64,6 +71,12 @@ export class BizCostService {
     }
   }
 
+  private resolveCityId(auth: BizAuthContext, cityId?: string | null): string {
+    const resolved = auth.dataScope.scopeType === 'city' ? auth.dataScope.cityId : cityId;
+    if (!resolved) throw new BadRequestException('请选择地市');
+    return resolved;
+  }
+
   private async assertRules(dto: CostEntryDto): Promise<void> {
     if (!Number.isFinite(dto.amountFen) || dto.amountFen <= 0) throw new BadRequestException('成本金额必须大于 0');
     if (!/^\d{4}-\d{2}$/.test(dto.businessMonth)) throw new BadRequestException('业务月份格式应为 YYYY-MM');
@@ -77,7 +90,7 @@ export class BizCostService {
 
   // ================= 列表/详情 =================
 
-  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string }): Promise<BizCostEntryEntity[]> {
+  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string; businessMonth?: string }): Promise<Array<BizCostEntryEntity & { cityName?: string }>> {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.costRepo.createQueryBuilder('c');
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
@@ -90,7 +103,15 @@ export class BizCostService {
     }
     if (filter.cityId) qb.andWhere('c.cityId = :cityId', { cityId: filter.cityId });
     if (filter.status) qb.andWhere('c.status = :status', { status: filter.status });
-    return qb.orderBy('c.createdAt', 'DESC').getMany();
+    if (filter.businessMonth) qb.andWhere('c.businessMonth = :businessMonth', { businessMonth: filter.businessMonth });
+    const items = await qb.orderBy('c.createdAt', 'DESC').getMany();
+    const cities = await this.cityRepo.findBy({ id: In([...new Set(items.map((item) => item.cityId))]) });
+    const names = new Map(cities.map((city) => [city.id, city.name]));
+    return items.map((item) => ({ ...item, cityName: names.get(item.cityId) }));
+  }
+
+  async listCategories(): Promise<BizCostCategoryEntity[]> {
+    return this.categoryRepo.find({ where: { status: 'active' }, order: { sortOrder: 'ASC', name: 'ASC' } });
   }
 
   async detail(auth: BizAuthContext, id: string): Promise<BizCostEntryEntity> {
@@ -102,11 +123,12 @@ export class BizCostService {
   // ================= 新增/编辑/提交/撤回 =================
 
   async create(auth: BizAuthContext, dto: CostEntryDto): Promise<BizCostEntryEntity> {
-    await this.assertCityAccess(auth, dto.cityId);
-    await this.assertRules(dto);
+    const cityId = this.resolveCityId(auth, dto.cityId);
+    await this.assertCityAccess(auth, cityId);
+    await this.assertRules({ ...dto, cityId });
     const item = await this.costRepo.save({
       id: randomUUID(),
-      cityId: dto.cityId,
+      cityId,
       businessMonth: dto.businessMonth,
       categoryCode: dto.categoryCode,
       amountFen: Math.round(dto.amountFen),
@@ -118,12 +140,41 @@ export class BizCostService {
     return item;
   }
 
+  async saveMonthly(auth: BizAuthContext, dto: MonthlyCostDto): Promise<{ items: BizCostEntryEntity[] }> {
+    const cityId = this.resolveCityId(auth, dto.cityId);
+    if (!/^\d{4}-\d{2}$/.test(dto.businessMonth)) throw new BadRequestException('业务月份格式应为 YYYY-MM');
+    const categories = await this.listCategories();
+    const validCodes = new Set(categories.map((category) => category.code));
+    const entries = dto.entries ?? [];
+    const saved: BizCostEntryEntity[] = [];
+    await this.assertCityAccess(auth, cityId);
+    for (const entry of entries) {
+      const amountFen = Number(entry.amountFen ?? 0);
+      if (!Number.isFinite(amountFen) || amountFen < 0) throw new BadRequestException('金额不能小于 0');
+      if (amountFen === 0 && !String(entry.description ?? '').trim()) continue;
+      if (!validCodes.has(entry.categoryCode)) throw new BadRequestException(`成本分类不存在：${entry.categoryCode}`);
+      const existing = await this.costRepo.find({ where: { cityId, businessMonth: dto.businessMonth, categoryCode: entry.categoryCode }, order: { updatedAt: 'DESC' }, take: 1 });
+      const editable = existing[0];
+      if (editable && ![CostStatus.DRAFT, CostStatus.REJECTED].includes(editable.status as CostStatus)) continue;
+      if (editable) {
+        const updated = await this.update(auth, editable.id, { amountFen, description: entry.description ?? null });
+        saved.push(updated);
+      } else {
+        saved.push(await this.create(auth, { cityId, businessMonth: dto.businessMonth, categoryCode: entry.categoryCode, amountFen, description: entry.description ?? null }));
+      }
+    }
+    if (dto.submit) {
+      for (const item of saved) await this.submit(auth, item.id);
+    }
+    return { items: saved };
+  }
+
   async update(auth: BizAuthContext, id: string, dto: Partial<CostEntryDto>): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
     await this.assertCityAccess(auth, item.cityId);
     if (item.status !== CostStatus.DRAFT && item.status !== CostStatus.REJECTED) throw new BadRequestException('仅草稿或已驳回记录可编辑');
-    const merged: CostEntryDto = {
-      cityId: dto.cityId ?? item.cityId,
+    const merged: CostEntryDto & { cityId: string } = {
+      cityId: this.resolveCityId(auth, dto.cityId ?? item.cityId),
       businessMonth: dto.businessMonth ?? item.businessMonth,
       categoryCode: dto.categoryCode ?? item.categoryCode,
       amountFen: dto.amountFen ?? Number(item.amountFen),

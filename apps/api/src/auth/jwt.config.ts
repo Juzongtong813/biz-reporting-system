@@ -50,11 +50,16 @@ function normalizeJwtSecret(
 export function validateAuthEnvironment(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
-  normalizeJwtSecret(config.JWT_SECRET, config.NODE_ENV, config.DEPLOY_ENV);
+  const jwtSecret = normalizeJwtSecret(config.JWT_SECRET, config.NODE_ENV, config.DEPLOY_ENV);
   // M8（DEV-064）：登录限流 HMAC 密钥同样做强度审计
-  if (config.AUTH_SECURITY_HMAC_KEY != null && config.AUTH_SECURITY_HMAC_KEY !== '') {
-    assertSecretStrength(config.AUTH_SECURITY_HMAC_KEY, 'AUTH_SECURITY_HMAC_KEY', config.NODE_ENV);
+  const authSecurityHmacKey = typeof config.AUTH_SECURITY_HMAC_KEY === 'string'
+    ? config.AUTH_SECURITY_HMAC_KEY.trim()
+    : '';
+  if (!authSecurityHmacKey) throw new Error('[AUTH_CONFIG] AUTH_SECURITY_HMAC_KEY_REQUIRED');
+  if (authSecurityHmacKey === jwtSecret) {
+    throw new Error('[AUTH_CONFIG] AUTH_SECURITY_HMAC_KEY_MUST_DIFFER_FROM_JWT_SECRET');
   }
+  assertSecretStrength(authSecurityHmacKey, 'AUTH_SECURITY_HMAC_KEY', config.NODE_ENV);
   return config;
 }
 

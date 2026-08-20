@@ -9,6 +9,7 @@ import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.ent
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { RbacModule } from '../rbac/rbac.module';
 import { BizContractsModule } from '../biz-contracts/biz-contracts.module';
 import { BizAggregatesModule } from '../biz-aggregates/biz-aggregates.module';
@@ -27,6 +28,7 @@ import { BizOrdersController } from './biz-orders.controller';
       ProvinceEntity,
       CityEntity,
       BizOperationLogEntity,
+      PlatformUserEntity,
     ]),
     RbacModule,
     BizContractsModule,

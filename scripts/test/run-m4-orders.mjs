@@ -197,9 +197,13 @@ try {
   const badRowBuffer = buildXlsxBuffer([makeRow('PO-002', 'HT-ORD-001', '济南市', '不存在省', 100, '2026-01-15')]);
   res = await uploadFile(superToken, badRowBuffer, randomUUID());
   detail = await waitBatch(res.data.batchId);
-  assert.equal(detail.batch.status, 'failed', 'ORD-004 bad province must fail');
-  assert.equal(detail.batch.importedRows, 0, 'ORD-004 zero write');
+  assert.equal(detail.batch.status, 'imported', 'ORD-004 batch remains imported for manual maintenance');
+  assert.equal(detail.batch.totalRows, 1, 'ORD-004 raw row is retained');
+  assert.equal(detail.batch.importedRows, 0, 'ORD-004 invalid row is not counted as valid');
   assert.ok(detail.errors.length >= 1 && detail.errors[0].errorType === 'province', 'ORD-004 error report with type');
+  let rows = await api('GET', `/biz/orders/rows?batchId=${detail.batch.id}`, { token: superToken });
+  assert.equal(rows.data.items.length, 1, 'ORD-004 raw row is queryable');
+  assert.equal(rows.data.items[0].validationStatus, 'needs_review', 'ORD-004 row requires maintenance');
 
   // ============ ORD-005 成功导入：标准化字段 ============
   const validBuffer2 = buildXlsxBuffer([makeRow('PO-005', 'HT-ORD-001', '济南市', '山东省', 1000, '2026-01-18 09:00:00')]);
@@ -208,7 +212,7 @@ try {
   detail = await waitBatch(res.data.batchId);
   assert.equal(detail.batch.status, 'imported', `ORD-005 import ok: ${detail.batch.failureReason ?? ''}`);
   assert.equal(detail.batch.importedRows, 1);
-  let rows = await api('GET', `/biz/orders/rows?batchId=${detail.batch.id}`, { token: superToken });
+  rows = await api('GET', `/biz/orders/rows?batchId=${detail.batch.id}`, { token: superToken });
   assert.equal(rows.data.items.length, 1);
   assert.equal(rows.data.items[0].completionAmountFen, 100_000, 'ORD-005 amount in fen');
   assert.equal(rows.data.items[0].businessMonth, '2026-01', 'ORD-005 business month from order time');
@@ -290,7 +294,8 @@ try {
     assert.equal(res.status, 201, 'ORD-015 real file upload accepted');
     detail = await waitBatch(res.data.batchId, 120_000);
     // 真实文件无对应合同 → 预期 FAILED（合同映射失败），但结构校验必须通过
-    assert.equal(detail.batch.status, 'failed', 'ORD-015 real file fails at business validation (no matching contracts)');
+    assert.equal(detail.batch.status, 'imported', 'ORD-015 real file is retained for business-data maintenance');
+    assert.ok(Number(detail.batch.totalRows) > 0, 'ORD-015 real file rows are retained');
     assert.notEqual(detail.batch.failureReason, undefined);
     const structOk = detail.errors.length === 0 || detail.errors.every((e) => e.errorType !== 'structure');
     assert.ok(structOk, 'ORD-015 real file passes structure check (34-column strict match)');

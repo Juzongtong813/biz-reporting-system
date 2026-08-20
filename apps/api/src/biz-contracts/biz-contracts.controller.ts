@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
 import { BizAuthGuard } from '../biz-auth/biz-auth.guard';
 import { BizPermissionsGuard } from '../biz-auth/biz-permissions.guard';
@@ -31,8 +33,9 @@ export class BizContractsController {
     @Query('provinceId') provinceId?: string,
     @Query('cityId') cityId?: string,
     @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
   ) {
-    const items = await this.service.list(auth, { provinceId, cityId, status });
+    const items = await this.service.list(auth, { provinceId, cityId, status, keyword });
     return { items };
   }
 
@@ -40,6 +43,23 @@ export class BizContractsController {
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_CREATE)
   async create(@BizAuthUser() auth: BizAuthContext, @Body() dto: CreateContractDto) {
     return this.service.create(auth, dto);
+  }
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+  }))
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_CREATE)
+  async upload(@BizAuthUser() auth: BizAuthContext, @UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file?.buffer) throw new BadRequestException('请选择合同 Excel 文件');
+    return this.service.importWorkbookWithAllocations(auth, file.originalname ?? 'contracts.xlsx', file.buffer);
+  }
+
+  @Post('batch-clear-drafts')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
+  async batchClearDrafts(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[] }) {
+    return this.service.batchClearDrafts(auth, body?.ids ?? []);
   }
 
   @Get(':id')
@@ -59,6 +79,12 @@ export class BizContractsController {
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
   async activate(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
     return this.service.activate(auth, id);
+  }
+
+  @Post('batch-activate')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
+  async batchActivate(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[]; dryRun?: boolean }) {
+    return this.service.batchActivate(auth, body?.ids ?? [], Boolean(body?.dryRun));
   }
 
   @Post(':id/complete')

@@ -2,15 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBizPermission } from '@/utils/biz-permission';
 import {
-  Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, message,
+  Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, Upload, message,
 } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import * as XLSX from 'xlsx';
 import {
   bizAdminProvinces, bizAdminCities,
   bizContractList, bizContractCreate, bizContractDetail, bizContractUpdate,
-  bizContractActivate, bizContractVoid, bizContractUpsertAllocation,
+  bizContractActivate, bizContractBatchActivate, bizContractBatchClearDrafts, bizContractVoid, bizContractUpsertAllocation,
   bizContractCancelAllocation, bizContractAddFeeRate,
+  bizContractUpload,
   type BizContractDetail, type BizContractItem,
 } from '@/api/biz.api';
 
@@ -39,12 +41,20 @@ function formatYearMonth(value: string | null | undefined): string {
 export default function BizContracts() {
   const navigate = useNavigate();
   const canUploadOrder = useBizPermission('operation.order.upload');
+  const canCreateContract = useBizPermission('operation.contract.create');
+  const canUpdateContract = useBizPermission('operation.contract.update');
   const [items, setItems] = useState<BizContractItem[]>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [batchRunning, setBatchRunning] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [detail, setDetail] = useState<BizContractDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -56,7 +66,7 @@ export default function BizContracts() {
     setLoading(true);
     try {
       const [list, p, c] = await Promise.all([
-        bizContractList(statusFilter ? { status: statusFilter } : {}),
+        bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}) }),
         bizAdminProvinces().catch(() => ({ items: [] })),
         bizAdminCities().catch(() => ({ items: [] })),
       ]);
@@ -66,9 +76,11 @@ export default function BizContracts() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, appliedKeyword]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => { setSelectedRowKeys((keys) => keys.filter((key) => items.some((item) => item.id === key && item.status === 'draft'))); }, [items]);
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
@@ -104,6 +116,40 @@ export default function BizContracts() {
     }
   };
 
+  const downloadTemplate = () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['省份名称', '地市名称', '合同编号', '合同名称', '合同含税金额', '合同期限', '管理费比例'],
+      ['山东省', '济南市公司', '示例-2026-001', '示例维护合同', 100000, '2026.01.01-2026.12.31', 0.1],
+    ]);
+    sheet['!cols'] = [14, 16, 20, 36, 18, 24, 16].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(workbook, sheet, '合同导入');
+    XLSX.writeFile(workbook, '合同导入模板.xlsx');
+  };
+
+  const onImport = async (file: File) => {
+    setImporting(true);
+    try {
+      const result = await bizContractUpload(file);
+      message.success(`已导入 ${result.created} 份合同，并生成 ${result.allocations ?? 0} 条地市分配和 ${result.feeRates ?? 0} 条费率`);
+      if (result.issues?.length) {
+        Modal.warning({
+          title: `导入完成，${result.issues.length} 项待管理员维护`,
+          width: 760,
+          content: <div style={{ maxHeight: 420, overflow: 'auto', marginTop: 12 }}>{result.issues.map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}</div>,
+        });
+      }
+      setImportOpen(false);
+      void load();
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(detail) ? detail.join('；') : (detail ?? '合同导入失败'));
+    } finally {
+      setImporting(false);
+    }
+    return false;
+  };
+
   const onActivate = async (id: string) => {
     try {
       await bizContractActivate(id);
@@ -115,6 +161,61 @@ export default function BizContracts() {
       message.error(detail ?? '生效失败');
     }
   };
+
+  const showBatchResult = (title: string, result: { checked: number; activated: string[]; failed: Array<{ contractNo?: string; reason: string }> }) => {
+    Modal.info({
+      title,
+      width: 680,
+      content: <div style={{ marginTop: 12 }}>
+        <p>已检查 {result.checked} 份合同；可生效/已生效 {result.activated.length} 份；存在问题 {result.failed.length} 份。</p>
+        {result.failed.length > 0 && <Table size="small" rowKey={(row) => `${row.contractNo}-${row.reason}`} pagination={false} dataSource={result.failed} columns={[
+          { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (value: string | undefined) => value ?? '-' },
+          { title: '未生效原因', dataIndex: 'reason', key: 'reason' },
+        ]} />}
+      </div>,
+    });
+  };
+
+  const runBatch = async (dryRun: boolean) => {
+    const ids = selectedRowKeys.map(String);
+    if (!ids.length) { message.warning('请选择要处理的草稿合同'); return; }
+    setBatchRunning(true);
+    try {
+      const result = await bizContractBatchActivate(ids, dryRun);
+      showBatchResult(dryRun ? '批量校验结果' : '批量生效结果', result);
+      if (!dryRun) { setSelectedRowKeys([]); await load(); }
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(detail) ? detail.join('；') : (detail ?? '批量处理失败'));
+    } finally { setBatchRunning(false); }
+  };
+
+  const onBatchActivate = () => Modal.confirm({
+    title: '批量生效合同',
+    content: `将逐一校验并生效已选的 ${selectedRowKeys.length} 份草稿合同；资料不完整的合同将保持草稿，不影响其余合同。`,
+    okText: '确认批量生效',
+    onOk: () => runBatch(false),
+  });
+
+  const onBatchClear = () => Modal.confirm({
+    title: '批量清空错误草稿',
+    content: `将永久清空已选的 ${selectedRowKeys.length} 份草稿合同及其地市分配、管理费率和预警。已生效合同或已有订单、线下完工的合同不会清空。此操作不可恢复。`,
+    okText: '确认永久清空',
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      setBatchRunning(true);
+      try {
+        const result = await bizContractBatchClearDrafts(selectedRowKeys.map(String));
+        message.success(`已清空 ${result.cleared} 份草稿合同`);
+        if (result.skipped.length) Modal.warning({ title: '部分合同未清空', content: result.skipped.map((item) => `${item.contractNo ?? item.id}：${item.reason}`).join('；') });
+        setSelectedRowKeys([]);
+        await load();
+      } catch (e: unknown) {
+        const detail = (e as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+        message.error(Array.isArray(detail) ? detail.join('；') : (detail ?? '批量清空失败'));
+      } finally { setBatchRunning(false); }
+    },
+  });
 
   const onVoid = (id: string) => {
     Modal.confirm({
@@ -210,6 +311,23 @@ export default function BizContracts() {
         </div>
         <Space className="v3-page-head-actions" wrap>
           {canUploadOrder === true && <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>}
+          {canCreateContract === true && <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载模板</Button>}
+          {canCreateContract === true && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入合同</Button>}
+          {canUpdateContract === true && <Button disabled={!selectedRowKeys.length} loading={batchRunning} onClick={() => void runBatch(true)}>批量校验</Button>}
+          {canUpdateContract === true && <Button type="primary" disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchActivate}>批量生效</Button>}
+          {canUpdateContract === true && <Button danger icon={<DeleteOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchClear}>批量清空</Button>}
+          <Input.Search
+            allowClear
+            placeholder="搜索合同编号或名称"
+            style={{ width: 220 }}
+            value={keyword}
+            onChange={(event) => {
+              const value = event.target.value;
+              setKeyword(value);
+              if (!value) setAppliedKeyword('');
+            }}
+            onSearch={(value) => setAppliedKeyword(value.trim())}
+          />
           <Select
             allowClear placeholder="状态筛选" style={{ width: 140 }} value={statusFilter}
             onChange={(v) => setStatusFilter(v)}
@@ -220,7 +338,11 @@ export default function BizContracts() {
         </Space>
       </div>
       <Card>
-        <Table scroll={{ x: "max-content" }}  rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} />
+        <Table scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} rowSelection={canUpdateContract === true ? {
+          selectedRowKeys,
+          onChange: setSelectedRowKeys,
+          getCheckboxProps: (record) => ({ disabled: record.status !== 'draft' }),
+        } : undefined} />
       </Card>
 
       {/* 新建合同 */}
@@ -239,6 +361,21 @@ export default function BizContracts() {
           <Button type="primary" htmlType="submit" block>保存草稿</Button>
         </Form>
       </Drawer>
+
+      <Modal title="Excel 合同导入" open={importOpen} footer={null} onCancel={() => !importing && setImportOpen(false)}>
+        <Upload.Dragger
+          accept=".xlsx"
+          beforeUpload={onImport}
+          disabled={importing}
+          maxCount={1}
+          showUploadList={false}
+        >
+          <p className="ant-upload-drag-icon"><UploadOutlined /></p>
+          <p className="ant-upload-text">点击或拖拽合同 .xlsx 文件到此处</p>
+          <p className="ant-upload-hint">识别合同编号、地市分配额和管理费率；同一合同的多地市行会合并为一份合同，并自动生成地市分配和费率记录。</p>
+        </Upload.Dragger>
+        {importing && <Progress percent={65} status="active" style={{ marginTop: 16 }} />}
+      </Modal>
 
       {/* 全屏详情 */}
       <Drawer

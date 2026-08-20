@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App as AntdApp, Button, Card, Col, Row, Select, Space, Table, Tag, Typography } from 'antd';
+import { App as AntdApp, Button, Card, Col, Drawer, Progress, Row, Select, Space, Table, Tag, Typography } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts,
-  bizAggregateRecalc, bizAggregateCheck,
+  bizAggregateRecalc, bizAggregateCheck, bizContractDetail, BizContractDetail,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -41,6 +41,10 @@ export default function BizAnalysis() {
   const [cityOptions, setCityOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [monthOptions, setMonthOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [exporting, setExporting] = useState(false);
+  const [contractDetail, setContractDetail] = useState<BizContractDetail | null>(null);
+  const [contractDetailOpen, setContractDetailOpen] = useState(false);
+  const [contractDetailLoading, setContractDetailLoading] = useState(false);
+  const [alertTypeFilter, setAlertTypeFilter] = useState<string | undefined>();
 
   const load = useCallback(async () => {
     const params = { month: filterMonth, cityId: filterCity };
@@ -59,6 +63,8 @@ export default function BizAnalysis() {
   }, [filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const visibleAlerts = alertTypeFilter ? contractAlerts.filter((alert) => alert.alertType === alertTypeFilter) : contractAlerts;
 
   /** CSV 导出当前地市指标视图（元，千分位两位小数） */
   const onExport = async () => {
@@ -108,6 +114,19 @@ export default function BizAnalysis() {
     else msg.warning(`一致性核对发现 ${r.warningCount} 条警告（不自动改写数据）`);
   };
 
+  const openContractDetail = async (contractId: string) => {
+    setContractDetailOpen(true);
+    setContractDetail(null);
+    setContractDetailLoading(true);
+    try {
+      setContractDetail(await bizContractDetail(contractId));
+    } catch {
+      msg.error('合同详情加载失败');
+    } finally {
+      setContractDetailLoading(false);
+    }
+  };
+
   const cards = [
     { label: '订单完工（元）', value: overview?.orderCompletionFen ?? 0, color: '#2878b8' },
     { label: '线下完工（元）', value: overview?.offlineCompletionFen ?? 0, color: '#0F766E' },
@@ -154,20 +173,27 @@ export default function BizAnalysis() {
       </div>
 
       {(contractAlerts.length > 0 || overruns.length > 0) && (
-        <Card size="small" title="提醒中心" style={{ marginBottom: 16, borderLeft: '3px solid #c64b4b' }}>
-          <Space wrap>
-            {contractAlerts.slice(0, 10).map((a, i) => (
-              <Tag key={`a${i}`} color={a.alertType === 'expired' || a.alertType === 'overfull' ? 'red' : a.alertType === 'expiring' ? 'orange' : 'blue'}>
-                {a.alertType === 'expiring' ? '即将到期' : a.alertType === 'expired' ? '已到期' : a.alertType === 'nearly_full' ? '即将满额' : '满额完成'} {String(a.contractNo ?? a.contractId ?? '').slice(0, 14)}
-              </Tag>
-            ))}
-            {overruns.slice(0, 8).map((o, i) => (
-              <Tag key={`o${i}`} color={o.type === 'contract' ? 'red' : 'orange'}>
-                {o.type === 'contract' ? `合同 ${String(o.contractNo ?? o.id ?? '').slice(0, 12)}` : `地市 ${String(o.cityId ?? '').slice(0, 8)}`} 超额 {fenToYuan(Number(o.overrunFen))}
-              </Tag>
-            ))}
-            {(contractAlerts.length > 10 || overruns.length > 8) && <Text type="secondary">…共 {contractAlerts.length + overruns.length} 项</Text>}
+        <Card size="small" title="提醒中心" extra={<Text type="secondary">到期、满额与超额均实时计算</Text>} style={{ marginBottom: 16, borderLeft: '3px solid #c64b4b' }}>
+          <Space style={{ marginBottom: 8 }}>
+            <Select allowClear placeholder="提醒类型" style={{ width: 150 }} value={alertTypeFilter} onChange={(value) => setAlertTypeFilter(value)} options={[{ value: 'expired', label: '已到期' }, { value: 'expiring', label: '即将到期' }, { value: 'nearly_full', label: '即将满额' }, { value: 'overfull', label: '合同满额' }]} />
           </Space>
+          <Table
+            size="small"
+            rowKey="contractId"
+            pagination={{ pageSize: 6, showSizeChanger: false }}
+            dataSource={visibleAlerts}
+            columns={[
+              { title: '提醒类型', dataIndex: 'alertType', width: 110, render: (type: string) => {
+                const labels: Record<string, string> = { expired: '已到期', expiring: '即将到期', nearly_full: '即将满额', overfull: '合同满额' };
+                return <Tag color={type === 'expired' || type === 'overfull' ? 'red' : type === 'expiring' ? 'orange' : 'blue'}>{labels[type] ?? type}</Tag>;
+              } },
+              { title: '合同编号', dataIndex: 'contractNo', width: 190, render: (value: string, row: { contractId: string }) => <Button type="link" size="small" onClick={() => void openContractDetail(row.contractId)}>{value}</Button> },
+              { title: '合同名称', dataIndex: 'contractName', ellipsis: true },
+              { title: '到期日', dataIndex: 'endDate', width: 120, render: (value: string | null) => value ?? '-' },
+              { title: '状态', dataIndex: 'status', width: 90 },
+              { title: '查看', key: 'action', width: 80, render: (_: unknown, row: { contractId: string }) => <Button size="small" onClick={() => void openContractDetail(row.contractId)}>详情</Button> },
+            ]}
+          />
         </Card>
       )}
 
@@ -186,7 +212,7 @@ export default function BizAnalysis() {
       )}
 
       <Row gutter={12}>
-        <Col xs={24} lg={10}>
+        <Col xs={24} lg={12}>
           <Card title="月度趋势（近 12 月）" size="small" style={{ marginBottom: 16 }}>
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="month" pagination={false} dataSource={trend}
@@ -200,7 +226,7 @@ export default function BizAnalysis() {
             />
           </Card>
         </Col>
-        <Col xs={24} lg={6}>
+        <Col xs={24} lg={12}>
           <Card title="地市对比" size="small" style={{ marginBottom: 16 }}>
             <div data-testid="analysis-city-table">
             <Table scroll={{ x: "max-content" }} 
@@ -223,7 +249,7 @@ export default function BizAnalysis() {
             </div>
           </Card>
         </Col>
-        <Col xs={24} lg={8}>
+        <Col xs={24}>
           <Card title="超额清单" size="small">
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey={analysisRowKey} pagination={false} dataSource={overruns}
@@ -236,6 +262,32 @@ export default function BizAnalysis() {
           </Card>
         </Col>
       </Row>
+      <Drawer title="合同经营详情" open={contractDetailOpen} onClose={() => setContractDetailOpen(false)} width={760} loading={contractDetailLoading}>
+        {contractDetail && <>
+          <Card size="small" title={contractDetail.contract.contractNo} style={{ marginBottom: 12 }}>
+            <p>{contractDetail.contract.contractName}</p>
+            <Space wrap>
+              <Tag>合同额 {fenToYuan(contractDetail.progress.contractAmountFen)} 元</Tag>
+              <Tag color={contractDetail.progress.overrunFen > 0 ? 'red' : 'green'}>累计完工 {fenToYuan(contractDetail.progress.totalCompletionFen)} 元</Tag>
+              <Tag>订单完工 {fenToYuan(contractDetail.progress.orderCompletionFen)} 元</Tag>
+              <Tag>线下完工 {fenToYuan(contractDetail.progress.offlineCompletionFen)} 元</Tag>
+              <Tag color={contractDetail.progress.overrunFen > 0 ? 'red' : 'blue'}>{contractDetail.progress.overrunFen > 0 ? `超额 ${fenToYuan(contractDetail.progress.overrunFen)} 元` : `剩余 ${fenToYuan(contractDetail.progress.remainingFen)} 元`}</Tag>
+            </Space>
+            <Progress percent={Math.min(100, Math.round(contractDetail.progress.progress * 100) / 100)} status={contractDetail.progress.overrunFen > 0 ? 'exception' : 'active'} style={{ marginTop: 14 }} />
+          </Card>
+          <Card size="small" title="地市分配与完工情况">
+            <Table size="small" rowKey="cityId" pagination={false} dataSource={contractDetail.allocations} scroll={{ x: 'max-content' }} columns={[
+              { title: '地市', dataIndex: 'cityName', key: 'cityName' },
+              { title: '分配额（元）', dataIndex: 'quotaFen', key: 'quotaFen', render: (value: number) => fenToYuan(value) },
+              { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'orderCompletionFen', render: (value: number) => fenToYuan(value) },
+              { title: '线下完工（元）', dataIndex: 'offlineCompletionFen', key: 'offlineCompletionFen', render: (value: number) => fenToYuan(value) },
+              { title: '累计完工（元）', dataIndex: 'completionFen', key: 'completionFen', render: (value: number) => fenToYuan(value) },
+              { title: '进度', dataIndex: 'progress', key: 'progress', render: (value: number) => `${value.toFixed(1)}%` },
+              { title: '状态', dataIndex: 'status', key: 'status' },
+            ]} />
+          </Card>
+        </>}
+      </Drawer>
     </div>
   );
 }

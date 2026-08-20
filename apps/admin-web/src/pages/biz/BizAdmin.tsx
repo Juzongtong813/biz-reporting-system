@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Spin } from 'antd';
 import { useBizPermission } from '@/utils/biz-permission';
-import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
-  bizAdminGetUserPermissions, bizAdminRoles, bizAdminModules, bizAdminPermissions, bizAdminProvinces, bizAdminCities,
+  bizAdminGetUserPermissions, bizAdminSetOverrides, bizAdminRoles, bizAdminPermissions, bizAdminProvinces, bizAdminCities,
   bizOperationLogs,
 } from '@/api/biz.api';
 
@@ -14,6 +14,13 @@ const { Title, Text } = Typography;
 
 const ROLE_LABEL: Record<string, string> = {
   super_admin: '超级管理员', admin: '省级运营管理员', contract_manager: '合同管理员', city_user: '地市用户',
+};
+
+const MODULE_LABEL: Record<string, string> = {
+  home: '经营首页', analysis: '经营分析', contract: '合同管理', order: '订单管理',
+  completion: '线下完工', cost: '地市成本', user: '用户管理', settings: '系统设置',
+  module: '模块管理', role: '角色管理',
+  portal: '门户管理', maintenance: '维护管理',
 };
 
 /** 账号与权限管理（新基线，仅 super_admin） */
@@ -47,6 +54,22 @@ function OperationLogsPanel() {
   );
 }
 
+type PermissionItem = { code: string; name: string; action: string };
+
+function buildPermissionGroups(rows: Array<Record<string, unknown>>) {
+  const groups = new Map<string, PermissionItem[]>();
+  for (const row of rows) {
+    const code = String(row.code ?? '');
+    const match = /^(?:operation\.)?([^.]+)\./.exec(code);
+    if (!match) continue;
+    const key = match[1];
+    const list = groups.get(key) ?? [];
+    list.push({ code, name: String(row.name ?? code), action: String(row.action ?? '') });
+    groups.set(key, list);
+  }
+  return Array.from(groups.entries()).map(([key, permissions]) => ({ key, label: MODULE_LABEL[key] ?? key, permissions }));
+}
+
 export default function BizAdmin() {
   const canManage = useBizPermission('operation.user.manage');
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
@@ -59,14 +82,15 @@ export default function BizAdmin() {
   const [resetUserId, setResetUserId] = useState<string | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
   const [permOpen, setPermOpen] = useState(false);
-  const [permDetail, setPermDetail] = useState<{ roleCode: string; base: string[]; effective: string[] } | null>(null);
+  const [permDetail, setPermDetail] = useState<{ roleCode: string; base: string[]; effective: string[]; overrides: Array<{ permissionCode: string; effect: 'allow' | 'deny' }> } | null>(null);
+  const [permUserId, setPermUserId] = useState<string | null>(null);
+  const [moduleLevels, setModuleLevels] = useState<Record<string, 'none' | 'read' | 'edit'>>({});
+  const [permSaving, setPermSaving] = useState(false);
   const [form] = Form.useForm();
   const [resetForm] = Form.useForm<{ password: string }>();
   const [createRole, setCreateRole] = useState<string>('admin');
-  const [roleRows, setRoleRows] = useState<Array<Record<string, unknown>>>([]);
-  const [moduleRows, setModuleRows] = useState<Array<Record<string, unknown>>>([]);
   const [permissionRows, setPermissionRows] = useState<Array<Record<string, unknown>>>([]);
-  const [dictLoading, setDictLoading] = useState(false);
+  const permissionGroups = buildPermissionGroups(permissionRows);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,15 +106,8 @@ export default function BizAdmin() {
   }, []);
 
   const loadDict = useCallback(async () => {
-    setDictLoading(true);
-    try {
-      const [roles, mods, perms] = await Promise.all([bizAdminRoles(), bizAdminModules(), bizAdminPermissions()]);
-      setRoleRows(roles.items as Array<Record<string, unknown>>);
-      setModuleRows(mods.items as Array<Record<string, unknown>>);
-      setPermissionRows(perms.items as Array<Record<string, unknown>>);
-    } finally {
-      setDictLoading(false);
-    }
+    const perms = await bizAdminPermissions();
+    setPermissionRows(perms.items as Array<Record<string, unknown>>);
   }, []);
 
   useEffect(() => { void loadDict(); }, [loadDict]);
@@ -147,7 +164,41 @@ export default function BizAdmin() {
   const onViewPerm = async (id: string) => {
     const detail = await bizAdminGetUserPermissions(id);
     setPermDetail(detail);
+    setPermUserId(id);
+    const effective = new Set(detail.effective);
+    const levels: Record<string, 'none' | 'read' | 'edit'> = {};
+    for (const group of permissionGroups) {
+      const readable = group.permissions.some((permission) => permission.action === 'read' && effective.has(permission.code));
+      const writable = group.permissions.some((permission) => permission.action !== 'read' && effective.has(permission.code));
+      levels[group.key] = writable ? 'edit' : readable ? 'read' : 'none';
+    }
+    setModuleLevels(levels);
     setPermOpen(true);
+  };
+
+  const onSavePermissions = async () => {
+    if (!permDetail) return;
+    setPermSaving(true);
+    try {
+      const generated = permissionGroups.flatMap((group) => {
+        const level = moduleLevels[group.key] ?? 'none';
+        return group.permissions.map((permission) => ({
+          permissionCode: permission.code,
+          effect: (level === 'none' || (level === 'read' && permission.action !== 'read')) ? 'deny' as const : 'allow' as const,
+        }));
+      });
+      const generatedCodes = new Set(generated.map((item) => item.permissionCode));
+      const preserved = permDetail.overrides.filter((item) => !generatedCodes.has(item.permissionCode));
+      if (!permUserId) return;
+      await bizAdminSetOverrides(permUserId, [...preserved, ...generated]);
+      message.success('模块权限已保存，下次登录生效');
+      setPermOpen(false);
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '模块权限保存失败');
+    } finally {
+      setPermSaving(false);
+    }
   };
 
   const columns = [
@@ -182,66 +233,9 @@ export default function BizAdmin() {
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
         </div>
       </div>
-      <Tabs
-        defaultActiveKey="users"
-        items={[
-          {
-            key: 'users', label: '用户管理',
-            children: (
-              <Card>
-                <Table scroll={{ x: "max-content" }}  rowKey={(r) => String(r.id)} loading={loading} columns={columns} dataSource={users} pagination={{ pageSize: 10 }} />
-              </Card>
-            ),
-          },
-          {
-            key: 'roles', label: '角色字典',
-            children: (
-              <Card>
-                <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={dictLoading} dataSource={roleRows} pagination={false}
-                  columns={[
-                    { title: '角色编码', dataIndex: 'code', key: 'code' },
-                    { title: '角色名称', dataIndex: 'name', key: 'name' },
-                    { title: '说明', dataIndex: 'description', key: 'description', render: (v: unknown) => String(v ?? '-') },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-          {
-            key: 'modules', label: '模块字典',
-            children: (
-              <Card>
-                <Table scroll={{ x: "max-content" }}  rowKey="id" size="small" loading={dictLoading} dataSource={moduleRows} pagination={{ pageSize: 10 }}
-                  columns={[
-                    { title: '模块编码', dataIndex: 'code', key: 'code' },
-                    { title: '名称', dataIndex: 'name', key: 'name' },
-                    { title: '层级', dataIndex: 'level', key: 'level' },
-                    { title: '排序', dataIndex: 'sortOrder', key: 'sortOrder' },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-          {
-            key: 'audit', label: '操作审计',
-            children: <OperationLogsPanel />,
-          },
-          {
-            key: 'permissions', label: '权限点',
-            children: (
-              <Card>
-                <Table scroll={{ x: "max-content" }}  rowKey="code" size="small" loading={dictLoading} dataSource={permissionRows} pagination={{ pageSize: 20 }}
-                  columns={[
-                    { title: '权限编码', dataIndex: 'code', key: 'code' },
-                    { title: '名称', dataIndex: 'name', key: 'name' },
-                    { title: '操作', dataIndex: 'action', key: 'action' },
-                  ]}
-                />
-              </Card>
-            ),
-          },
-        ]}
-      />
+      <Card title="用户管理">
+        <Table scroll={{ x: 'max-content' }} rowKey={(r) => String(r.id)} loading={loading} columns={columns} dataSource={users} pagination={{ pageSize: 10 }} />
+      </Card>
 
       <Drawer title="新建账号" open={createOpen} onClose={() => setCreateOpen(false)} width={420}>
         <Form form={form} layout="vertical" onFinish={onCreate} initialValues={{ roleCode: 'admin' }}>
@@ -276,18 +270,27 @@ export default function BizAdmin() {
         </Form>
       </Modal>
 
-      <Drawer title="用户最终权限" open={permOpen} onClose={() => setPermOpen(false)} width={480}>
+      <Drawer title="模块权限" open={permOpen} onClose={() => setPermOpen(false)} width={560} extra={<Button type="primary" loading={permSaving} onClick={() => { void onSavePermissions(); }}>保存权限</Button>}>
         {permDetail && (
           <div>
             <p><b>角色：</b>{ROLE_LABEL[permDetail.roleCode] ?? permDetail.roleCode}</p>
-            <p><b>基础权限（角色默认）：</b></p>
-            <div style={{ maxHeight: 200, overflow: 'auto', marginBottom: 16 }}>
-              {permDetail.base.map((code) => <Tag key={code} style={{ marginBottom: 4 }}>{code}</Tag>)}
-            </div>
-            <p><b>最终权限（含账号例外）：</b></p>
-            <div style={{ maxHeight: 300, overflow: 'auto' }}>
-              {permDetail.effective.map((code) => <Tag key={code} color="green" style={{ marginBottom: 4 }}>{code}</Tag>)}
-            </div>
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="key"
+              dataSource={permissionGroups}
+              columns={[
+                { title: '业务模块', dataIndex: 'label', key: 'label' },
+                { title: '权限级别', key: 'level', render: (_: unknown, row: { key: string }) => (
+                  <Select
+                    value={moduleLevels[row.key] ?? 'none'}
+                    style={{ width: 150 }}
+                    options={[{ value: 'none', label: '无权限' }, { value: 'read', label: '只读' }, { value: 'edit', label: '编辑' }]}
+                    onChange={(value: 'none' | 'read' | 'edit') => setModuleLevels((prev) => ({ ...prev, [row.key]: value }))}
+                  />
+                ) },
+              ]}
+            />
           </div>
         )}
       </Drawer>

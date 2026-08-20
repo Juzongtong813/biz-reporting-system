@@ -4,7 +4,13 @@ import { Button, Card, Input, Space, Table, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { bizSettingsList, bizSettingUpdate } from '@/api/biz.api';
 
-const { Title, Text } = Typography;
+const { Title } = Typography;
+
+const SETTING_LABELS: Record<string, string> = {
+  contract_expiry_warning_days: '合同到期预警提前天数',
+  order_import_max_bytes: '订单文件最大字节数',
+  order_import_max_rows: '订单文件最大数据行数',
+};
 
 /** 系统设置（新基线 M6）：到期预警阈值等配置（仅 super_admin 可改） */
 export default function BizSettings() {
@@ -39,7 +45,7 @@ export default function BizSettings() {
   };
 
   const columns = [
-    { title: '设置项', dataIndex: 'key', key: 'key', render: (v: string) => <Text code>{v}</Text> },
+    { title: '设置项', dataIndex: 'key', key: 'key', render: (v: string) => <span>{SETTING_LABELS[v] ?? '未命名设置'}</span> },
     { title: '说明', dataIndex: 'description', key: 'description' },
     {
       title: '值', key: 'value', width: 220,

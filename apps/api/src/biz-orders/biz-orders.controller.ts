@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
@@ -9,6 +9,15 @@ import { BizAuthUser } from '../biz-auth/biz-auth-user.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
 import { BizOrderImportService } from './biz-order-import.service';
 import { BizPermissionCode, ORDER_FILE_MAX_BYTES, SENSITIVE_ORDER_PERMISSION } from '@biz-reporting/shared-types';
+
+interface MaintainOrderRowBody {
+  provinceId?: string;
+  cityId?: string;
+  contractId?: string;
+  businessMonth?: string;
+  feeRateSnapshotBp?: number;
+  reason?: string;
+}
 
 /**
  * 订单域 API（新基线 M4）
@@ -50,6 +59,13 @@ export class BizOrdersController {
     return this.service.batchDetail(auth, id);
   }
 
+  @Delete('batches/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
+  async deleteFailedBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    await this.service.deleteFailedBatch(auth, id);
+    return { ok: true };
+  }
+
   @Post('batches/:id/void')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_BATCH_VOID)
   async voidBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() body: { reason?: string }) {
@@ -71,9 +87,21 @@ export class BizOrdersController {
     @Query('batchId') batchId?: string,
     @Query('cityId') cityId?: string,
     @Query('overrun') overrun?: 'city' | 'contract' | 'any',
+    @Query('validationStatus') validationStatus?: 'valid' | 'needs_review',
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
   ) {
     const sensitive = auth.isSuperAdmin || auth.permissionCodes.has(SENSITIVE_ORDER_PERMISSION);
-    const items = await this.service.listRows(auth, { batchId, cityId, overrun }, sensitive);
-    return { items };
+    return this.service.listRows(auth, {
+      batchId, cityId, overrun, validationStatus,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    }, sensitive);
+  }
+
+  @Patch('rows/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
+  async maintainRow(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() body: MaintainOrderRowBody) {
+    return this.service.maintainRow(auth, id, body);
   }
 }

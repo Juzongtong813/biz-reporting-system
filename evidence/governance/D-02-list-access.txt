@@ -1,0 +1,9 @@
+task_id: D-02
+batch: PG-20260802
+self_declared_status: PASS
+internal_gate: PASS
+commit: 18f3b35f2047
+manifest_digest: 6f3f0c4475b9377d
+command: corepack pnpm test:unit
+exit_code: 0
+result: City ownership and list memory tests passed through the repository unit runner.

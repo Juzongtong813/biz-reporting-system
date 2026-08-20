@@ -140,7 +140,7 @@ export default function BizOfflineCompletions() {
 
   const columns = [
     { title: '合同编号', dataIndex: 'contractId', key: 'contractId', render: (v: string) => contracts.find((c) => c.id === v)?.contractNo ?? v?.slice(0, 8) ?? '-' },
-    { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cityNameRef.current[v] ?? (v ? String(v).slice(0, 8) : '-') },
+    { title: '地市', dataIndex: 'cityName', key: 'cityName', render: (v: string, row: Record<string, unknown>) => v ?? cityNameRef.current[String(row.cityId)] ?? '-' },
     { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '金额（元）', dataIndex: 'amountFen', key: 'amountFen', render: (v: number) => fenToYuan(Number(v)) },
     { title: '说明', dataIndex: 'summary', key: 'summary', ellipsis: true },

@@ -176,6 +176,18 @@ async function applyMigration(migration) {
     }
     return;
   }
+  if (migration.version === '018_biz_order_row_validation') {
+    const columns = [
+      ['validation_status', "VARCHAR(16) NOT NULL DEFAULT 'valid'"],
+      ['validation_error', 'TEXT NULL'],
+    ];
+    for (const [column, definition] of columns) {
+      if (!await adapter.columnExists('biz_order_rows', column)) {
+        await adapter.exec(`ALTER TABLE biz_order_rows ADD COLUMN ${column} ${definition}`);
+      }
+    }
+    return;
+  }
   if (migration.version === '016_biz_offline_rate_snapshot') {
     const columns = [
       ['fee_rate_snapshot_bp', 'INT NULL'],
@@ -337,6 +349,13 @@ async function inspectState(version) {
     if (!await adapter.tableExists('biz_order_import_batches')) return 'empty';
     return allOrNothing([
       adapter.columnExists('biz_order_import_batches', 'data_scope_json'),
+    ]);
+  }
+  if (version === '018_biz_order_row_validation') {
+    if (!await adapter.tableExists('biz_order_rows')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('biz_order_rows', 'validation_status'),
+      adapter.columnExists('biz_order_rows', 'validation_error'),
     ]);
   }
   fail(`STATE_CHECK_MISSING version=${version}`);

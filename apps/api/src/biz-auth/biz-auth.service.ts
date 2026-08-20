@@ -1,10 +1,12 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
+import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import {
   LoginSecurityService,
   LoginSecurityContext,
@@ -32,6 +34,12 @@ export interface BizLoginResponse {
   };
 }
 
+export interface BizChangeOwnPasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
 /**
  * biz 账号登录服务（新基线）
  * 与旧 AuthService 并存（旧体系零破坏）；复用 LoginSecurityService（HMAC 哈希桶 + 5 次失败锁 15 分钟）。
@@ -41,6 +49,8 @@ export class BizAuthService {
   constructor(
     @InjectRepository(PlatformUserEntity)
     private readonly userRepo: Repository<PlatformUserEntity>,
+    @InjectRepository(BizOperationLogEntity)
+    private readonly opLogRepo: Repository<BizOperationLogEntity>,
     private readonly jwtService: JwtService,
     private readonly loginSecurity: LoginSecurityService,
     private readonly rbac: RbacService,
@@ -128,5 +138,42 @@ export class BizAuthService {
       permissions: ctx.isSuperAdmin ? ['*'] : Array.from(ctx.permissionCodes),
       dataScope: ctx.dataScope,
     };
+  }
+
+  async changeOwnPassword(
+    ctx: BizAuthContext,
+    dto: BizChangeOwnPasswordRequest,
+  ): Promise<void> {
+    if (dto.newPassword !== dto.confirmPassword) {
+      throw new BadRequestException('两次输入的新密码不一致');
+    }
+    if (dto.newPassword.length < 8 || dto.newPassword.length > 128) {
+      throw new BadRequestException('新密码长度必须为 8-128 位');
+    }
+
+    const user = await this.userRepo.findOne({
+      where: { id: ctx.userId },
+      select: ['id', 'passwordHash', 'authVersion', 'mustChangePassword'],
+    });
+    if (!user) throw new NotFoundException('账号不存在');
+    if (!await bcrypt.compare(dto.currentPassword, user.passwordHash)) {
+      throw new UnauthorizedException('原密码错误');
+    }
+    if (await bcrypt.compare(dto.newPassword, user.passwordHash)) {
+      throw new BadRequestException('新密码不能与原密码相同');
+    }
+
+    user.passwordHash = await bcrypt.hash(dto.newPassword, 12);
+    user.authVersion += 1;
+    user.mustChangePassword = false;
+    await this.userRepo.save(user);
+    await this.opLogRepo.save({
+      id: randomUUID(),
+      operatorUserId: ctx.userId,
+      actionType: 'user.change_own_password',
+      targetType: 'user',
+      targetId: ctx.userId,
+      resultStatus: 'success',
+    });
   }
 }

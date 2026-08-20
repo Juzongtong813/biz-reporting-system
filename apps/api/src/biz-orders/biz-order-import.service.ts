@@ -21,6 +21,7 @@ import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.ent
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
+import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { BizContractsService } from '../biz-contracts/biz-contracts.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 import { BizAuthContext } from '../rbac/rbac.service';
@@ -37,6 +38,15 @@ interface PendingRow {
   feeRateSnapshotBp: number | null;
   grossProfitFen: number | null;
   error?: { type: string; field: string; message: string };
+}
+
+interface MaintainOrderRowInput {
+  provinceId?: string;
+  cityId?: string;
+  contractId?: string;
+  businessMonth?: string;
+  feeRateSnapshotBp?: number;
+  reason?: string;
 }
 
 /**
@@ -71,6 +81,8 @@ export class BizOrderImportService {
     private readonly cityRepo: Repository<CityEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    @InjectRepository(PlatformUserEntity)
+    private readonly userRepo: Repository<PlatformUserEntity>,
     private readonly dataSource: DataSource,
     private readonly contracts: BizContractsService,
     private readonly aggregates: BizAggregateService,
@@ -173,9 +185,9 @@ export class BizOrderImportService {
     }
 
     // 1. 结构校验：单工作表 + 34 列 + 表头严格匹配
-    const structureError = this.assertTemplateStructure(wb);
-    if (structureError) {
-      await this.failBatch(batchId, structureError);
+    const columnIndexes = this.resolveColumnIndexes(wb);
+    if (typeof columnIndexes === 'string') {
+      await this.failBatch(batchId, columnIndexes);
       return;
     }
 
@@ -183,7 +195,11 @@ export class BizOrderImportService {
     const provinceByName = new Map<string, string>();
     for (const p of await this.provinceRepo.find()) provinceByName.set(p.name, p.id);
     const cityByProvinceName = new Map<string, string>();
-    for (const c of await this.cityRepo.find()) cityByProvinceName.set(`${c.provinceId}|${c.name}`, c.id);
+    for (const c of await this.cityRepo.find()) {
+      for (const alias of this.cityNameAliases(c.name)) {
+        cityByProvinceName.set(`${c.provinceId}|${alias}`, c.id);
+      }
+    }
     const contractByNo = new Map<string, { id: string; provinceId: string }>();
     for (const c of await this.contractRepo.find()) contractByNo.set(c.contractNo, { id: c.id, provinceId: c.provinceId });
     const allocSet = new Set<string>();
@@ -214,12 +230,13 @@ export class BizOrderImportService {
 
     dataRows.forEach((row, idx) => {
       const sourceRowNo = idx + 2;
-      const raw = Array.isArray(row) ? row.map((v) => (v === null || v === undefined ? '' : String(v).trim())) : [];
-      if (raw.length === 0 || raw.every((v) => v === '')) return; // 跳过空行
-      if (raw.length !== ORDER_TEMPLATE_COLUMN_COUNT) {
-        errors.push({ type: 'structure', rowNo: sourceRowNo, field: null, message: `行宽 ${raw.length} 不等于 34 列` });
-        return;
-      }
+      const sourceValues = Array.isArray(row) ? row.map((v) => (v === null || v === undefined ? '' : String(v).trim())) : [];
+      if (sourceValues.length === 0 || sourceValues.every((v) => v === '')) return; // 跳过空行
+      // 以列名映射为标准化 34 列数组；非关键列不存在时保留为空，不依赖原表列序或总列数。
+      const raw = ORDER_TEMPLATE_COLUMNS.map((column) => {
+        const inputIndex = columnIndexes.get(column);
+        return inputIndex === undefined ? '' : (sourceValues[inputIndex] ?? '');
+      });
       const p: PendingRow = { sourceRowNo, raw, provinceId: null, cityId: null, contractId: null, orderTimeStd: null, businessMonth: null, completionAmountFen: null, feeRateSnapshotBp: null, grossProfitFen: null };
 
       const provinceName = raw[ORDER_TEMPLATE_COLUMN_INDEX_MAP['省份名称']];
@@ -232,10 +249,10 @@ export class BizOrderImportService {
       if (!provinceName || !provinceId) { p.error = { type: 'province', field: '省份名称', message: `省份「${provinceName || ''}」无法映射` }; pending.push(p); return; }
       p.provinceId = provinceId;
       // 行级数据范围校验（按上传时快照）
-      const scopeErr = this.assertRowScope(batch.dataScopeJson, provinceId, cityName ? cityByProvinceName.get(`${provinceId}|${cityName}`) : undefined);
+      const cityId = cityName ? cityByProvinceName.get(`${provinceId}|${this.normalizeCityName(cityName)}`) : undefined;
+      const scopeErr = this.assertRowScope(batch.dataScopeJson, provinceId, cityId);
       if (scopeErr) { p.error = { type: 'scope', field: '省份名称', message: scopeErr }; pending.push(p); return; }
 
-      const cityId = cityName ? cityByProvinceName.get(`${provinceId}|${cityName}`) : undefined;
       if (!cityName || !cityId) { p.error = { type: 'city', field: '地市名称', message: `地市「${cityName || ''}」无法映射到省份` }; pending.push(p); return; }
       p.cityId = cityId;
 
@@ -270,13 +287,18 @@ export class BizOrderImportService {
 
     // 4. 任一错误 → FAILED 零写入 + 错误报告
     if (errors.length > 0) {
-      await this.failBatch(batchId, `校验失败 ${errors.length} 条`, errors);
-      return;
+      const entities = errors.map((e) => ({
+        id: randomUUID(), batchId, errorType: e.type, rowNo: e.rowNo, field: e.field, message: e.message,
+      }));
+      for (let i = 0; i < entities.length; i += 300) {
+        await this.errorRepo.save(entities.slice(i, i + 300));
+      }
     }
 
     // 5. 全过 → 事务插入 + IMPORTED
     batch.totalRows = pending.length;
-    batch.importedRows = pending.length;
+    batch.importedRows = pending.filter((p) => !p.error).length;
+    batch.failureReason = errors.length > 0 ? `已保存全部 ${pending.length} 行，其中 ${errors.length} 行待维护` : null;
     await this.dataSource.transaction(async (manager) => {
       // SQLite/MySQL 变量数上限：300 行 × ~60 列 = 18k 参数，兼容 SQLITE_MAX_VARIABLE_NUMBER
       const chunk = 300;
@@ -333,6 +355,8 @@ export class BizOrderImportService {
             contractOverrunFlag: false,
             isVoid: false,
             sourceRowJson: p.raw,
+            validationStatus: p.error ? 'needs_review' : 'valid',
+            validationError: p.error?.message ?? null,
           })),
         ).execute();
       }
@@ -389,6 +413,51 @@ export class BizOrderImportService {
   }
 
   /** 结构校验：单工作表 + 34 列 + 表头逐一严格匹配 */
+  private resolveColumnIndexes(wb: XLSX.WorkBook): Map<string, number> | string {
+    if (wb.SheetNames.length !== ORDER_TEMPLATE_SHEET_COUNT) {
+      return `文件必须包含 ${ORDER_TEMPLATE_SHEET_COUNT} 个工作表（当前 ${wb.SheetNames.length}）`;
+    }
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
+    const header = (rows[0] ?? []).map((v) => String(v).trim());
+    if (header.length === 0) return '文件缺少表头行';
+    const aliases = new Map<string, string[]>([
+      [ORDER_TEMPLATE_COLUMNS[0], [ORDER_TEMPLATE_COLUMNS[0], '省份', '省份名称']],
+      [ORDER_TEMPLATE_COLUMNS[1], [ORDER_TEMPLATE_COLUMNS[1], '地市', '城市', '地市名称']],
+      [ORDER_TEMPLATE_COLUMNS[2], [ORDER_TEMPLATE_COLUMNS[2], '订单编号', '采购订单号']],
+      [ORDER_TEMPLATE_COLUMNS[5], [ORDER_TEMPLATE_COLUMNS[5], '含税金额', '订单含税金额', '订单金额']],
+      [ORDER_TEMPLATE_COLUMNS[8], [ORDER_TEMPLATE_COLUMNS[8], '合同号', '合同编号']],
+      [ORDER_TEMPLATE_COLUMNS[22], [ORDER_TEMPLATE_COLUMNS[22], '订单时间', '下单日期']],
+    ]);
+    const normalizedHeader = header.map((value) => this.normalizeHeader(value));
+    const indexes = new Map<string, number>();
+    for (const column of ORDER_TEMPLATE_COLUMNS) {
+      const names = aliases.get(column) ?? [column];
+      const index = normalizedHeader.findIndex((value) => names.some((name) => value === this.normalizeHeader(name)));
+      if (index >= 0) indexes.set(column, index);
+    }
+    const required = [ORDER_TEMPLATE_COLUMNS[0], ORDER_TEMPLATE_COLUMNS[1], ORDER_TEMPLATE_COLUMNS[5], ORDER_TEMPLATE_COLUMNS[8], ORDER_TEMPLATE_COLUMNS[22]];
+    const missing = required.filter((column) => !indexes.has(column));
+    if (missing.length > 0) return `缺少入账关键列：${missing.join('、')}`;
+    return indexes;
+  }
+
+  private normalizeHeader(value: string): string {
+    return value.replace(/\s/g, '').replace(/\(/g, '（').replace(/\)/g, '）').toLowerCase();
+  }
+
+  /** Normalize city-company labels such as "XX市公司" and "XX市分公司". */
+  private normalizeCityName(value: string): string {
+    return value.trim().replace(/\s/g, '').replace(/(?:分)?公司$/, '');
+  }
+
+  private cityNameAliases(value: string): string[] {
+    const normalized = this.normalizeCityName(value);
+    if (!normalized) return [];
+    const withoutSuffix = normalized.endsWith('市') ? normalized.slice(0, -1) : normalized;
+    return [...new Set([normalized, withoutSuffix, `${withoutSuffix}市`])];
+  }
+
   private assertTemplateStructure(wb: XLSX.WorkBook): string | null {
     if (wb.SheetNames.length !== ORDER_TEMPLATE_SHEET_COUNT) {
       return `文件必须包含 ${ORDER_TEMPLATE_SHEET_COUNT} 个工作表（当前 ${wb.SheetNames.length}）`;
@@ -429,9 +498,10 @@ export class BizOrderImportService {
     if (wb.SheetNames.length !== 1) return null;
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
-    const header = (rows[0] ?? []).map((v) => String(v).trim());
-    const colIdx = header.findIndex((h) => h === '下单时间');
-    if (colIdx < 0) return null;
+    const resolved = this.resolveColumnIndexes(wb);
+    if (typeof resolved === 'string') return null;
+    const colIdx = resolved.get(ORDER_TEMPLATE_COLUMNS[22]);
+    if (colIdx === undefined) return null;
     let max: Date | null = null;
     for (let i = 1; i < rows.length; i++) {
       const cell = rows[i]?.[colIdx];
@@ -462,7 +532,18 @@ export class BizOrderImportService {
         .andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds })
         .distinct(true);
     }
-    return qb.getMany();
+    const batches = await qb.getMany();
+    const uploaderIds = [...new Set(batches.map((batch) => batch.uploadedBy).filter(Boolean))];
+    if (uploaderIds.length === 0) return batches;
+    const users = await this.userRepo.find({
+      where: { id: In(uploaderIds) },
+      select: ['id', 'username'],
+    });
+    const usernames = new Map(users.map((user) => [user.id, user.username]));
+    return batches.map((batch) => ({
+      ...batch,
+      uploadedBy: usernames.get(batch.uploadedBy) ?? batch.uploadedBy,
+    }));
   }
 
   async batchDetail(auth: BizAuthContext, id: string): Promise<{ batch: BizOrderImportBatchEntity; errors: BizOrderImportErrorEntity[]; rowCount: number }> {
@@ -497,7 +578,116 @@ export class BizOrderImportService {
     return { batch, errors, rowCount };
   }
 
+  /** Re-validate a retained raw row after an administrator fixes normalized reference data. */
+  async maintainRow(auth: BizAuthContext, id: string, input: MaintainOrderRowInput): Promise<Record<string, unknown>> {
+    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
+      throw new ForbiddenException('仅管理员可以维护订单行');
+    }
+    const row = await this.rowRepo.findOneBy({ id });
+    if (!row) throw new NotFoundException('订单行不存在');
+    const batch = await this.batchRepo.findOneBy({ id: row.batchId });
+    if (!batch) throw new NotFoundException('导入批次不存在');
+    if (batch.status !== OrderBatchStatus.IMPORTED) throw new BadRequestException('仅已导入批次可以维护');
+    const provinceId = input.provinceId?.trim();
+    const cityId = input.cityId?.trim();
+    const contractId = input.contractId?.trim();
+    const businessMonth = input.businessMonth?.trim();
+    if (!provinceId || !cityId || !contractId || !businessMonth) {
+      throw new BadRequestException('省份、地市、合同和业务月份均不能为空');
+    }
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(businessMonth)) throw new BadRequestException('业务月份格式应为 YYYY-MM');
+
+    const [province, city, contract, allocation] = await Promise.all([
+      this.provinceRepo.findOneBy({ id: provinceId }),
+      this.cityRepo.findOneBy({ id: cityId }),
+      this.contractRepo.findOneBy({ id: contractId }),
+      this.allocRepo.findOneBy({ contractId, cityId, status: 'active' }),
+    ]);
+    if (!province) throw new BadRequestException('省份不存在');
+    if (!city || city.provinceId !== provinceId) throw new BadRequestException('地市不属于所选省份');
+    if (!contract) throw new BadRequestException('合同不存在');
+    if (contract.provinceId !== provinceId) throw new BadRequestException('合同不属于所选省份');
+    if (!allocation) throw new BadRequestException('合同尚未分配所选地市');
+
+    const amount = Number(String(row.taxInclusiveAmountRaw ?? '').replace(/,/g, '').trim());
+    const errors: Array<{ type: string; field: string; message: string }> = [];
+    if (!Number.isFinite(amount)) errors.push({ type: 'amount', field: '含税总金额', message: `金额“${row.taxInclusiveAmountRaw ?? ''}”不是有效数值` });
+    let rateBp: number | null = input.feeRateSnapshotBp ?? null;
+    if (rateBp == null) {
+      const effective = await this.contracts.getEffectiveRate(contractId, cityId, businessMonth);
+      rateBp = effective?.rateBp ?? null;
+    }
+    if (rateBp == null || !Number.isInteger(rateBp) || rateBp <= 0 || rateBp > 10000) {
+      errors.push({ type: 'rate', field: '管理费率', message: `合同“${contract.contractNo}”在 ${businessMonth} 没有有效管理费率` });
+      rateBp = null;
+    }
+    const completionAmountFen = Number.isFinite(amount) ? Math.round(amount * 100) : null;
+    const grossProfitFen = completionAmountFen != null && rateBp != null ? Math.round((completionAmountFen * rateBp) / 10000) : null;
+    const validationError = errors.length > 0 ? errors.map((error) => error.message).join('；') : null;
+    await this.dataSource.transaction(async (manager) => {
+      row.provinceId = provinceId;
+      row.cityId = cityId;
+      row.contractId = contractId;
+      row.businessMonth = businessMonth;
+      row.feeRateSnapshotBp = rateBp;
+      row.completionAmountFen = completionAmountFen;
+      row.grossProfitFen = grossProfitFen;
+      row.validationStatus = errors.length > 0 ? 'needs_review' : 'valid';
+      row.validationError = validationError;
+      await manager.save(row);
+      await manager.delete(BizOrderImportErrorEntity, { batchId: row.batchId, rowNo: row.sourceRowNo });
+      if (errors.length > 0) {
+        await manager.insert(BizOrderImportErrorEntity, errors.map((error) => ({
+          id: randomUUID(), batchId: row.batchId, rowNo: row.sourceRowNo,
+          errorType: error.type, field: error.field, message: error.message,
+        })));
+      }
+      const reviewCount = await manager.countBy(BizOrderRowEntity, { batchId: row.batchId, validationStatus: 'needs_review' });
+      batch.importedRows = Math.max(0, batch.totalRows - reviewCount);
+      batch.failureReason = reviewCount > 0 ? `已保存全部 ${batch.totalRows} 行，其中 ${reviewCount} 行待维护` : null;
+      await manager.save(batch);
+    });
+    // Keep the raw source immutable; the operation log records the maintenance event.
+    await this.opLogRepo.save({
+      id: randomUUID(), operatorUserId: auth.userId, actionType: 'order_row.maintain',
+      targetType: 'order_row', targetId: row.id, resultStatus: errors.length > 0 ? 'needs_review' : 'success',
+    });
+    void this.aggregates.recalcInternal({}).catch(() => {});
+    return this.listRow(
+      row,
+      true,
+      new Map([[city.id, city.name]]),
+      new Map([[contract.id, { contractNo: contract.contractNo, contractName: contract.contractName }]]),
+    );
+  }
+
   /** 批次作废（仅 super_admin）：原始行 is_void=true 退出统计；保留行/账号/时间 */
+  /** Delete only failed batches so a failed import can be retried without changing imported data. */
+  async deleteFailedBatch(auth: BizAuthContext, id: string): Promise<void> {
+    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
+      throw new ForbiddenException('仅管理员可删除失败导入批次');
+    }
+    const batch = await this.batchRepo.findOneBy({ id });
+    if (!batch) throw new NotFoundException('批次不存在');
+    if (batch.status !== OrderBatchStatus.FAILED) {
+      throw new BadRequestException('仅导入失败批次可删除，已入账批次不可删除');
+    }
+    if (!auth.isSuperAdmin && batch.uploadedBy !== auth.userId) {
+      throw new ForbiddenException('管理员仅可删除自己上传的失败批次');
+    }
+    const rowCount = await this.rowRepo.countBy({ batchId: id });
+    if (rowCount > 0) {
+      throw new BadRequestException('失败批次包含已入账数据，禁止删除');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(BizOrderImportErrorEntity, { batchId: id });
+      await manager.delete(BizOrderImportBatchEntity, { id });
+    });
+    this.cleanupTempFile(batch);
+    await this.recordOp(auth.userId, 'order_batch.delete_failed', id);
+  }
+
   async voidBatch(authUserId: string, isSuperAdmin: boolean, id: string, reason: string): Promise<void> {
     if (!isSuperAdmin) throw new ForbiddenException('仅 super_admin 可作废订单批次');
     if (!reason?.trim()) throw new BadRequestException('作废原因必填');
@@ -536,11 +726,11 @@ export class BizOrderImportService {
   }
 
   /** 订单行列表（敏感列脱敏：无 SENSITIVE_ORDER_PERMISSION 时遮罩） */
-  async listRows(auth: BizAuthContext, filter: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }, sensitive: boolean) {
+  async listRows(auth: BizAuthContext, filter: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any'; validationStatus?: 'valid' | 'needs_review'; page?: number; pageSize?: number }, sensitive: boolean) {
     const cityIds = await this.visibleCityIds(auth);
     const qb = this.rowRepo.createQueryBuilder('r');
     if (cityIds) {
-      if (cityIds.length === 0) return [];
+      if (cityIds.length === 0) return { items: [], total: 0, page: 1, pageSize: 500 };
       if (filter.cityId && !cityIds.includes(filter.cityId)) throw new ForbiddenException('数据范围不足');
       qb.andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds });
     }
@@ -549,23 +739,54 @@ export class BizOrderImportService {
     if (filter.overrun === 'city') qb.andWhere('r.cityOverrunFlag = 1');
     if (filter.overrun === 'contract') qb.andWhere('r.contractOverrunFlag = 1');
     if (filter.overrun === 'any') qb.andWhere('(r.cityOverrunFlag = 1 OR r.contractOverrunFlag = 1)');
-    const rows = await qb.orderBy('r.sourceRowNo', 'ASC').limit(500).getMany();
-    return rows.map((r) => ({
+    if (filter.validationStatus) qb.andWhere('r.validationStatus = :validationStatus', { validationStatus: filter.validationStatus });
+    const total = await qb.getCount();
+    const pageSize = Math.min(500, Math.max(1, Math.trunc(filter.pageSize ?? 500)));
+    const page = Math.max(1, Math.trunc(filter.page ?? 1));
+    const rows = await qb.orderBy('r.sourceRowNo', 'ASC').skip((page - 1) * pageSize).take(pageSize).getMany();
+    const cityNames = new Map((await this.cityRepo.find()).map((city) => [city.id, city.name]));
+    const contractIds = [...new Set(rows.map((row) => row.contractId).filter((id): id is string => Boolean(id)))];
+    const contracts = contractIds.length > 0
+      ? await this.contractRepo.find({ where: { id: In(contractIds) } })
+      : [];
+    const contractNames = new Map(contracts.map((contract) => [contract.id, {
+      contractNo: contract.contractNo,
+      contractName: contract.contractName,
+    }]));
+    return { items: rows.map((r) => this.listRow(r, sensitive, cityNames, contractNames)), total, page, pageSize };
+  }
+
+  private listRow(
+    r: BizOrderRowEntity,
+    sensitive: boolean,
+    cityNames: Map<string, string>,
+    contractNames: Map<string, { contractNo: string; contractName: string }>,
+  ): Record<string, unknown> {
+    const contract = r.contractId ? contractNames.get(r.contractId) : undefined;
+    return {
       id: r.id,
       batchId: r.batchId,
       sourceRowNo: r.sourceRowNo,
       purchaseOrderNo: r.purchaseOrderNo,
       supplierName: r.supplierName,
       projectName: r.projectName,
-      cityName: r.cityName,
+      provinceId: r.provinceId,
+      cityId: r.cityId,
+      contractId: r.contractId,
+      contractNo: contract?.contractNo ?? null,
+      contractName: contract?.contractName ?? null,
+      cityName: r.cityId ? cityNames.get(r.cityId) ?? r.cityName : r.cityName,
+      provinceName: r.provinceName,
       businessMonth: r.businessMonth,
       completionAmountFen: r.completionAmountFen != null ? Number(r.completionAmountFen) : null,
       feeRateSnapshotBp: r.feeRateSnapshotBp,
       grossProfitFen: r.grossProfitFen != null ? Number(r.grossProfitFen) : null,
+      validationStatus: r.validationStatus,
+      validationError: r.validationError,
       isVoid: r.isVoid,
       receiverPhone: sensitive ? r.receiverPhoneEnc : this.maskPhone(r.receiverPhoneEnc),
       receiverAddress: sensitive ? r.receiverAddressEnc : this.maskAddress(r.receiverAddressEnc),
-    }));
+    };
   }
 
   private maskPhone(v: string | null): string | null {

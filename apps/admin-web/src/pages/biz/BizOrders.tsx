@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBizPermission } from '@/utils/biz-permission';
-import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd';
+import { Badge, Button, Card, Drawer, Form, Input, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd';
 import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
-  bizOrderBatches, bizOrderBatchDetail, bizOrderUpload, bizOrderBatchVoid, bizOrderBatchRestore, bizOrderRows,
+  bizAdminCities, bizAdminProvinces, bizContractList, bizOrderBatches, bizOrderBatchDetail, bizOrderBatchDelete, bizOrderUpload, bizOrderBatchVoid, bizOrderBatchRestore, bizOrderRows, bizOrderRowMaintain,
 } from '@/api/biz.api';
 
 const { Title } = Typography;
@@ -40,6 +40,22 @@ export default function BizOrders() {
   const [overrunFilter, setOverrunFilter] = useState<string | undefined>();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewBatchId, setPreviewBatchId] = useState<string | null>(null);
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'needs_review'>('all');
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewTotal, setPreviewTotal] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingRow, setEditingRow] = useState<Record<string, unknown> | null>(null);
+  const [provinceOptions, setProvinceOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [cityOptions, setCityOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [contractOptions, setContractOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [editForm] = Form.useForm();
 
   // 页面级权限保护：无上传权限的账号直接跳回经营管理，避免停留在无意义页面。
   // canUpload === null 时保持加载态，防止权限判定前闪现订单内容。
@@ -89,13 +105,55 @@ export default function BizOrders() {
 
   const onUpload = async (file: File) => {
     const idempotencyKey = `up-${dayjs().format('YYYYMMDDHHmmss')}-${Math.random().toString(36).slice(2, 10)}`;
+    setUploading(true);
+    setUploadProgress(10);
+    setUploadStatus('正在上传文件');
     try {
-      const result = await bizOrderUpload(file, idempotencyKey);
-      message.success(`批次已提交：${result.batchId.slice(0, 8)}，开始解析`);
+      const result = await bizOrderUpload(file, idempotencyKey, (percent) => {
+        setUploadProgress(Math.max(10, Math.round(percent * 0.35)));
+        setUploadStatus(`正在上传文件 ${percent}%`);
+      });
+      setUploadProgress(35);
+      setUploadStatus('文件已提交，正在解析');
+      const deadline = Date.now() + 5 * 60_000;
+      let batchStatus = result.status;
+      while (batchStatus === 'parsing' && Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        const batch = await bizOrderBatchDetail(result.batchId);
+        batchStatus = String(batch.batch.status);
+        setUploadProgress((value) => Math.min(92, Math.max(value + 6, 48)));
+      }
+      if (batchStatus !== 'imported') {
+        const batch = await bizOrderBatchDetail(result.batchId);
+        throw new Error(String(batch.batch.failureReason ?? '订单解析失败'));
+      }
+      setUploadProgress(100);
+      setUploadStatus('解析完成，正在生成预览');
+      const batchDetail = await bizOrderBatchDetail(result.batchId);
+      setDetail(batchDetail);
+      setPreviewBatchId(result.batchId);
+      setPreviewFilter('all');
+      const parsedRows = await bizOrderRows({ batchId: result.batchId, page: 1, pageSize: 20 });
+      setPreviewRows(parsedRows.items);
+      setPreviewPage(parsedRows.page);
+      setPreviewTotal(parsedRows.total);
+      setPreviewOpen(true);
+      const reviewCount = batchDetail.errors.length;
+      message.success(reviewCount > 0
+        ? `已保存 ${parsedRows.items.length} 行，其中 ${reviewCount} 行待维护`
+        : `已导入 ${parsedRows.items.length} 条订单`);
       void load();
+      void loadRows();
     } catch (e: unknown) {
       const detailMsg = (e as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
-      message.error(Array.isArray(detailMsg) ? detailMsg.join('；') : (detailMsg ?? '上传失败'));
+      message.error(Array.isArray(detailMsg) ? detailMsg.join('；') : (detailMsg ?? (e instanceof Error ? e.message : '上传失败')));
+      setUploadStatus('上传或解析失败');
+    } finally {
+      window.setTimeout(() => {
+        setUploading(false);
+        setUploadProgress(0);
+        setUploadStatus('');
+      }, 900);
     }
     return false;
   };
@@ -107,6 +165,41 @@ export default function BizOrders() {
       setDetail(d);
     } catch {
       message.error('批次详情加载失败');
+    }
+  };
+
+  const onDeleteFailed = (id: string) => {
+    Modal.confirm({
+      title: '删除失败导入批次',
+      content: '仅删除批次记录和错误明细，不影响已入账订单。删除后可以重新上传同一文件。',
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await bizOrderBatchDelete(id);
+        message.success('失败批次已删除');
+        await load();
+      },
+    });
+  };
+
+  const openMaintenance = async (id: string) => {
+    setPreviewLoading(true);
+    try {
+      const [batchDetail, pendingRows] = await Promise.all([
+        bizOrderBatchDetail(id),
+        bizOrderRows({ batchId: id, validationStatus: 'needs_review', page: 1, pageSize: 20 }),
+      ]);
+      setDetail(batchDetail);
+      setPreviewBatchId(id);
+      setPreviewFilter('needs_review');
+      setPreviewRows(pendingRows.items);
+      setPreviewPage(pendingRows.page);
+      setPreviewTotal(pendingRows.total);
+      setPreviewOpen(true);
+    } catch {
+      message.error('待维护数据加载失败');
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -135,19 +228,79 @@ export default function BizOrders() {
     }
   };
 
+  const loadPreviewRows = async (filter: 'all' | 'valid' | 'needs_review' = previewFilter, page = previewPage) => {
+    if (!previewBatchId) return;
+    setPreviewLoading(true);
+    try {
+      const result = await bizOrderRows({ batchId: previewBatchId, page, pageSize: 20, ...(filter === 'all' ? {} : { validationStatus: filter }) });
+      setPreviewRows(result.items);
+      setPreviewPage(result.page);
+      setPreviewTotal(result.total);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openRowEditor = async (row: Record<string, unknown>) => {
+    setEditingRow(row);
+    const provinceId = String(row.provinceId ?? '');
+    editForm.setFieldsValue({
+      provinceId, cityId: String(row.cityId ?? ''), contractId: String(row.contractId ?? ''),
+      businessMonth: String(row.businessMonth ?? ''),
+      feeRateSnapshotBp: row.feeRateSnapshotBp == null ? undefined : Number(row.feeRateSnapshotBp), reason: '',
+    });
+    setEditOpen(true);
+    try {
+      const provinces = await bizAdminProvinces();
+      setProvinceOptions(provinces.items.map((item) => ({ label: item.name, value: item.id })));
+      const [cities, contracts] = await Promise.all([
+        bizAdminCities(provinceId || undefined),
+        bizContractList(provinceId ? { provinceId } : undefined),
+      ]);
+      setCityOptions(cities.items.map((item) => ({ label: item.name, value: item.id })));
+      setContractOptions(contracts.items.map((item) => ({ label: `${item.contractNo} ${item.contractName}`, value: item.id })));
+    } catch {
+      message.error('参考数据加载失败');
+    }
+  };
+
+  const onProvinceChange = async (provinceId: string) => {
+    editForm.setFieldsValue({ cityId: undefined, contractId: undefined });
+    const [cities, contracts] = await Promise.all([
+      bizAdminCities(provinceId), bizContractList({ provinceId }),
+    ]);
+    setCityOptions(cities.items.map((item) => ({ label: item.name, value: item.id })));
+    setContractOptions(contracts.items.map((item) => ({ label: `${item.contractNo} ${item.contractName}`, value: item.id })));
+  };
+
+  const onMaintain = async (values: { provinceId: string; cityId: string; contractId: string; businessMonth: string; feeRateSnapshotBp?: number; reason?: string }) => {
+    if (!editingRow || !previewBatchId) return;
+    await bizOrderRowMaintain(String(editingRow.id), values);
+    message.success('订单行已重新校验');
+    setEditOpen(false);
+    const current = await bizOrderBatchDetail(previewBatchId);
+    setDetail(current);
+    await loadPreviewRows(previewFilter, previewPage);
+    void loadRows();
+  };
+
   const columns = [
     { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => { const s = BATCH_STATUS[v] ?? { label: v, color: 'default' }; return <Badge status={s.color as 'success' | 'processing' | 'error' | 'default'} text={s.label} />; } },
     { title: '总行数', dataIndex: 'totalRows', key: 'totalRows' },
     { title: '入账行数', dataIndex: 'importedRows', key: 'importedRows' },
-    { title: '上传人', dataIndex: 'uploadedBy', key: 'uploadedBy', render: (v: string) => v?.slice(0, 8) ?? '-' },
+    { title: '上传人', dataIndex: 'uploadedBy', key: 'uploadedBy', render: (v: string) => v ?? '-' },
     { title: '上传时间', dataIndex: 'uploadedAt', key: 'uploadedAt', render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-' },
-    { title: '失败原因', dataIndex: 'failureReason', key: 'failureReason', ellipsis: true, render: (v: string | null) => v ? <Tag color="red">{v.slice(0, 40)}</Tag> : '-' },
+    { title: '导入说明', dataIndex: 'failureReason', key: 'failureReason', ellipsis: true, render: (v: string | null) => v ? <Tag color="orange">{v.slice(0, 40)}</Tag> : '-' },
     {
       title: '操作', key: 'action', width: 220,
       render: (_: unknown, row: Record<string, unknown>) => (
         <Space wrap>
+          {row.status === 'failed' && <Button size="small" danger onClick={() => onDeleteFailed(String(row.id))}>删除</Button>}
           <Button size="small" onClick={() => openDetail(String(row.id))}>详情</Button>
+          {row.status === 'imported' && String(row.failureReason ?? '').includes('待维护') && (
+            <Button size="small" type="primary" onClick={() => void openMaintenance(String(row.id))}>维护待处理</Button>
+          )}
           {row.status === 'imported' && <Button size="small" danger onClick={() => onVoid(String(row.id))}>作废</Button>}
           {row.status === 'voided' && <Button size="small" onClick={() => onRestore(String(row.id))}>恢复</Button>}
         </Space>
@@ -158,6 +311,8 @@ export default function BizOrders() {
   const rowColumns = [
     { title: '行号', dataIndex: 'sourceRowNo', key: 'sourceRowNo', width: 70 },
     { title: '采购订单编号', dataIndex: 'purchaseOrderNo', key: 'purchaseOrderNo', width: 130 },
+    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', width: 170, render: (v: string | null) => v ?? '-' },
+    { title: '合同名称', dataIndex: 'contractName', key: 'contractName', width: 260, ellipsis: true, render: (v: string | null) => v ?? '-' },
     { title: '地市', dataIndex: 'cityName', key: 'cityName', width: 90 },
     { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', width: 110, render: (v: string) => formatMonth(v) },
     { title: '含税金额（元）', dataIndex: 'completionAmountFen', key: 'completionAmountFen', render: (v: number | null) => <span style={{ color: Number(v) < 0 ? '#c64b4b' : undefined }}>{fenToYuan(v)}</span> },
@@ -165,7 +320,12 @@ export default function BizOrders() {
     { title: '毛利润（元）', dataIndex: 'grossProfitFen', key: 'grossProfitFen', render: (v: number | null) => fenToYuan(v) },
     { title: '收货人电话', dataIndex: 'receiverPhone', key: 'receiverPhone' },
     { title: '收货地址', dataIndex: 'receiverAddress', key: 'receiverAddress', ellipsis: true },
-    { title: '状态', dataIndex: 'isVoid', key: 'isVoid', render: (v: boolean) => v ? <Tag color="red">已作废</Tag> : <Tag color="green">有效</Tag> },
+    { title: '状态', key: 'status', render: (_: unknown, row: Record<string, unknown>) => {
+      if (row.isVoid) return <Tag color="red">已作废</Tag>;
+      return row.validationStatus === 'needs_review'
+        ? <Tag color="orange" title={String(row.validationError ?? '')}>待维护</Tag>
+        : <Tag color="green">有效</Tag>;
+    } },
   ];
 
   return (
@@ -195,11 +355,13 @@ export default function BizOrders() {
           beforeUpload={onUpload}
           maxCount={1}
           showUploadList={false}
+          disabled={uploading}
         >
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
           <p className="ant-upload-text">点击或拖拽 .xlsx 文件到此处上传</p>
-          <p className="ant-upload-hint">上传即视为导入确认（无内容审核）；整批校验任一错误零写入</p>
+          <p className="ant-upload-hint">上传即视为导入确认；全部原始行均会保存，无法识别的行将标记为待维护</p>
         </Upload.Dragger>
+        {uploading && <Progress percent={uploadProgress} status="active" format={() => uploadStatus} style={{ marginTop: 16 }} />}
       </Card>
 
       <Card title="导入批次" style={{ marginBottom: 16 }}>
@@ -215,7 +377,12 @@ export default function BizOrders() {
           <div>
             <p><b>文件：</b>{String(detail.batch.filename)}</p>
             <p><b>状态：</b>{BATCH_STATUS[String(detail.batch.status)]?.label ?? detail.batch.status}（{String(detail.rowCount)} 行入库）</p>
-            {detail.batch.failureReason ? <p><b>失败原因：</b>{String(detail.batch.failureReason)}</p> : null}
+            {detail.batch.failureReason ? <p><b>导入说明：</b>{String(detail.batch.failureReason)}</p> : null}
+            {detail.batch.status === 'imported' && String(detail.batch.failureReason ?? '').includes('待维护') && (
+              <Button type="primary" onClick={() => { setDetailOpen(false); void openMaintenance(String(detail.batch.id)); }} style={{ marginBottom: 12 }}>
+                进入待维护
+              </Button>
+            )}
             {detail.errors.length > 0 && (
               <>
                 <p><b>错误报告（{detail.errors.length} 条，最多展示 100 条）：</b></p>
@@ -234,6 +401,53 @@ export default function BizOrders() {
           </div>
         )}
       </Drawer>
+
+      {false && <Space wrap style={{ marginBottom: 12 }}>
+        <Tag color="blue">总行数 {detail?.rowCount ?? 0}</Tag>
+        <Tag color="green">有效 {Math.max(0, (detail?.rowCount ?? 0) - new Set(detail?.errors.map((error) => String(error.rowNo)).filter((rowNo) => rowNo !== 'null')).size)}</Tag>
+        <Tag color="orange">待维护 {new Set(detail?.errors.map((error) => String(error.rowNo)).filter((rowNo) => rowNo !== 'null')).size}</Tag>
+        <Select value={previewFilter} style={{ width: 150 }} options={[{ value: 'all', label: '全部行' }, { value: 'valid', label: '仅有效' }, { value: 'needs_review', label: '仅待维护' }]} onChange={(value: 'all' | 'valid' | 'needs_review') => { setPreviewFilter(value); setPreviewPage(1); void loadPreviewRows(value, 1); }} />
+      </Space>}
+
+      <Modal title="订单解析预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={<Button type="primary" onClick={() => setPreviewOpen(false)}>关闭</Button>} width={980}>
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Tag color="blue">总行数 {detail?.rowCount ?? 0}</Tag>
+          <Tag color="green">有效 {Math.max(0, (detail?.rowCount ?? 0) - new Set(detail?.errors.map((error) => String(error.rowNo)).filter((rowNo) => rowNo !== 'null')).size)}</Tag>
+          <Tag color="orange">待维护 {new Set(detail?.errors.map((error) => String(error.rowNo)).filter((rowNo) => rowNo !== 'null')).size}</Tag>
+          <Select value={previewFilter} style={{ width: 150 }} options={[{ value: 'all', label: '全部行' }, { value: 'valid', label: '仅有效' }, { value: 'needs_review', label: '仅待维护' }]} onChange={(value: 'all' | 'valid' | 'needs_review') => { setPreviewFilter(value); setPreviewPage(1); void loadPreviewRows(value, 1); }} />
+        </Space>
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>点击待维护行可修改标准化信息并重新校验。</Typography.Text>
+        <Table
+          scroll={{ x: 'max-content' }}
+          size="small"
+          rowKey="id"
+          pagination={{ current: previewPage, pageSize: 20, total: previewTotal, showSizeChanger: false, onChange: (page) => { void loadPreviewRows(previewFilter, page); } }}
+          dataSource={previewRows}
+          loading={previewLoading}
+          onRow={(row) => row.validationStatus === 'needs_review' ? { onClick: () => void openRowEditor(row), style: { cursor: 'pointer' } } : {}}
+          columns={[
+            { title: '采购订单编号', dataIndex: 'purchaseOrderNo', key: 'purchaseOrderNo' },
+            { title: '地市', dataIndex: 'cityName', key: 'cityName' },
+            { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', render: (value: string) => formatMonth(value) },
+            { title: '含税金额（元）', dataIndex: 'completionAmountFen', key: 'completionAmountFen', render: (value: number | null) => fenToYuan(value) },
+            { title: '项目名称', dataIndex: 'projectName', key: 'projectName', ellipsis: true },
+            { title: '状态', key: 'validationStatus', render: (_: unknown, row: Record<string, unknown>) => row.validationStatus === 'needs_review' ? <Tag color="orange">待维护</Tag> : <Tag color="green">有效</Tag> },
+            { title: '待维护原因', dataIndex: 'validationError', key: 'validationError', width: 300, render: (value: string | null) => value ?? '-' },
+          ]}
+        />
+      </Modal>
+
+      <Modal title="修正订单标准化信息" open={editOpen} onCancel={() => setEditOpen(false)} onOk={() => void editForm.submit()} okText="保存并重新校验" width={520}>
+        <Form form={editForm} layout="vertical" onFinish={(values) => void onMaintain(values)}>
+          <Form.Item name="provinceId" label="省份" rules={[{ required: true, message: '请选择省份' }]}><Select options={provinceOptions} onChange={(value) => void onProvinceChange(value)} /></Form.Item>
+          <Form.Item name="cityId" label="地市" rules={[{ required: true, message: '请选择地市' }]}><Select options={cityOptions} /></Form.Item>
+          <Form.Item name="contractId" label="合同" rules={[{ required: true, message: '请选择合同' }]}><Select showSearch optionFilterProp="label" options={contractOptions} /></Form.Item>
+          <Form.Item name="businessMonth" label="业务月份" rules={[{ required: true, pattern: /^\d{4}-(0[1-9]|1[0-2])$/, message: '格式应为 YYYY-MM' }]}><Input placeholder="YYYY-MM" /></Form.Item>
+          <Form.Item name="feeRateSnapshotBp" label="管理费率（基点，可留空自动取合同费率）"><Input type="number" min={1} max={10000} /></Form.Item>
+          <Form.Item name="reason" label="修正说明"><Input.TextArea maxLength={255} rows={3} /></Form.Item>
+          <Typography.Text type="secondary">Excel 原始字段保持不变，本次仅修正标准化关联信息。</Typography.Text>
+        </Form>
+      </Modal>
     </div>
   );
 }

@@ -74,7 +74,7 @@ export class BizOfflineCompletionService {
 
   // ================= 列表/详情 =================
 
-  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string }): Promise<BizOfflineCompletionEntity[]> {
+  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string }): Promise<Array<BizOfflineCompletionEntity & { cityName: string }>> {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.offlineRepo.createQueryBuilder('o');
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无完工数据范围');
@@ -87,7 +87,11 @@ export class BizOfflineCompletionService {
     }
     if (filter.cityId) qb.andWhere('o.cityId = :cityId', { cityId: filter.cityId });
     if (filter.status) qb.andWhere('o.status = :status', { status: filter.status });
-    return qb.orderBy('o.createdAt', 'DESC').getMany();
+    const items = await qb.orderBy('o.createdAt', 'DESC').getMany();
+    const cityIds = [...new Set(items.map((item) => item.cityId).filter(Boolean))];
+    const cities = cityIds.length > 0 ? await this.cityRepo.find({ where: { id: In(cityIds) } }) : [];
+    const cityNames = new Map(cities.map((city) => [city.id, city.name]));
+    return items.map((item) => ({ ...item, cityName: cityNames.get(item.cityId) ?? item.cityId }));
   }
 
   async detail(auth: BizAuthContext, id: string): Promise<BizOfflineCompletionEntity> {

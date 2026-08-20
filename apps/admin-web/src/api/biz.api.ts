@@ -48,6 +48,10 @@ export function bizMe(): Promise<BizMeResult> {
   return request.get('/biz/auth/me').then((r) => r.data);
 }
 
+export function bizChangeOwnPassword(data: { currentPassword: string; newPassword: string; confirmPassword: string }): Promise<{ ok: boolean }> {
+  return request.patch('/biz/auth/me/password', data).then((r) => r.data);
+}
+
 export function bizPortalModules(): Promise<{ level1: BizModuleItem[]; level2: BizModuleItem[] }> {
   return request.get('/biz/portal/modules').then((r) => r.data);
 }
@@ -76,7 +80,7 @@ export function bizAdminResetPassword(id: string, newPassword: string): Promise<
   return request.post(`/biz/admin/users/${id}/reset-password`, { newPassword }).then((r) => r.data);
 }
 
-export function bizAdminGetUserPermissions(id: string): Promise<{ roleCode: string; base: string[]; overrides: unknown[]; effective: string[] }> {
+export function bizAdminGetUserPermissions(id: string): Promise<{ roleCode: string; base: string[]; overrides: Array<{ permissionCode: string; effect: 'allow' | 'deny' }>; effective: string[] }> {
   return request.get(`/biz/admin/users/${id}/permissions`).then((r) => r.data);
 }
 
@@ -147,7 +151,7 @@ export interface BizContractDetail {
   };
 }
 
-export function bizContractList(params?: { provinceId?: string; cityId?: string; status?: string }): Promise<{ items: BizContractItem[] }> {
+export function bizContractList(params?: { provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<{ items: BizContractItem[] }> {
   return request.get('/biz/contracts', { params }).then((r) => r.data);
 }
 
@@ -156,6 +160,12 @@ export function bizContractCreate(dto: {
   provinceId: string; startDate?: string | null; endDate?: string | null; parentContractId?: string | null;
 }): Promise<BizContractItem> {
   return request.post('/biz/contracts', dto).then((r) => r.data);
+}
+
+export function bizContractUpload(file: File): Promise<{ created: number; contractNos: string[]; allocations: number; feeRates: number; issues: string[] }> {
+  const form = new FormData();
+  form.append('file', file);
+  return request.post('/biz/contracts/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data);
 }
 
 export function bizContractDetail(id: string): Promise<BizContractDetail> {
@@ -168,6 +178,20 @@ export function bizContractUpdate(id: string, dto: Record<string, unknown>): Pro
 
 export function bizContractActivate(id: string): Promise<BizContractItem> {
   return request.post(`/biz/contracts/${id}/activate`).then((r) => r.data);
+}
+
+export interface BizContractBatchActivateResult {
+  checked: number;
+  activated: string[];
+  failed: Array<{ id: string; contractNo?: string; reason: string }>;
+}
+
+export function bizContractBatchActivate(ids: string[], dryRun = false): Promise<BizContractBatchActivateResult> {
+  return request.post('/biz/contracts/batch-activate', { ids, dryRun }).then((r) => r.data);
+}
+
+export function bizContractBatchClearDrafts(ids: string[]): Promise<{ cleared: number; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+  return request.post('/biz/contracts/batch-clear-drafts', { ids }).then((r) => r.data);
 }
 
 export function bizContractVoid(id: string, summaryChoice: string, reason: string): Promise<BizContractItem> {
@@ -188,11 +212,16 @@ export function bizContractAddFeeRate(id: string, cityId: string, effectiveMonth
 
 // ================= 订单域（M4） =================
 
-export function bizOrderUpload(file: File, idempotencyKey: string): Promise<{ batchId: string; status: string }> {
+export function bizOrderUpload(file: File, idempotencyKey: string, onProgress?: (percent: number) => void): Promise<{ batchId: string; status: string }> {
   const form = new FormData();
   form.append('idempotencyKey', idempotencyKey);
   form.append('file', file);
-  return request.post('/biz/orders/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => r.data);
+  return request.post('/biz/orders/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (event) => {
+      if (event.total) onProgress?.(Math.round((event.loaded / event.total) * 100));
+    },
+  }).then((r) => r.data);
 }
 
 export function bizOrderBatches(): Promise<{ items: Array<Record<string, unknown>> }> {
@@ -203,6 +232,10 @@ export function bizOrderBatchDetail(id: string): Promise<{ batch: Record<string,
   return request.get(`/biz/orders/batches/${id}`).then((r) => r.data);
 }
 
+export function bizOrderBatchDelete(id: string): Promise<{ ok: boolean }> {
+  return request.delete(`/biz/orders/batches/${id}`).then((r) => r.data);
+}
+
 export function bizOrderBatchVoid(id: string, reason: string): Promise<{ ok: boolean }> {
   return request.post(`/biz/orders/batches/${id}/void`, { reason }).then((r) => r.data);
 }
@@ -211,8 +244,15 @@ export function bizOrderBatchRestore(id: string): Promise<{ ok: boolean }> {
   return request.post(`/biz/orders/batches/${id}/restore`).then((r) => r.data);
 }
 
-export function bizOrderRows(filter?: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any' }): Promise<{ items: Array<Record<string, unknown>> }> {
+export function bizOrderRows(filter?: { batchId?: string; cityId?: string; overrun?: 'city' | 'contract' | 'any'; validationStatus?: 'valid' | 'needs_review'; page?: number; pageSize?: number }): Promise<{ items: Array<Record<string, unknown>>; total: number; page: number; pageSize: number }> {
   return request.get('/biz/orders/rows', { params: filter }).then((r) => r.data);
+}
+
+export function bizOrderRowMaintain(id: string, dto: {
+  provinceId: string; cityId: string; contractId: string; businessMonth: string;
+  feeRateSnapshotBp?: number; reason?: string;
+}): Promise<Record<string, unknown>> {
+  return request.patch(`/biz/orders/rows/${id}`, dto).then((r) => r.data);
 }
 
 // ================= 线下完工（M5） =================
@@ -272,12 +312,24 @@ export interface CostEntryDto {
   description?: string | null;
 }
 
-export function bizCostList(params?: { cityId?: string; status?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+export function bizCostList(params?: { cityId?: string; status?: string; businessMonth?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
   return request.get('/biz/costs', { params }).then((r) => r.data);
+}
+
+export function bizCostCategories(): Promise<{ items: Array<{ id: string; code: string; name: string; status: string; sortOrder: number }> }> {
+  return request.get('/biz/costs/categories/list').then((r) => r.data);
+}
+
+export function bizCostSaveMonthly(dto: { cityId?: string | null; businessMonth: string; submit?: boolean; entries: Array<{ categoryCode: string; amountFen?: number; description?: string | null }> }): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.post('/biz/costs/monthly', dto).then((r) => r.data);
 }
 
 export function bizCostCreate(dto: CostEntryDto): Promise<Record<string, unknown>> {
   return request.post('/biz/costs', dto).then((r) => r.data);
+}
+
+export function bizCostUpdate(id: string, dto: Partial<CostEntryDto>): Promise<Record<string, unknown>> {
+  return request.patch(`/biz/costs/${id}`, dto).then((r) => r.data);
 }
 
 export function bizCostSubmit(id: string): Promise<Record<string, unknown>> {
