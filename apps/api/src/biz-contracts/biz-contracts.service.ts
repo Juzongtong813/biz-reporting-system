@@ -217,6 +217,15 @@ export class BizContractsService {
       };
     }));
 
+    let activationIssues: string[] = [];
+    if (contract.status === ContractStatus.DRAFT) {
+      try {
+        activationIssues = await this.completenessIssues(contract);
+      } catch (error) {
+        activationIssues = [error instanceof BadRequestException ? String(error.message) : '合同资料完整性校验失败'];
+      }
+    }
+
     return {
       contract: {
         id: contract.id,
@@ -237,6 +246,7 @@ export class BizContractsService {
       },
       allocations: cityRows,
       feeRates: feeRates.map((f) => ({ cityId: f.cityId, effectiveMonth: f.effectiveMonth, rateBp: f.rateBp, changeReason: f.changeReason })),
+      activationIssues,
       alerts: alerts.map((a) => ({ alertType: a.alertType, firstTriggeredAt: a.firstTriggeredAt })),
       progress: {
         orderCompletionFen,

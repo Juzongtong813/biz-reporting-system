@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App as AntdApp, Button, Card, Col, Drawer, Progress, Row, Select, Space, Table, Tag, Typography } from 'antd';
+import { App as AntdApp, Button, Card, Col, Descriptions, Drawer, Progress, Row, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts,
-  bizAggregateRecalc, bizAggregateCheck, bizContractDetail, BizContractDetail,
+  bizAggregateRecalc, bizAggregateCheck, bizContractDetail, bizContractList, bizOrderRows, bizCostList, BizContractDetail,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -45,6 +45,15 @@ export default function BizAnalysis() {
   const [contractDetailOpen, setContractDetailOpen] = useState(false);
   const [contractDetailLoading, setContractDetailLoading] = useState(false);
   const [alertTypeFilter, setAlertTypeFilter] = useState<string | undefined>();
+  const [cityDetailOpen, setCityDetailOpen] = useState(false);
+  const [cityDetailLoading, setCityDetailLoading] = useState(false);
+  const [cityDetail, setCityDetail] = useState<{
+    summary: Record<string, unknown>;
+    contracts: Array<Record<string, unknown>>;
+    orders: Array<Record<string, unknown>>;
+    costs: Array<Record<string, unknown>>;
+    orderTotal: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const params = { month: filterMonth, cityId: filterCity };
@@ -124,6 +133,38 @@ export default function BizAnalysis() {
       msg.error('合同详情加载失败');
     } finally {
       setContractDetailLoading(false);
+    }
+  };
+
+  const openCityDetail = async (row: Record<string, unknown>) => {
+    const cityId = String(row.cityId ?? '');
+    if (!cityId) return;
+    setCityDetailOpen(true);
+    setCityDetailLoading(true);
+    setCityDetail(null);
+    try {
+      const [contracts, firstOrders, costs] = await Promise.all([
+        bizContractList({ cityId }),
+        bizOrderRows({ cityId, page: 1, pageSize: 500 }),
+        bizCostList({ cityId, businessMonth: filterMonth }),
+      ]);
+      const orderPages = Math.ceil(firstOrders.total / Math.max(firstOrders.pageSize, 1));
+      const extraPages = orderPages > 1
+        ? await Promise.all(Array.from({ length: orderPages - 1 }, (_, index) => bizOrderRows({ cityId, page: index + 2, pageSize: firstOrders.pageSize })))
+        : [];
+      const allOrders = [firstOrders.items, ...extraPages.map((page) => page.items)].flat();
+      const visibleOrders = filterMonth ? allOrders.filter((item) => String(item.businessMonth) === filterMonth) : allOrders;
+      setCityDetail({
+        summary: row,
+        contracts: contracts.items as unknown as Array<Record<string, unknown>>,
+        orders: visibleOrders,
+        costs: costs.items,
+        orderTotal: firstOrders.total,
+      });
+    } catch {
+      msg.error('地市明细加载失败');
+    } finally {
+      setCityDetailLoading(false);
     }
   };
 
@@ -232,7 +273,7 @@ export default function BizAnalysis() {
             <Table scroll={{ x: "max-content" }} 
               size="small" rowKey="cityId" pagination={false} dataSource={cities}
               columns={[
-                { title: '地市', dataIndex: 'cityName', key: 'cityName', fixed: 'left', render: (_: unknown, r: Record<string, unknown>) => String(r.cityName ?? r.cityId ?? '-').slice(0, 12) },
+                { title: '地市', dataIndex: 'cityName', key: 'cityName', fixed: 'left', render: (_: unknown, r: Record<string, unknown>) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openCityDetail(r)}>{String(r.cityName ?? r.cityId ?? '-').slice(0, 12)}</Button> },
                 { title: '合同数', dataIndex: 'contractCount', key: 'cc', render: (v: number) => Number(v) || 0 },
                 { title: '合同额（元）', dataIndex: 'contractAmountFen', key: 'ca', render: (v: number) => fenToYuan(Number(v)) },
                 { title: '订单完工（元）', dataIndex: 'orderCompletionFen', key: 'oc', render: (v: number) => fenToYuan(Number(v)) },
@@ -286,6 +327,46 @@ export default function BizAnalysis() {
               { title: '状态', dataIndex: 'status', key: 'status' },
             ]} />
           </Card>
+        </>}
+      </Drawer>
+      <Drawer
+        title={cityDetail ? `${String(cityDetail.summary.cityName ?? cityDetail.summary.cityId ?? '地市')}经营明细` : '地市经营明细'}
+        open={cityDetailOpen}
+        onClose={() => setCityDetailOpen(false)}
+        width={980}
+        loading={cityDetailLoading}
+      >
+        {cityDetail && <>
+          <Descriptions bordered size="small" column={3} style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="合同数">{Number(cityDetail.summary.contractCount) || 0}</Descriptions.Item>
+            <Descriptions.Item label="合同额（元）">{fenToYuan(Number(cityDetail.summary.contractAmountFen) || 0)}</Descriptions.Item>
+            <Descriptions.Item label="订单完工（元）">{fenToYuan(Number(cityDetail.summary.orderCompletionFen) || 0)}</Descriptions.Item>
+            <Descriptions.Item label="线下完工（元）">{fenToYuan(Number(cityDetail.summary.offlineCompletionFen) || 0)}</Descriptions.Item>
+            <Descriptions.Item label="成本（元）">{fenToYuan(Number(cityDetail.summary.costFen) || 0)}</Descriptions.Item>
+            <Descriptions.Item label="净利（元）">{fenToYuan(Number(cityDetail.summary.netProfitFen) || 0)}</Descriptions.Item>
+          </Descriptions>
+          <Tabs items={[
+            { key: 'contracts', label: `合同（${cityDetail.contracts.length}）`, children: <Table size="small" rowKey="id" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10 }} dataSource={cityDetail.contracts} columns={[
+              { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo' },
+              { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
+              { title: '合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'amount', render: (value: number) => fenToYuan(Number(value) || 0) },
+              { title: '状态', dataIndex: 'status', key: 'status' },
+            ]} /> },
+            { key: 'orders', label: `订单完工（${cityDetail.orders.length}${cityDetail.orderTotal > cityDetail.orders.length ? ` / ${cityDetail.orderTotal}` : ''}）`, children: <Table size="small" rowKey="id" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10 }} dataSource={cityDetail.orders} columns={[
+              { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', render: (value: string) => formatMonth(value) },
+              { title: '订单号', dataIndex: 'purchaseOrderNo', key: 'purchaseOrderNo' },
+              { title: '项目名称', dataIndex: 'projectName', key: 'projectName', ellipsis: true },
+              { title: '完工（元）', dataIndex: 'completionAmountFen', key: 'completion', render: (value: number) => fenToYuan(Number(value) || 0) },
+              { title: '校验状态', dataIndex: 'validationStatus', key: 'status' },
+            ]} /> },
+            { key: 'costs', label: `成本（${cityDetail.costs.length}）`, children: <Table size="small" rowKey="id" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10 }} dataSource={cityDetail.costs} columns={[
+              { title: '业务月份', dataIndex: 'businessMonth', key: 'businessMonth', render: (value: string) => formatMonth(value) },
+              { title: '成本分类', dataIndex: 'categoryCode', key: 'categoryCode' },
+              { title: '金额（元）', dataIndex: 'amountFen', key: 'amount', render: (value: number) => fenToYuan(Number(value) || 0) },
+              { title: '状态', dataIndex: 'status', key: 'status' },
+              { title: '说明', dataIndex: 'description', key: 'description', ellipsis: true },
+            ]} /> },
+          ]} />
         </>}
       </Drawer>
     </div>

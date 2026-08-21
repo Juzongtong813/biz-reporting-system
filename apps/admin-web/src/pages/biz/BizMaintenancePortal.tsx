@@ -13,7 +13,7 @@ const MODULE_ICON: Record<string, React.ReactNode> = {
   personnel: <TeamOutlined style={{ fontSize: 28 }} />,
 };
 
-/** 维护管理二级门户（新基线）：只展示有权二级模块；经营管理=实际业务，资产/人员=占位 */
+/** 维护管理二级门户：经营管理已提升为一级门户，此处只保留其他二级模块。 */
 export default function BizMaintenancePortal() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -26,7 +26,7 @@ export default function BizMaintenancePortal() {
       try {
         const [me, data] = await Promise.all([bizMe(), bizPortalModules()]);
         setUserName(me.username);
-        setModules(data.level2.filter((m) => m.parentId !== undefined || true));
+        setModules(data.level2.filter((m) => m.code !== 'operation'));
         setLoading(false);
       } catch {
         setError('登录已失效，请重新登录');
@@ -58,12 +58,11 @@ export default function BizMaintenancePortal() {
             <Card
               key={m.code}
               hoverable
-              onClick={() => navigate(m.code === 'operation' ? '/biz/operation' : `/biz/placeholder/${m.code}`)}
+              onClick={() => navigate(`/biz/placeholder/${m.code}`)}
               style={{ textAlign: 'center', padding: 16 }}
             >
               <div className="biz-module-icon" style={{ marginBottom: 8 }}>{MODULE_ICON[m.code] ?? null}</div>
               <div className="biz-module-title">{m.name}</div>
-              {m.code === 'operation' && <div className="biz-module-tag">进入实际业务</div>}
             </Card>
           ))}
         </div>

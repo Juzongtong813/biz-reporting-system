@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBizPermission } from '@/utils/biz-permission';
 import {
-  Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, Upload, message,
+  Alert, Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, Upload, message,
 } from 'antd';
 import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -51,6 +51,7 @@ export default function BizContracts() {
   const [keyword, setKeyword] = useState('');
   const [appliedKeyword, setAppliedKeyword] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
   const [batchRunning, setBatchRunning] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -71,6 +72,7 @@ export default function BizContracts() {
         bizAdminCities().catch(() => ({ items: [] })),
       ]);
       setItems(list.items);
+      setPagination((value) => ({ ...value, current: 1 }));
       setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
       setCities(c.items.map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
     } finally {
@@ -275,7 +277,7 @@ export default function BizContracts() {
   const onAddFeeRate = async (id: string) => {
     const values = await rateForm.validateFields();
     try {
-      await bizContractAddFeeRate(id, String(values.cityId), String(values.effectiveMonth), Number(values.rateBp), String(values.changeReason ?? ''));
+      await bizContractAddFeeRate(id, String(values.cityId), String(values.effectiveMonth), Math.round(Number(values.rateBp) * 100), String(values.changeReason ?? ''));
       message.success('费率已保存');
       rateForm.resetFields();
       await openDetail(id);
@@ -338,7 +340,15 @@ export default function BizContracts() {
         </Space>
       </div>
       <Card>
-        <Table scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{ pageSize: 10 }} rowSelection={canUpdateContract === true ? {
+        <Table scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{
+          current: pagination.current,
+          pageSize: pagination.pageSize,
+          total: items.length,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50', '100'],
+          onChange: (current, pageSize) => setPagination({ current, pageSize }),
+          showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`,
+        }} rowSelection={canUpdateContract === true ? {
           selectedRowKeys,
           onChange: setSelectedRowKeys,
           getCheckboxProps: (record) => ({ disabled: record.status !== 'draft' }),
@@ -401,10 +411,13 @@ export default function BizContracts() {
                       <Descriptions.Item label="父合同">{detail.contract.parentContractId ?? '-'}</Descriptions.Item>
                       <Descriptions.Item label="版本号">{detail.contract.versionNo}</Descriptions.Item>
                     </Descriptions>
-                    <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-                      {detail.contract.status === 'draft' && <Button type="primary" onClick={() => onActivate(detail.contract.id)}>生效并锁定合同额</Button>}
+                    <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {detail.contract.status === 'draft' && <Button type="primary" disabled={Boolean(detail.activationIssues?.length)} onClick={() => onActivate(detail.contract.id)}>生效并锁定合同额</Button>}
                       {['active', 'completed'].includes(detail.contract.status) && <Button danger onClick={() => onVoid(detail.contract.id)}>作废合同</Button>}
                     </div>
+                    {detail.contract.status === 'draft' && Boolean(detail.activationIssues?.length) && (
+                      <Alert type="warning" showIcon style={{ marginTop: 12 }} message="当前合同不能生效" description={`请先补齐：${detail.activationIssues?.join('、')}`} />
+                    )}
                   </div>
                 ),
               },
@@ -450,7 +463,7 @@ export default function BizContracts() {
                         <Select placeholder="地市" style={{ width: 140 }} options={cities.map((c) => ({ value: c.id, label: c.name }))} />
                       </Form.Item>
                       <Form.Item name="effectiveMonth" rules={[{ required: true }]}><Input placeholder="生效月份 YYYY-MM" style={{ width: 140 }} /></Form.Item>
-                      <Form.Item name="rateBp" rules={[{ required: true }]}><InputNumber placeholder="费率(%)" min={0.01} max={100} precision={2} style={{ width: 110 }} /></Form.Item>
+                        <Form.Item name="rateBp" rules={[{ required: true }]}><InputNumber placeholder="费率（%）" min={0.01} max={100} precision={2} style={{ width: 110 }} /></Form.Item>
                       <Form.Item name="changeReason"><Input placeholder="变更原因" style={{ width: 180 }} /></Form.Item>
                       <Button type="primary" onClick={() => onAddFeeRate(detail.contract.id)}>保存费率</Button>
                     </Form>

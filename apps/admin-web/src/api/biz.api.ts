@@ -140,6 +140,7 @@ export interface BizContractDetail {
     progress: number; overrunFen: number; orderCompletionFen: number; offlineCompletionFen: number;
   }>;
   feeRates: Array<{ cityId: string; effectiveMonth: string; rateBp: number; changeReason: string | null }>;
+  activationIssues?: string[];
   alerts: Array<{ alertType: string; firstTriggeredAt: string }>;
   progress: {
     orderCompletionFen: number; offlineCompletionFen: number; totalCompletionFen: number;
