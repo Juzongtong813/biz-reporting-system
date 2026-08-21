@@ -76,8 +76,8 @@ export default function BizContracts() {
         tags: Array.isArray(item.tags) ? item.tags : [],
       })));
       setPagination((value) => ({ ...value, current: 1 }));
-      setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
-      setCities(c.items.map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
+      setProvinces((p.items ?? []).map((x) => ({ id: String(x.id), name: String(x.name) })));
+      setCities((c.items ?? []).map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
     } finally {
       setLoading(false);
     }

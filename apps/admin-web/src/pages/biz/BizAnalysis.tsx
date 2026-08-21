@@ -62,13 +62,17 @@ export default function BizAnalysis() {
       bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity),
     ]);
     setOverview(ov);
-    setTrend(tr.items);
-    setContractAlerts(al.items);
-    const cityRows = filterCity ? ct.items.filter((r: Record<string, unknown>) => String(r.cityId) === filterCity) : ct.items;
+    const trendItems = Array.isArray(tr?.items) ? tr.items : [];
+    const cityItems = Array.isArray(ct?.items) ? ct.items : [];
+    const overrunItems = Array.isArray(or?.items) ? or.items : [];
+    const alertItems = Array.isArray(al?.items) ? al.items : [];
+    setTrend(trendItems);
+    setContractAlerts(alertItems);
+    const cityRows = filterCity ? cityItems.filter((r: Record<string, unknown>) => String(r.cityId) === filterCity) : cityItems;
     setCities(cityRows);
-    setOverruns(or.items);
-    setCityOptions(ct.items.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
-    setMonthOptions(tr.items.map((r: Record<string, unknown>) => ({ label: formatMonth(String(r.month)), value: String(r.month) })));
+    setOverruns(overrunItems);
+    setCityOptions(cityItems.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
+    setMonthOptions(trendItems.map((r: Record<string, unknown>) => ({ label: formatMonth(String(r.month)), value: String(r.month) })));
   }, [filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
@@ -148,18 +152,21 @@ export default function BizAnalysis() {
         bizOrderRows({ cityId, page: 1, pageSize: 500 }),
         bizCostList({ cityId, businessMonth: filterMonth }),
       ]);
-      const orderPages = Math.ceil(firstOrders.total / Math.max(firstOrders.pageSize, 1));
+      const orderItems = Array.isArray(firstOrders?.items) ? firstOrders.items : [];
+      const orderTotal = Number(firstOrders?.total) || orderItems.length;
+      const orderPageSize = Number(firstOrders?.pageSize) || 500;
+      const orderPages = Math.ceil(orderTotal / Math.max(orderPageSize, 1));
       const extraPages = orderPages > 1
-        ? await Promise.all(Array.from({ length: orderPages - 1 }, (_, index) => bizOrderRows({ cityId, page: index + 2, pageSize: firstOrders.pageSize })))
+        ? await Promise.all(Array.from({ length: orderPages - 1 }, (_, index) => bizOrderRows({ cityId, page: index + 2, pageSize: orderPageSize })))
         : [];
-      const allOrders = [firstOrders.items, ...extraPages.map((page) => page.items)].flat();
+      const allOrders = [orderItems, ...extraPages.map((page) => Array.isArray(page?.items) ? page.items : [])].flat();
       const visibleOrders = filterMonth ? allOrders.filter((item) => String(item.businessMonth) === filterMonth) : allOrders;
       setCityDetail({
         summary: row,
-        contracts: contracts.items as unknown as Array<Record<string, unknown>>,
+        contracts: (Array.isArray(contracts?.items) ? contracts.items : []) as unknown as Array<Record<string, unknown>>,
         orders: visibleOrders,
-        costs: costs.items,
-        orderTotal: firstOrders.total,
+        costs: Array.isArray(costs?.items) ? costs.items : [],
+        orderTotal,
       });
     } catch {
       msg.error('地市明细加载失败');
