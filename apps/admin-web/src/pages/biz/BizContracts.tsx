@@ -71,7 +71,10 @@ export default function BizContracts() {
         bizAdminProvinces().catch(() => ({ items: [] })),
         bizAdminCities().catch(() => ({ items: [] })),
       ]);
-      setItems(list.items);
+      setItems((list.items ?? []).map((item) => ({
+        ...item,
+        tags: Array.isArray(item.tags) ? item.tags : [],
+      })));
       setPagination((value) => ({ ...value, current: 1 }));
       setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
       setCities(c.items.map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
@@ -89,7 +92,13 @@ export default function BizContracts() {
     setDetailLoading(true);
     try {
       const d = await bizContractDetail(id);
-      setDetail(d);
+      setDetail({
+        ...d,
+        allocations: Array.isArray(d.allocations) ? d.allocations : [],
+        feeRates: Array.isArray(d.feeRates) ? d.feeRates : [],
+        activationIssues: Array.isArray(d.activationIssues) ? d.activationIssues : [],
+        alerts: Array.isArray(d.alerts) ? d.alerts : [],
+      });
     } catch (e: unknown) {
       const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
       message.error(detail ?? '加载失败');
@@ -292,7 +301,10 @@ export default function BizContracts() {
     { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
     { title: '含税合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'amount', render: (v: number) => fenToYuan(Number(v)) },
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v] ?? v}</Tag> },
-    { title: '预警', dataIndex: 'tags', key: 'tags', render: (tags?: string[]) => tags?.map((t) => <Tag key={t} color="orange">{ALERT_LABEL[t] ?? t}</Tag>) },
+    {
+      title: '预警', dataIndex: 'tags', key: 'tags',
+      render: (tags?: string[] | string | null) => (Array.isArray(tags) ? tags : []).map((t) => <Tag key={t} color="orange">{ALERT_LABEL[t] ?? t}</Tag>),
+    },
     {
       title: '操作', key: 'action', width: 200,
       render: (_: unknown, row: BizContractItem) => (
