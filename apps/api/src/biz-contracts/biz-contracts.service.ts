@@ -16,7 +16,7 @@ import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entit
 import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
 import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
-import { readWorkbookSafe } from '../common/files/workbook-policy';
+import { readWorkbookSafe, WORKBOOK_LIMITS } from '../common/files/workbook-policy';
 
 export interface CreateContractDto {
   contractNo: string;
@@ -293,7 +293,7 @@ export class BizContractsService {
       throw new ForbiddenException('当前账号无合同导入权限');
     }
 
-    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: 5_001 });
+    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: WORKBOOK_LIMITS.maxRowsPerSheet });
     if (workbook.SheetNames.length !== 1) throw new BadRequestException('合同导入文件必须包含一个工作表');
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
@@ -391,7 +391,7 @@ export class BizContractsService {
     if (!filename.toLowerCase().endsWith('.xlsx')) throw new BadRequestException('仅支持 .xlsx 合同文件');
     if (!['super_admin', 'admin', 'contract_manager'].includes(auth.roleCode)) throw new ForbiddenException('当前账号无合同导入权限');
 
-    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: 5_001 });
+    const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: WORKBOOK_LIMITS.maxRowsPerSheet });
     if (workbook.SheetNames.length !== 1) throw new BadRequestException('合同导入文件必须包含一个工作表');
     const sourceRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: '' });
     const header = (sourceRows[0] ?? []).map((value) => String(value).trim());
