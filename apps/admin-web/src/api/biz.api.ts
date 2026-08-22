@@ -126,6 +126,7 @@ export interface BizContractItem {
   tags?: string[] | null;
   amountLocked?: boolean;
   parentContractId?: string | null;
+  deletedAt?: string | null;
 }
 
 export interface BizContractDetail {
@@ -152,8 +153,10 @@ export interface BizContractDetail {
   };
 }
 
-export function bizContractList(params?: { provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<{ items: BizContractItem[] }> {
-  return request.get('/biz/contracts', { params }).then((r) => r.data);
+export function bizContractList(params?: { provinceId?: string; cityId?: string; status?: string; keyword?: string; includeDeleted?: boolean }): Promise<{ items: BizContractItem[] }> {
+  return request.get('/biz/contracts', {
+    params: { ...(params?.includeDeleted ? { includeDeleted: 'true' } : {}), provinceId: params?.provinceId, cityId: params?.cityId, status: params?.status, keyword: params?.keyword },
+  }).then((r) => r.data);
 }
 
 export function bizContractCreate(dto: {
@@ -209,6 +212,42 @@ export function bizContractCancelAllocation(id: string, cityId: string): Promise
 
 export function bizContractAddFeeRate(id: string, cityId: string, effectiveMonth: string, rateBp: number, changeReason?: string): Promise<unknown> {
   return request.post(`/biz/contracts/${id}/fee-rates`, { cityId, effectiveMonth, rateBp, changeReason }).then((r) => r.data);
+}
+
+// ================= 合同真正删除/批量操作（管理员，软删除+恢复） =================
+
+export function bizContractDelete(id: string): Promise<BizContractItem> {
+  return request.delete(`/biz/contracts/${id}`).then((r) => r.data);
+}
+
+export function bizContractBatchDelete(ids: string[]): Promise<{ checked: number; deleted: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+  return request.post('/biz/contracts/batch-delete', { ids }).then((r) => r.data);
+}
+
+export function bizContractBatchUpdate(ids: string[], dto: Record<string, unknown>): Promise<{ checked: number; updated: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+  return request.post('/biz/contracts/batch-update', { ids, dto }).then((r) => r.data);
+}
+
+export function bizContractBatchRestore(ids: string[]): Promise<{ checked: number; restored: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+  return request.post('/biz/contracts/batch-restore', { ids }).then((r) => r.data);
+}
+
+export function bizContractRestore(id: string): Promise<BizContractItem> {
+  return request.post(`/biz/contracts/${id}/restore`).then((r) => r.data);
+}
+
+export function bizContractExport(params?: { ids?: string[]; includeDeleted?: boolean; provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<string> {
+  return request.get('/biz/contracts/export', {
+    params: {
+      ...(params?.ids?.length ? { ids: params.ids.join(',') } : {}),
+      ...(params?.includeDeleted ? { includeDeleted: 'true' } : {}),
+      ...(params?.provinceId ? { provinceId: params.provinceId } : {}),
+      ...(params?.cityId ? { cityId: params.cityId } : {}),
+      ...(params?.status ? { status: params.status } : {}),
+      ...(params?.keyword ? { keyword: params.keyword } : {}),
+    },
+    responseType: 'text',
+  }).then((r) => r.data);
 }
 
 // ================= 订单域（M4） =================
@@ -355,20 +394,24 @@ export function bizCostRestore(id: string): Promise<Record<string, unknown>> {
 
 // ================= 汇总/分析/设置（M6） =================
 
-export function bizAnalysisOverview(params?: { month?: string; cityId?: string }): Promise<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number; contractCount: number; totalContractAmountFen: number; totalCompletionFen: number }> {
+export function bizAnalysisOverview(params?: { year?: string; month?: string; cityId?: string }): Promise<{ orderCompletionFen: number; offlineCompletionFen: number; grossProfitFen: number; costFen: number; netProfitFen: number; contractCount: number; totalContractAmountFen: number; totalCompletionFen: number; monthCount: number }> {
   return request.get('/biz/analysis/overview', { params }).then((r) => r.data);
 }
 
-export function bizAnalysisTrend(limit = 12, cityId?: string): Promise<{ items: Array<Record<string, unknown>> }> {
-  return request.get('/biz/analysis/trend', { params: cityId ? { limit, cityId } : { limit } }).then((r) => r.data);
+export function bizAnalysisTrend(limit = 12, cityId?: string, year?: string): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/trend', { params: { limit, ...(cityId ? { cityId } : {}), ...(year ? { year } : {}) } }).then((r) => r.data);
 }
 
-export function bizAnalysisByCity(month?: string): Promise<{ items: Array<Record<string, unknown>> }> {
-  return request.get('/biz/analysis/by-city', { params: month ? { month } : {} }).then((r) => r.data);
+export function bizAnalysisByCity(year?: string, month?: string): Promise<{ items: Array<Record<string, unknown>> }> {
+  return request.get('/biz/analysis/by-city', { params: { ...(year ? { year } : {}), ...(month ? { month } : {}) } }).then((r) => r.data);
 }
 
-export function bizAnalysisOverrunList(params?: { month?: string; cityId?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+export function bizAnalysisOverrunList(params?: { year?: string; month?: string; cityId?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
   return request.get('/biz/analysis/overrun-list', { params }).then((r) => r.data);
+}
+
+export function bizAnalysisYears(): Promise<{ items: string[] }> {
+  return request.get('/biz/analysis/years').then((r) => r.data);
 }
 
 export function bizAnalysisAlerts(cityId?: string): Promise<{ items: Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }> }> {
@@ -391,6 +434,9 @@ export function bizSettingUpdate(key: string, value: string): Promise<{ ok: bool
   return request.put(`/biz/settings/${key}`, { value }).then((r) => r.data);
 }
 
-export function bizOperationLogs(params?: { limit?: number; actionType?: string }): Promise<{ items: Array<Record<string, unknown>> }> {
+export function bizOperationLogs(params?: {
+  page?: number; pageSize?: number; limit?: number; actionType?: string; targetType?: string; operatorUserId?: string;
+  dateFrom?: string; dateTo?: string;
+}): Promise<{ items: Array<Record<string, unknown>>; total: number; page: number; pageSize: number }> {
   return request.get('/biz/admin/operation-logs', { params }).then((r) => r.data);
 }

@@ -7,6 +7,7 @@ import {
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { bizChangeOwnPassword, bizMe } from '@/api/biz.api';
 import { clearBizToken } from '@/utils/biz-auth';
+import { clearBizPermissionCache } from '@/utils/biz-permission';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -43,7 +44,7 @@ export default function BizLayout() {
   }, []);
 
   useEffect(() => {
-    bizMe().then(setMe).catch(() => { clearBizToken(); navigate('/biz/login'); });
+    bizMe().then(setMe).catch(() => { clearBizToken(); clearBizPermissionCache(); navigate('/biz/login'); });
   }, [navigate]);
 
   const permissions = useCallback(() => new Set(me?.permissions ?? []), [me]);
@@ -58,6 +59,7 @@ export default function BizLayout() {
       setPasswordOpen(false);
       passwordForm.resetFields();
       clearBizToken();
+      clearBizPermissionCache();
       navigate('/biz/login', { replace: true });
     } catch (error: unknown) {
       const responseMessage = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
@@ -70,6 +72,7 @@ export default function BizLayout() {
   const systemItems = filterByPermission([
     { key: '/biz/settings', label: '系统设置', icon: <SettingOutlined />, permission: 'operation.settings.read' },
     { key: '/biz/admin', label: '权限管理', icon: <ApartmentOutlined />, permission: 'operation.user.manage' },
+    { key: '/biz/audit-logs', label: '审计日志', icon: <FileTextOutlined />, permission: 'operation.user.manage' },
   ], permSet, isSuper);
 
   const analysisItems = filterByPermission([
@@ -100,6 +103,19 @@ export default function BizLayout() {
       ...systemItems,
     ] : []),
   ];
+  // 移动端不使用多级折叠菜单：抽屉空间有限，折叠状态容易让用户误以为导航丢失。
+  // 将所有可访问入口平铺展示，保证合同、成本、订单、完工及系统菜单始终可见。
+  const mobileMenuItems: MenuProps['items'] = [
+    { key: 'mobile-group-ops', type: 'group', label: '经营管理' },
+    ...analysisItems,
+    ...contractItems,
+    ...costItems,
+    ...completionItems,
+    ...(systemItems.length > 0 ? [
+      { key: 'mobile-group-sys', type: 'group' as const, label: '系统管理' },
+      ...systemItems,
+    ] : []),
+  ];
 
   const selectedKey = ['/biz/analysis', '/biz/operation', '/biz/costs', '/biz/orders', '/biz/offline-completions']
     .find((key) => location.pathname.startsWith(key)) ?? '/biz/operation';
@@ -123,9 +139,9 @@ export default function BizLayout() {
       theme="dark"
       style={{ borderInlineEnd: 'none' }}
       selectedKeys={selectedKey ? [String(selectedKey)] : []}
-      items={menuItems}
-      openKeys={visibleOpenKeys}
-      onOpenChange={(keys) => setOpenKeys(keys as string[])}
+      items={isMobile ? mobileMenuItems : menuItems}
+      openKeys={isMobile ? undefined : visibleOpenKeys}
+      onOpenChange={isMobile ? undefined : (keys) => setOpenKeys(keys as string[])}
       onClick={({ key }) => { if (String(key).startsWith('/biz/')) navigate(String(key)); if (isMobile) setMobileOpen(false); }}
     />
   );
@@ -153,7 +169,7 @@ export default function BizLayout() {
             menu={{ items: [
               { key: 'password', icon: <KeyOutlined />, label: '修改密码', onClick: () => setPasswordOpen(true) },
               { type: 'divider' as const },
-              { key: 'logout', label: '退出登录', onClick: () => { clearBizToken(); navigate('/biz/login'); } },
+              { key: 'logout', label: '退出登录', onClick: () => { clearBizToken(); clearBizPermissionCache(); navigate('/biz/login'); } },
             ] }}
           >
             <Space style={{ cursor: 'pointer' }}>

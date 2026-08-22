@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { PlatformRole } from '@biz-reporting/shared-types';
 import { BizMonthlyAggregateEntity } from '../aggregates/biz-monthly-aggregate.entity';
@@ -382,7 +382,7 @@ export class BizAggregateService {
 
   /** 合同库存指标（从合同+分配表出发，含零进度合同）：合同数=可见合同数；合同额=未带地市筛选时全额、带地市筛选时按该地市配额比例分摊（与 byCity 同一口径） */
   private async contractInventory(auth: BizAuthContext, cityId?: string): Promise<{ ids: Set<string>; amountFen: number }> {
-    const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
+    const contracts = await this.contractRepo.find({ where: { deletedAt: IsNull() }, select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
     const citiesByContract = new Map<string, Set<string>>();
     for (const a of allocs) {
@@ -412,11 +412,12 @@ export class BizAggregateService {
     return { ids: new Set(visible.map((c) => c.id)), amountFen };
   }
 
-  async overview(auth: BizAuthContext, month?: string, cityId?: string) {
+  async overview(auth: BizAuthContext, year?: string, month?: string, cityId?: string) {
     const qb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(qb, auth);
     if (cityId) qb.andWhere('a.cityId = :overviewCityId', { overviewCityId: cityId });
     if (month) qb.andWhere('a.businessMonth = :month', { month });
+    else if (year) qb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const rows = await qb.getMany();
     const total = (field: string) => rows.reduce((s, r) => s + Number(r[field as keyof BizMonthlyAggregateEntity] ?? 0), 0);
     // 合同库存指标从合同+分配表出发（含零进度合同：已建立分配但无订单/完工），经营金额仍来自汇总表
@@ -434,10 +435,11 @@ export class BizAggregateService {
     };
   }
 
-  async trend(auth: BizAuthContext, limit = 12, cityId?: string) {
+  async trend(auth: BizAuthContext, limit = 12, cityId?: string, year?: string) {
     const trendQb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(trendQb, auth);
     if (cityId) trendQb.andWhere('a.cityId = :trendCityId', { trendCityId: cityId });
+    if (year) trendQb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const rows = await trendQb
       .select('a.businessMonth', 'month')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
@@ -452,9 +454,9 @@ export class BizAggregateService {
     return rows.reverse();
   }
 
-  async byCity(auth: BizAuthContext, month?: string) {
+  async byCity(auth: BizAuthContext, year?: string, month?: string) {
     // 1) 合同+分配表出发：地市库存（含只有分配、无经营数据的地市）
-    const contracts = await this.contractRepo.find({ select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
+    const contracts = await this.contractRepo.find({ where: { deletedAt: IsNull() }, select: { id: true, provinceId: true, taxInclusiveAmountFen: true } });
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
     const citiesByContract = new Map<string, Set<string>>();
     for (const a of allocs) {
@@ -493,6 +495,7 @@ export class BizAggregateService {
       .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
       .groupBy('a.cityId');
     if (month) qb.andWhere('a.businessMonth = :month', { month });
+    else if (year) qb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const aggRows = await qb.getRawMany();
     const aggByCity = new Map(aggRows.map((r) => [String(r.cityId), r]));
     // 3) 合并输出
@@ -535,7 +538,7 @@ export class BizAggregateService {
 
   /** 合同到期/满额提醒（实时计算，不依赖手工 refresh-alerts 与汇总重算）：到期按 endDate+系统阈值，满额按订单/已审核线下完工明细实时聚合；按 auth 数据范围过滤 */
   async analysisAlerts(auth: BizAuthContext, cityId?: string): Promise<Array<Record<string, unknown>>> {
-    const contracts = await this.contractRepo.find({ order: { endDate: 'ASC' } });
+    const contracts = await this.contractRepo.find({ where: { deletedAt: IsNull() }, order: { endDate: 'ASC' } });
     const scope = auth.dataScope;
     // 预加载：合同→分配地市（city 范围可见性 + cityId 附加筛选）
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
@@ -587,10 +590,10 @@ export class BizAggregateService {
     return alerts.slice(0, 100);
   }
 
-  async overrunList(auth: BizAuthContext, month?: string, cityId?: string): Promise<Array<Record<string, unknown>>> {
-    // 合同超额：合同累计完工 > 合同额；地市超额：地市累计完工 > 分配额度（支持整页组合筛选 month/cityId）
+  async overrunList(auth: BizAuthContext, year?: string, month?: string, cityId?: string): Promise<Array<Record<string, unknown>>> {
+    // 合同超额：合同累计完工 > 合同额；地市超额：地市累计完工 > 分配额度（支持整页组合筛选 year/month/cityId）
     this.applyAggScope({ andWhere: () => undefined }, auth); // contract scope 统一拒绝（与 overview/trend 一致）
-    const contracts = await this.contractRepo.find();
+    const contracts = await this.contractRepo.find({ where: { deletedAt: IsNull() } });
     const allocs = await this.allocRepo.findBy({ status: 'active' });
     const citiesByContract = new Map<string, Set<string>>();
     for (const a of allocs) {
@@ -604,6 +607,7 @@ export class BizAggregateService {
       if (contractId) qb.andWhere('a.contractId = :contractId', { contractId });
       if (aggCityId) qb.andWhere('a.cityId = :aggCityId', { aggCityId });
       if (month) qb.andWhere('a.businessMonth = :month', { month });
+      else if (year) qb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
       return qb;
     };
     for (const contract of contracts) {
@@ -629,6 +633,16 @@ export class BizAggregateService {
       }
     }
     return result;
+  }
+
+  /** 可用年度（从汇总表业务月份动态生成；始终包含当前年度，支持历史/当前/未来年度；前端不写死） */
+  async availableYears(auth: BizAuthContext): Promise<string[]> {
+    const qb = this.aggRepo.createQueryBuilder('a');
+    this.applyAggScope(qb, auth);
+    const rows = await qb.select('DISTINCT SUBSTR(a.businessMonth, 1, 4)', 'year').getRawMany();
+    const years = new Set<string>(rows.map((r) => String(r.year)).filter((y) => /^\d{4}$/.test(y)));
+    years.add(String(new Date().getFullYear()));
+    return [...years].sort();
   }
 
   /** 合同维度累计（含成本/净利），供合同详情聚合 */

@@ -34,6 +34,22 @@ export class BizOperationLogEntity {
   @Column({ name: 'result_status', type: 'varchar', length: 16, default: 'success' })
   resultStatus: string;
 
+  /** 修改前摘要（JSON 字符串或可读文本；删除/批量操作审计用） */
+  @Column({ name: 'summary_before', type: 'text', nullable: true })
+  summaryBefore: string | null;
+
+  /** 修改后摘要（JSON 字符串或可读文本；删除/批量操作审计用） */
+  @Column({ name: 'summary_after', type: 'text', nullable: true })
+  summaryAfter: string | null;
+
+  /** 批量操作批次 UUID（单条操作为 NULL） */
+  @Column({ name: 'batch_id', type: 'varchar', length: 36, nullable: true })
+  batchId: string | null;
+
+  /** 操作失败原因（成功为 NULL） */
+  @Column({ name: 'error_message', type: 'text', nullable: true })
+  errorMessage: string | null;
+
   /** 操作时间（UTC 存储，页面按 UTC+8 显示） */
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;

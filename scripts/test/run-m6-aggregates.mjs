@@ -235,6 +235,24 @@ try {
   const jinanRow = res.data.items.find((r) => r.cityId === jinanId);
   assert.ok(jinanRow && Number(jinanRow.orderCompletionFen) === 200_000_00, 'AGG-007 by-city');
 
+  // ============ AGG-009 年度筛选 + 可用年度接口 ============
+  res = await api('GET', '/biz/analysis/years', { token: adminToken });
+  assert.equal(res.status, 200, 'AGG-009 years status');
+  const yearItems = res.data.items;
+  assert.ok(Array.isArray(yearItems) && yearItems.includes('2026'), 'AGG-009 years include 2026 (business month exists)');
+  assert.ok(yearItems.includes(String(new Date().getFullYear())), 'AGG-009 years include current year');
+  res = await api('GET', '/biz/analysis/overview?year=2026', { token: adminToken });
+  assert.equal(res.data.orderCompletionFen, 200_000_00, 'AGG-009 year=2026 overview order 200000.00');
+  assert.equal(res.data.offlineCompletionFen, 50_000_00, 'AGG-009 year=2026 overview offline 50000.00');
+  res = await api('GET', '/biz/analysis/trend?year=2026', { token: adminToken });
+  assert.ok(res.data.items.length >= 1 && Number(res.data.items[0].orderCompletionFen) === 200_000_00, 'AGG-009 trend year=2026');
+  res = await api('GET', '/biz/analysis/by-city?year=2026', { token: adminToken });
+  assert.ok(res.data.items.find((r) => r.cityId === jinanId && Number(r.orderCompletionFen) === 200_000_00), 'AGG-009 by-city year=2026');
+  res = await api('GET', '/biz/analysis/overview?year=2025', { token: adminToken });
+  assert.equal(res.data.orderCompletionFen, 0, 'AGG-009 year=2025 no data -> 0');
+  res = await api('GET', '/biz/analysis/overview?year=2026&month=2026-06', { token: adminToken });
+  assert.equal(res.data.orderCompletionFen, 200_000_00, 'AGG-009 year+month=2026-06 overview order 200000.00');
+
   // ============ AGG-003 订单批次作废退出统计 ============
   {
     const ds = createDirectDataSource();
@@ -325,7 +343,7 @@ try {
   assert.equal(res.data.finance.grossProfitFen, 132_000_00, 'DEV-053 gross 132000 (110w x 12%)');
   assert.equal(res.data.finance.referenceNetProfitFen, 102_000_00, 'DEV-053 reference net 132000-30000=102000');
 
-  console.log('M6_AGG_OK AGG-001..008 + REC-001..003 + CNS-001..003 all passed + DEV-055 settings + DEV-053 contract finance');
+  console.log('M6_AGG_OK AGG-001..009 + REC-001..003 + CNS-001..003 all passed + DEV-055 settings + DEV-053 contract finance');
 } finally {
   if (apiProcess && apiProcess.exitCode === null) apiProcess.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 1000));

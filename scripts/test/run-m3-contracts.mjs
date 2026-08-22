@@ -205,10 +205,16 @@ try {
   res = await api('POST', `/biz/contracts/${contractA.id}/allocations`, { token: superToken, body: { cityId: jinanId, quotaFen: 500_000_00 } });
   assert.equal(res.status, 201, 'CON-007 lower quota within limit OK');
 
-  // ============ CON-008 取消分配：admin 403 / super 200 ============
+  // ============ CON-008 取消分配：city_user 403 / admin 200（019 授权 admin）/ super 200 ============
+  res = await api('DELETE', `/biz/contracts/${contractA.id}/allocations/${dezhouId}`, { token: cityToken });
+  assert.equal(res.status, 403, 'CON-008 city_user must NOT cancel allocation (403)');
   res = await api('DELETE', `/biz/contracts/${contractA.id}/allocations/${dezhouId}`, { token: adminToken });
-  assert.equal(res.status, 403, 'CON-008 admin must NOT cancel allocation (403)');
-  res = await api('DELETE', `/biz/contracts/${contractA.id}/allocations/${dezhouId}`, { token: superToken });
+  assert.equal(res.status, 200, 'CON-008 admin cancels allocation OK (019 grants allocate_cancel)');
+  // 取消为软取消（保留历史行）；改用另一地市重新分配后再由 super 取消（验证 super 通配）
+  res = await api('GET', '/biz/admin/cities', { token: superToken });
+  const qingdaoId = res.data.items.find((c) => c.code === '370200').id;
+  await api('POST', `/biz/contracts/${contractA.id}/allocations`, { token: superToken, body: { cityId: qingdaoId, quotaFen: 100_000_00 } });
+  res = await api('DELETE', `/biz/contracts/${contractA.id}/allocations/${qingdaoId}`, { token: superToken });
   assert.equal(res.status, 200, 'super_admin cancels allocation OK');
 
   // ============ CON-009 超额真实入账：直接插入订单行，detail 进度 >100% ============
@@ -283,7 +289,62 @@ try {
   res = await api('GET', '/biz/contracts', { token: managerToken });
   assert.equal(res.status, 200, 'contract_manager can list contracts');
 
-  console.log('M3_CONTRACTS_OK CON-001..010 all passed, STA-001 void-void rejected, quota-sum rejected, super-only cancel, effective-rate history, city scope, overrun>100%');
+  // ============ CON-011 软删除/批量操作（delete/restore/batch-delete/batch-update/batch-restore/export） ============
+  // 新建 2 份草稿用于批量测试
+  const sdA = await api('POST', '/biz/contracts', { token: superToken, body: {
+    contractNo: 'HT-CON-SD-A', contractName: '软删A', taxInclusiveAmountFen: 100_000_00, provinceId: shandongId,
+  } });
+  const sdB = await api('POST', '/biz/contracts', { token: superToken, body: {
+    contractNo: 'HT-CON-SD-B', contractName: '软删B', taxInclusiveAmountFen: 100_000_00, provinceId: shandongId,
+  } });
+  assert.equal(sdA.status, 201, 'CON-011 create A');
+  assert.equal(sdB.status, 201, 'CON-011 create B');
+  // 单条删除：city_user 403；admin 200（021 已授权 admin）
+  res = await api('DELETE', `/biz/contracts/${sdA.data.id}`, { token: cityToken });
+  assert.equal(res.status, 403, 'CON-011 city_user cannot delete contract');
+  res = await api('DELETE', `/biz/contracts/${sdA.data.id}`, { token: adminToken });
+  assert.equal(res.status, 200, 'CON-011 admin soft-delete OK');
+  // list 默认不含已删除；includeDeleted=true 包含且带 deletedAt
+  res = await api('GET', '/biz/contracts', { token: adminToken });
+  assert.ok(!res.data.items.some((c) => c.id === sdA.data.id), 'CON-011 default list excludes deleted');
+  res = await api('GET', '/biz/contracts?includeDeleted=true', { token: adminToken });
+  const deletedRow = res.data.items.find((c) => c.id === sdA.data.id);
+  assert.ok(deletedRow && deletedRow.deletedAt, 'CON-011 includeDeleted shows deletedAt');
+  // 单条恢复
+  res = await api('POST', `/biz/contracts/${sdA.data.id}/restore`, { token: adminToken });
+  assert.equal(res.status, 201, 'CON-011 single restore OK');
+  // 批量删除（2 份）→ checked=2 deleted=2 skipped=0
+  res = await api('POST', '/biz/contracts/batch-delete', { token: adminToken, body: { ids: [sdA.data.id, sdB.data.id] } });
+  assert.equal(res.status, 201, 'CON-011 batch-delete status');
+  assert.equal(res.data.checked, 2, 'CON-011 batch-delete checked=2');
+  assert.equal(res.data.deleted.length, 2, 'CON-011 batch-delete all');
+  assert.equal(res.data.skipped.length, 0, 'CON-011 batch-delete no skip');
+  // 重复删除 → skipped 已删除（失败原因逐条返回）
+  res = await api('POST', '/biz/contracts/batch-delete', { token: adminToken, body: { ids: [sdA.data.id] } });
+  assert.equal(res.data.skipped.length, 1, 'CON-011 re-delete skipped with reason');
+  // 批量恢复
+  res = await api('POST', '/biz/contracts/batch-restore', { token: adminToken, body: { ids: [sdA.data.id, sdB.data.id] } });
+  assert.equal(res.status, 201, 'CON-011 batch-restore status');
+  assert.equal(res.data.restored.length, 2, 'CON-011 batch-restore all');
+  // 批量修改（改名+金额）
+  res = await api('POST', '/biz/contracts/batch-update', { token: adminToken, body: { ids: [sdA.data.id, sdB.data.id], dto: { contractName: '批量改名', taxInclusiveAmountFen: 200_000_00 } } });
+  assert.equal(res.status, 201, 'CON-011 batch-update status');
+  assert.equal(res.data.updated.length, 2, 'CON-011 batch-update all');
+  res = await api('GET', '/biz/contracts', { token: adminToken });
+  const renamed = res.data.items.filter((c) => [sdA.data.id, sdB.data.id].includes(c.id));
+  assert.ok(renamed.length === 2 && renamed.every((c) => c.contractName === '批量改名' && Number(c.taxInclusiveAmountFen) === 200_000_00), 'CON-011 batch-update applied');
+  // 导出：ids + includeDeleted 包含已删除行（先删一份再导出）
+  await api('DELETE', `/biz/contracts/${sdA.data.id}`, { token: adminToken });
+  res = await api('GET', `/biz/contracts/export?ids=${sdA.data.id},${sdB.data.id}&includeDeleted=true`, { token: adminToken });
+  assert.equal(res.status, 200, 'CON-011 export status');
+  assert.ok(typeof res.data === 'string' && res.data.includes('HT-CON-SD-A') && res.data.includes('已删除'), 'CON-011 export csv includes deleted row');
+  assert.ok(res.data.includes('HT-CON-SD-B'), 'CON-011 export csv includes normal row');
+  // 数据范围：city_user 有 export 权限（012 种子），但只能导出可见合同（无分配的地市不可见）
+  res = await api('GET', `/biz/contracts/export?ids=${sdA.data.id}`, { token: cityToken });
+  assert.equal(res.status, 200, 'CON-011 city_user export allowed (012 grants export)');
+  assert.ok(typeof res.data === 'string' && !res.data.includes('HT-CON-SD-A'), 'CON-011 city_user export excludes non-visible contract');
+
+  console.log('M3_CONTRACTS_OK CON-001..011 all passed, STA-001 void-void rejected, quota-sum rejected, super-only cancel, effective-rate history, city scope, overrun>100%, soft-delete/batch ops');
 } finally {
   if (apiProcess && apiProcess.exitCode === null) apiProcess.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 500));

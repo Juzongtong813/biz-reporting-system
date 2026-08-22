@@ -111,6 +111,7 @@ export class RbacService {
       return { scopeType: 'all', provinceIds: [], cityId: null };
     }
     if (user.roleCode === PlatformRole.CONTRACT_MANAGER) {
+      // 基线 02 §5 / M2 合约：contract_manager 无业务明细范围（仅合同对象范围）
       return { scopeType: 'contract', provinceIds: [], cityId: null };
     }
     if (user.roleCode === PlatformRole.CITY_USER) {

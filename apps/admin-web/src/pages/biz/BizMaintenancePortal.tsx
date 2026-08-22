@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Empty, Result, Spin, Typography } from 'antd';
+import axios from 'axios';
 import { ApartmentOutlined, BarChartOutlined, TeamOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { bizMe, bizPortalModules, type BizModuleItem } from '@/api/biz.api';
 import { clearBizToken } from '@/utils/biz-auth';
+import { clearBizPermissionCache } from '@/utils/biz-permission';
 
 const { Title, Text } = Typography;
 
@@ -28,8 +30,20 @@ export default function BizMaintenancePortal() {
         setUserName(me.username);
         setModules(data.level2.filter((m) => m.code !== 'operation'));
         setLoading(false);
-      } catch {
-        setError('登录已失效，请重新登录');
+      } catch (error: unknown) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        if (status === 401) {
+          clearBizToken();
+          clearBizPermissionCache();
+          setError('登录已失效，请重新登录');
+        } else if (status === 403) {
+          setError('当前账号没有访问维护门户的权限，请联系管理员配置角色权限');
+        } else {
+          const detail = axios.isAxiosError(error)
+            ? String(error.response?.data?.message ?? error.message ?? '')
+            : '';
+          setError(detail ? `门户加载失败：${detail}` : '门户加载失败，请稍后重试');
+        }
         setLoading(false);
       }
     })();
@@ -37,7 +51,7 @@ export default function BizMaintenancePortal() {
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><Spin /></div>;
   if (error) return (
-    <Result status="403" title={error} extra={<Button type="primary" onClick={() => { clearBizToken(); navigate('/biz/login'); }}>返回登录</Button>} />
+    <Result status="403" title={error} extra={<Button type="primary" onClick={() => { clearBizToken(); clearBizPermissionCache(); navigate('/biz/login'); }}>返回登录</Button>} />
   );
 
   return (

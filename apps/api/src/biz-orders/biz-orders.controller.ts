@@ -69,14 +69,14 @@ export class BizOrdersController {
   @Post('batches/:id/void')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_BATCH_VOID)
   async voidBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() body: { reason?: string }) {
-    await this.service.voidBatch(auth.userId, auth.isSuperAdmin, id, body?.reason ?? '');
+    await this.service.voidBatch(auth, id, body?.reason ?? '');
     return { ok: true };
   }
 
   @Post('batches/:id/restore')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_BATCH_RESTORE)
   async restoreBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
-    await this.service.restoreBatch(auth.userId, auth.isSuperAdmin, id);
+    await this.service.restoreBatch(auth, id);
     return { ok: true };
   }
 

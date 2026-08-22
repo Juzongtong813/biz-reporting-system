@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Not, In } from 'typeorm';
+import { DataSource, Repository, Not, In, IsNull } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
 import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole } from '@biz-reporting/shared-types';
@@ -97,10 +97,24 @@ export class BizContractsService {
 
   // ================= 基础 =================
 
-  private async recordOp(operatorId: string, actionType: string, targetId: string, resultStatus = 'success'): Promise<void> {
+  private async recordOp(
+    operatorId: string,
+    actionType: string,
+    targetId: string,
+    resultStatus = 'success',
+    extra?: { targetType?: string; summaryBefore?: string; summaryAfter?: string; batchId?: string; errorMessage?: string },
+  ): Promise<void> {
     await this.opLogRepo.save({
-      id: randomUUID(), operatorUserId: operatorId, actionType,
-      targetType: 'contract', targetId, resultStatus,
+      id: randomUUID(),
+      operatorUserId: operatorId,
+      actionType,
+      targetType: extra?.targetType ?? 'contract',
+      targetId,
+      resultStatus,
+      summaryBefore: extra?.summaryBefore ?? null,
+      summaryAfter: extra?.summaryAfter ?? null,
+      batchId: extra?.batchId ?? null,
+      errorMessage: extra?.errorMessage ?? null,
     });
   }
 
@@ -126,12 +140,14 @@ export class BizContractsService {
 
   // ================= 列表与详情 =================
 
-  /** 合同列表（按数据范围过滤；city_user 仅已分配本地市） */
-  async list(auth: BizAuthContext, filter: { provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<BizContractEntity[]> {
+  /** 合同列表（按数据范围过滤；city_user 仅已分配本地市；默认排除软删除，includeDeleted=true 时展示已删除可恢复） */
+  async list(auth: BizAuthContext, filter: { provinceId?: string; cityId?: string; status?: string; keyword?: string; includeDeleted?: boolean }): Promise<BizContractEntity[]> {
     await this.rbac.assertProvinceScope(auth, filter.provinceId);
     if (filter.cityId) await this.rbac.assertCityScope(auth, filter.cityId);
 
     const query = this.contractRepo.createQueryBuilder('c');
+    // 软删除：默认仅看未删除；"已删除"视图显式包含
+    if (!filter.includeDeleted) query.andWhere('c.deletedAt IS NULL');
     if (filter.status) query.andWhere('c.status = :status', { status: filter.status });
     if (filter.provinceId) query.andWhere('c.provinceId = :provinceId', { provinceId: filter.provinceId });
     const keyword = filter.keyword?.trim();
@@ -705,17 +721,181 @@ export class BizContractsService {
     return contract;
   }
 
-  /** 恢复已作废合同：voided → active（仅 super_admin；沿用原汇总选择，不自动恢复已取消分配） */
+  /** 恢复合同：支持两类场景
+   *  - 已软删除（deletedAt 非 NULL）：清除删除标记，回到删除前业务状态（草稿/执行中/已完成/已作废均可），保留删除记录；
+   *  - 已作废（status=voided 且未软删除）：voided → active，沿用原汇总选择，不自动恢复已取消分配。
+   * 权限：operation.contract.restore（super_admin 通配）。
+   */
   async restore(auth: BizAuthContext, id: string): Promise<BizContractEntity> {
-    if (!auth.isSuperAdmin) throw new ForbiddenException('仅 super_admin 可恢复合同');
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.restore')) {
+      throw new ForbiddenException('当前账号无恢复合同权限');
+    }
     const contract = await this.getContractOrFail(id);
-    if (contract.status !== ContractStatus.VOIDED) throw new BadRequestException('仅已作废合同可恢复');
-    contract.status = ContractStatus.ACTIVE;
+    const before = `status=${contract.status};deleted=${contract.deletedAt ? 'Y' : 'N'}`;
+    if (contract.deletedAt) {
+      contract.deletedAt = null;
+      contract.deletedBy = null;
+      contract.deletedBatchId = null;
+    } else if (contract.status === ContractStatus.VOIDED) {
+      contract.status = ContractStatus.ACTIVE;
+    } else {
+      throw new BadRequestException('仅已删除或已作废合同可恢复');
+    }
     contract.versionNo += 1;
     contract.updatedBy = auth.userId;
     await this.contractRepo.save(contract);
-    await this.recordOp(auth.userId, 'contract.restore', id);
+    await this.recordOp(auth.userId, 'contract.restore', id, 'success', { summaryBefore: before, summaryAfter: `status=${contract.status};deleted=N` });
     return contract;
+  }
+
+  // ================= 真正删除（软删除，保留记录与恢复入口） =================
+
+  /** 单条删除（软删除）：标记 deletedAt/deletedBy，保留删除记录；与作废(void)解耦，不再受合同状态限制。 */
+  async remove(auth: BizAuthContext, id: string): Promise<BizContractEntity> {
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.delete')) {
+      throw new ForbiddenException('当前账号无删除合同权限');
+    }
+    const contract = await this.getContractOrFail(id);
+    if (contract.deletedAt) throw new BadRequestException('合同已处于删除状态');
+    const before = `contractNo=${contract.contractNo};status=${contract.status}`;
+    contract.deletedAt = new Date();
+    contract.deletedBy = auth.userId;
+    contract.deletedBatchId = null;
+    contract.versionNo += 1;
+    contract.updatedBy = auth.userId;
+    await this.contractRepo.save(contract);
+    await this.recordOp(auth.userId, 'contract.delete', id, 'success', { summaryBefore: before, summaryAfter: `deletedAt=${contract.deletedAt.toISOString()}` });
+    return contract;
+  }
+
+  /** 批量删除（软删除）：逐条校验并标记；返回成功/跳过明细，整批写入同一 batchId 便于审计。 */
+  async batchRemove(auth: BizAuthContext, ids: string[]): Promise<{ checked: number; deleted: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.batch_delete')) {
+      throw new ForbiddenException('当前账号无批量删除合同权限');
+    }
+    const uniqueIds = [...new Set((ids ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('请至少选择一份合同');
+    const batchId = randomUUID();
+    const contracts = await this.contractRepo.findBy({ id: In(uniqueIds) });
+    const byId = new Map(contracts.map((c) => [c.id, c]));
+    const skipped: Array<{ id: string; contractNo?: string; reason: string }> = [];
+    const deleted: string[] = [];
+    for (const id of uniqueIds) {
+      const contract = byId.get(id);
+      if (!contract) { skipped.push({ id, reason: '合同不存在' }); continue; }
+      if (contract.deletedAt) { skipped.push({ id, contractNo: contract.contractNo, reason: '合同已删除' }); continue; }
+      contract.deletedAt = new Date();
+      contract.deletedBy = auth.userId;
+      contract.deletedBatchId = batchId;
+      contract.versionNo += 1;
+      contract.updatedBy = auth.userId;
+      await this.contractRepo.save(contract);
+      await this.recordOp(auth.userId, 'contract.batch_delete', id, 'success', {
+        targetType: 'contract_batch', batchId, summaryBefore: `contractNo=${contract.contractNo};status=${contract.status}`, summaryAfter: `deletedAt=${contract.deletedAt.toISOString()}`,
+      });
+      deleted.push(id);
+    }
+    if (deleted.length) await this.recordOp(auth.userId, 'contract.batch_delete_summary', batchId, 'success', { targetType: 'contract_batch', batchId, summaryAfter: `deleted=${deleted.length};skipped=${skipped.length}` });
+    return { checked: uniqueIds.length, deleted, skipped };
+  }
+
+  /** 批量恢复：清除所选已删除合同的删除标记（沿用各自业务状态）。 */
+  async batchRestore(auth: BizAuthContext, ids: string[]): Promise<{ checked: number; restored: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.restore')) {
+      throw new ForbiddenException('当前账号无恢复合同权限');
+    }
+    const uniqueIds = [...new Set((ids ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('请至少选择一份合同');
+    const batchId = randomUUID();
+    const contracts = await this.contractRepo.findBy({ id: In(uniqueIds) });
+    const byId = new Map(contracts.map((c) => [c.id, c]));
+    const skipped: Array<{ id: string; contractNo?: string; reason: string }> = [];
+    const restored: string[] = [];
+    for (const id of uniqueIds) {
+      const contract = byId.get(id);
+      if (!contract) { skipped.push({ id, reason: '合同不存在' }); continue; }
+      if (!contract.deletedAt) { skipped.push({ id, contractNo: contract.contractNo, reason: '合同未删除' }); continue; }
+      contract.deletedAt = null;
+      contract.deletedBy = null;
+      contract.deletedBatchId = null;
+      contract.versionNo += 1;
+      contract.updatedBy = auth.userId;
+      await this.contractRepo.save(contract);
+      await this.recordOp(auth.userId, 'contract.batch_restore', id, 'success', {
+        targetType: 'contract_batch', batchId, summaryBefore: `deleted=Y;status=${contract.status}`, summaryAfter: 'deleted=N',
+      });
+      restored.push(id);
+    }
+    if (restored.length) await this.recordOp(auth.userId, 'contract.batch_restore_summary', batchId, 'success', { targetType: 'contract_batch', batchId, summaryAfter: `restored=${restored.length};skipped=${skipped.length}` });
+    return { checked: uniqueIds.length, restored, skipped };
+  }
+
+  /** 批量修改：对所选合同统一更新允许字段（合同名称/起止日期/未锁定合同额）。逐条返回成功/失败。 */
+  async batchUpdate(auth: BizAuthContext, ids: string[], dto: UpdateContractDto): Promise<{ checked: number; updated: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.batch_update')) {
+      throw new ForbiddenException('当前账号无批量修改合同权限');
+    }
+    const uniqueIds = [...new Set((ids ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (!uniqueIds.length) throw new BadRequestException('请至少选择一份合同');
+    const contracts = await this.contractRepo.findBy({ id: In(uniqueIds) });
+    const byId = new Map(contracts.map((c) => [c.id, c]));
+    const skipped: Array<{ id: string; contractNo?: string; reason: string }> = [];
+    const updated: string[] = [];
+    for (const id of uniqueIds) {
+      const contract = byId.get(id);
+      if (!contract) { skipped.push({ id, reason: '合同不存在' }); continue; }
+      if (contract.deletedAt) { skipped.push({ id, contractNo: contract.contractNo, reason: '已删除合同不可修改' }); continue; }
+      const before = `name=${contract.contractName};start=${contract.startDate};end=${contract.endDate};amount=${contract.taxInclusiveAmountFen}`;
+      try {
+        if (dto.contractName !== undefined) contract.contractName = dto.contractName;
+        if (dto.startDate !== undefined) contract.startDate = dto.startDate;
+        if (dto.endDate !== undefined) contract.endDate = dto.endDate;
+        if (dto.taxInclusiveAmountFen !== undefined) {
+          if (contract.amountLocked) throw new BadRequestException('合同额已锁定，不可修改');
+          contract.taxInclusiveAmountFen = Math.round(dto.taxInclusiveAmountFen);
+        }
+        if (dto.taxExclusiveAmountFen !== undefined) contract.taxExclusiveAmountFen = dto.taxExclusiveAmountFen != null ? Math.round(dto.taxExclusiveAmountFen) : null;
+        contract.versionNo += 1;
+        contract.updatedBy = auth.userId;
+        await this.contractRepo.save(contract);
+        await this.recordOp(auth.userId, 'contract.batch_update', id, 'success', {
+          summaryBefore: before, summaryAfter: `name=${contract.contractName};start=${contract.startDate};end=${contract.endDate};amount=${contract.taxInclusiveAmountFen}`,
+        });
+        updated.push(id);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        skipped.push({ id, contractNo: contract.contractNo, reason });
+        await this.recordOp(auth.userId, 'contract.batch_update', id, 'failed', { errorMessage: reason, summaryBefore: before });
+      }
+    }
+    return { checked: uniqueIds.length, updated, skipped };
+  }
+
+  /** 导出合同：返回 CSV 字符串（含已删除由 includeDeleted 控制）。权限 operation.contract.export。 */
+  async exportCsv(auth: BizAuthContext, filter: { ids?: string[]; includeDeleted?: boolean; provinceId?: string; cityId?: string; status?: string; keyword?: string }): Promise<string> {
+    if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.export')) {
+      throw new ForbiddenException('当前账号无导出合同权限');
+    }
+    const contracts = await this.list(auth, {
+      ...(filter.ids?.length
+        ? { includeDeleted: filter.includeDeleted }
+        : { provinceId: filter.provinceId, cityId: filter.cityId, status: filter.status, keyword: filter.keyword, includeDeleted: filter.includeDeleted }),
+    });
+    const rows = filter.ids?.length ? contracts.filter((c) => filter.ids!.includes(c.id)) : contracts;
+    const header = ['合同编号', '合同名称', '含税合同额(元)', '状态', '开始日期', '结束日期', '是否删除', '创建人', '更新时间'];
+    const escape = (value: unknown) => {
+      const text = value == null ? '' : String(value);
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const lines = [header.join(',')];
+    for (const c of rows) {
+      lines.push([
+        c.contractNo, c.contractName, (Number(c.taxInclusiveAmountFen) / 100).toFixed(2), c.status,
+        c.startDate ?? '', c.endDate ?? '', c.deletedAt ? '已删除' : '否', c.createdBy, c.updatedAt?.toISOString?.() ?? '',
+      ].map(escape).join(','));
+    }
+    await this.recordOp(auth.userId, 'contract.export', filter.ids?.length ? filter.ids.join(',') : 'all', 'success', { targetType: 'contract_batch', summaryAfter: `count=${rows.length}` });
+    return '﻿' + lines.join('\n');
   }
 
   // ================= 地市分配 =================

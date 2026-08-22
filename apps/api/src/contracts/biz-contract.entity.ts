@@ -73,6 +73,18 @@ export class BizContractEntity {
   @Column({ name: 'version_no', type: 'int', default: 1 })
   versionNo: number;
 
+  /** 软删除时间：非 NULL 表示合同已被"删除"（保留删除记录，可恢复）；与作废(void)状态机解耦 */
+  @Column({ name: 'deleted_at', type: 'datetime', nullable: true })
+  deletedAt: Date | null;
+
+  /** 删除操作账号 UUID（biz_users） */
+  @Column({ name: 'deleted_by', type: 'varchar', length: 36, nullable: true })
+  deletedBy: string | null;
+
+  /** 批量删除批次 UUID（单条删除为 NULL） */
+  @Column({ name: 'deleted_batch_id', type: 'varchar', length: 36, nullable: true })
+  deletedBatchId: string | null;
+
   /** 创建人 UUID（biz_users） */
   @Column({ name: 'created_by', type: 'varchar', length: 36 })
   createdBy: string;

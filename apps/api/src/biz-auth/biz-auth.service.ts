@@ -90,6 +90,16 @@ export class BizAuthService {
         route, subject, context: ctx, outcome: 'failed', reasonCode: 'BAD_CREDENTIALS',
         userId: user?.id ?? null,
       });
+      if (user) {
+        await this.opLogRepo.save({
+          id: randomUUID(),
+          operatorUserId: user.id,
+          actionType: 'auth.login.failed',
+          targetType: 'user',
+          targetId: user.id,
+          resultStatus: 'failed',
+        });
+      }
       throw new UnauthorizedException('用户名或密码错误');
     }
 
@@ -102,6 +112,14 @@ export class BizAuthService {
       sub: user.id,
       kind: 'biz',
       authVersion: user.authVersion,
+    });
+    await this.opLogRepo.save({
+      id: randomUUID(),
+      operatorUserId: user.id,
+      actionType: 'auth.login.success',
+      targetType: 'user',
+      targetId: user.id,
+      resultStatus: 'success',
     });
     const expiresIn = Number(process.env.JWT_EXPIRES_IN?.replace(/h$/, '') ?? 8) * 3600;
 

@@ -4,7 +4,7 @@ import { useBizPermission } from '@/utils/biz-permission';
 import {
   Alert, Badge, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, Upload, message,
 } from 'antd';
-import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import * as XLSX from 'xlsx';
 import {
@@ -12,7 +12,7 @@ import {
   bizContractList, bizContractCreate, bizContractDetail, bizContractUpdate,
   bizContractActivate, bizContractBatchActivate, bizContractBatchClearDrafts, bizContractVoid, bizContractUpsertAllocation,
   bizContractCancelAllocation, bizContractAddFeeRate,
-  bizContractUpload,
+  bizContractUpload, bizContractDelete, bizContractBatchDelete, bizContractBatchUpdate, bizContractBatchRestore, bizContractRestore, bizContractExport,
   type BizContractDetail, type BizContractItem,
 } from '@/api/biz.api';
 
@@ -27,6 +27,12 @@ const STATUS_COLOR: Record<string, string> = {
 const ALERT_LABEL: Record<string, string> = {
   nearly_full: '接近满额', overfull: '满额/超额', expiring: '即将到期', expired: '已到期', pending_complete: '待完成确认',
 };
+
+/** 统一提取后端错误消息 */
+function errorText(e: unknown, fallback: string): string {
+  const detail = (e as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+  return Array.isArray(detail) ? detail.join('；') : (detail ?? fallback);
+}
 
 function fenToYuan(fen: number): string {
   return (fen / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -43,6 +49,12 @@ export default function BizContracts() {
   const canUploadOrder = useBizPermission('operation.order.upload');
   const canCreateContract = useBizPermission('operation.contract.create');
   const canUpdateContract = useBizPermission('operation.contract.update');
+  const canDeleteContract = useBizPermission('operation.contract.delete');
+  const canBatchCreate = useBizPermission('operation.contract.batch_create');
+  const canBatchUpdate = useBizPermission('operation.contract.batch_update');
+  const canBatchDelete = useBizPermission('operation.contract.batch_delete');
+  const canRestoreContract = useBizPermission('operation.contract.restore');
+  const canExportContract = useBizPermission('operation.contract.export');
   const [items, setItems] = useState<BizContractItem[]>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
@@ -50,6 +62,7 @@ export default function BizContracts() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [keyword, setKeyword] = useState('');
   const [appliedKeyword, setAppliedKeyword] = useState('');
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
   const [batchRunning, setBatchRunning] = useState(false);
@@ -62,12 +75,18 @@ export default function BizContracts() {
   const [createForm] = Form.useForm();
   const [allocForm] = Form.useForm();
   const [rateForm] = Form.useForm();
+  const [editForm] = Form.useForm();
+  const [editOpen, setEditOpen] = useState(false);
+  const [editBatch, setEditBatch] = useState(false);
+  const [editTarget, setEditTarget] = useState<BizContractItem | null>(null);
+  const [batchDetail, setBatchDetail] = useState<{ title: string; checked: number; doneLabel: string; done: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> } | null>(null);
+  const [batchDetailOpen, setBatchDetailOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [list, p, c] = await Promise.all([
-        bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}) }),
+        bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}), includeDeleted }),
         bizAdminProvinces().catch(() => ({ items: [] })),
         bizAdminCities().catch(() => ({ items: [] })),
       ]);
@@ -81,11 +100,12 @@ export default function BizContracts() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, appliedKeyword]);
+  }, [statusFilter, appliedKeyword, includeDeleted]);
 
   useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => { setSelectedRowKeys((keys) => keys.filter((key) => items.some((item) => item.id === key && item.status === 'draft'))); }, [items]);
+  // 跨分页保留选中：仅剔除列表已不存在的行（含删除后消失），不再按 draft 限制
+  useEffect(() => { setSelectedRowKeys((keys) => keys.filter((key) => items.some((item) => item.id === key))); }, [items]);
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
@@ -228,6 +248,130 @@ export default function BizContracts() {
     },
   });
 
+  /** 批量结果明细弹窗（删除/恢复/编辑通用：返回成功/失败数量 + 每条失败原因） */
+  const showBatchDetail = (title: string, checked: number, doneLabel: string, done: string[], skipped: Array<{ id: string; contractNo?: string; reason: string }>) => {
+    setBatchDetail({ title, checked, doneLabel, done, skipped });
+    setBatchDetailOpen(true);
+  };
+
+  const onDelete = (row: BizContractItem) => Modal.confirm({
+    title: '删除合同',
+    content: `将软删除合同「${row.contractNo}」（保留记录与恢复入口）。确定删除？`,
+    okText: '确认删除',
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      try {
+        await bizContractDelete(row.id);
+        message.success('合同已删除');
+        if (detail?.contract.id === row.id) setDetailOpen(false);
+        setSelectedRowKeys((keys) => keys.filter((k) => k !== row.id));
+        await load();
+      } catch (e) { message.error(errorText(e, '删除失败')); }
+    },
+  });
+
+  const onRestore = async (id: string) => {
+    try {
+      await bizContractRestore(id);
+      message.success('合同已恢复');
+      if (detail?.contract.id === id) await openDetail(id);
+      await load();
+    } catch (e) { message.error(errorText(e, '恢复失败')); }
+  };
+
+  const onBatchDelete = () => Modal.confirm({
+    title: '批量删除合同',
+    content: `将软删除已选的 ${selectedRowKeys.length} 份合同（保留记录与恢复入口）。确定执行？`,
+    okText: '确认删除',
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      setBatchRunning(true);
+      try {
+        const result = await bizContractBatchDelete(selectedRowKeys.map(String));
+        showBatchDetail('批量删除结果', result.checked, '已删除', result.deleted, result.skipped);
+        setSelectedRowKeys([]);
+        await load();
+      } catch (e) { message.error(errorText(e, '批量删除失败')); } finally { setBatchRunning(false); }
+    },
+  });
+
+  const onBatchRestore = () => Modal.confirm({
+    title: '批量恢复合同',
+    content: `将恢复已选的 ${selectedRowKeys.length} 份已删除合同。确定执行？`,
+    okText: '确认恢复',
+    onOk: async () => {
+      setBatchRunning(true);
+      try {
+        const result = await bizContractBatchRestore(selectedRowKeys.map(String));
+        showBatchDetail('批量恢复结果', result.checked, '已恢复', result.restored, result.skipped);
+        setSelectedRowKeys([]);
+        await load();
+      } catch (e) { message.error(errorText(e, '批量恢复失败')); } finally { setBatchRunning(false); }
+    },
+  });
+
+  const openEdit = (row: BizContractItem) => {
+    setEditTarget(row);
+    setEditBatch(false);
+    editForm.setFieldsValue({
+      contractName: row.contractName,
+      startDate: row.startDate ?? '',
+      endDate: row.endDate ?? '',
+      taxInclusiveAmountFen: (Number(row.taxInclusiveAmountFen) || 0) / 100,
+    });
+    setEditOpen(true);
+  };
+
+  const openBatchEdit = () => {
+    setEditTarget(null);
+    setEditBatch(true);
+    editForm.resetFields();
+    setEditOpen(true);
+  };
+
+  const onEditSubmit = async (values: Record<string, unknown>) => {
+    const dto: Record<string, unknown> = {};
+    if (values.contractName !== undefined && String(values.contractName).trim()) dto.contractName = String(values.contractName).trim();
+    if (values.startDate !== undefined) dto.startDate = values.startDate ? dayjs(String(values.startDate)).format('YYYY-MM-DD') : null;
+    if (values.endDate !== undefined) dto.endDate = values.endDate ? dayjs(String(values.endDate)).format('YYYY-MM-DD') : null;
+    if (values.taxInclusiveAmountFen !== undefined && values.taxInclusiveAmountFen !== null && String(values.taxInclusiveAmountFen) !== '') dto.taxInclusiveAmountFen = Math.round(Number(values.taxInclusiveAmountFen) * 100);
+    try {
+      if (editTarget) {
+        await bizContractUpdate(editTarget.id, dto);
+        message.success('合同已更新');
+        if (detail?.contract.id === editTarget.id) await openDetail(editTarget.id);
+        setEditOpen(false);
+        await load();
+      } else {
+        const ids = selectedRowKeys.map(String);
+        if (!ids.length) { message.warning('请先选择合同'); return; }
+        setBatchRunning(true);
+        try {
+          const result = await bizContractBatchUpdate(ids, dto);
+          showBatchDetail('批量编辑结果', result.checked, '已更新', result.updated, result.skipped);
+          setEditOpen(false);
+          setSelectedRowKeys([]);
+          await load();
+        } finally { setBatchRunning(false); }
+      }
+    } catch (e) { message.error(errorText(e, editTarget ? '保存失败' : '批量编辑失败')); }
+  };
+
+  const onBatchExport = async () => {
+    const ids = selectedRowKeys.map(String);
+    if (!ids.length) { message.warning('请先选择合同'); return; }
+    setBatchRunning(true);
+    try {
+      const csv = await bizContractExport({ ids, ...(includeDeleted ? { includeDeleted: true } : {}) });
+      const blob = new Blob([csv.startsWith('\uFEFF') ? csv : '\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `合同导出-选中${ids.length}份.csv`;
+      a.click(); URL.revokeObjectURL(url);
+      message.success(`已导出 ${ids.length} 份合同`);
+    } catch (e) { message.error(errorText(e, '导出失败')); } finally { setBatchRunning(false); }
+  };
+
   const onVoid = (id: string) => {
     Modal.confirm({
       title: '作废合同',
@@ -300,20 +444,34 @@ export default function BizContracts() {
     { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (v: string, row: BizContractItem) => <a data-testid={`contract-detail-${v}`} onClick={() => openDetail(row.id)}>{v}</a> },
     { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
     { title: '含税合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'amount', render: (v: number) => fenToYuan(Number(v)) },
-    { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v] ?? v}</Tag> },
+    {
+      title: '状态', dataIndex: 'status', key: 'status',
+      render: (v: string, row: BizContractItem) => (
+        <Space size={4}>
+          {row.deletedAt && <Tag color="red">已删除</Tag>}
+          <Tag color={STATUS_COLOR[v]}>{STATUS_LABEL[v] ?? v}</Tag>
+        </Space>
+      ),
+    },
     {
       title: '预警', dataIndex: 'tags', key: 'tags',
       render: (tags?: string[] | string | null) => (Array.isArray(tags) ? tags : []).map((t) => <Tag key={t} color="orange">{ALERT_LABEL[t] ?? t}</Tag>),
     },
     {
-      title: '操作', key: 'action', width: 200,
-      render: (_: unknown, row: BizContractItem) => (
-        <Space wrap>
-          <Button size="small" onClick={() => openDetail(row.id)}>详情</Button>
-          {row.status === 'draft' && <Button size="small" type="primary" onClick={() => onActivate(row.id)}>生效</Button>}
-          {['active', 'completed'].includes(row.status) && <Button size="small" danger onClick={() => onVoid(row.id)}>作废</Button>}
-        </Space>
-      ),
+      title: '操作', key: 'action', width: 280,
+      render: (_: unknown, row: BizContractItem) => {
+        const isDeleted = Boolean(row.deletedAt);
+        return (
+          <Space wrap>
+            <Button size="small" onClick={() => openDetail(row.id)}>详情</Button>
+            {!isDeleted && canUpdateContract === true && <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>编辑</Button>}
+            {!isDeleted && row.status === 'draft' && <Button size="small" type="primary" onClick={() => onActivate(row.id)}>生效</Button>}
+            {!isDeleted && ['active', 'completed'].includes(row.status) && <Button size="small" danger onClick={() => onVoid(row.id)}>作废</Button>}
+            {!isDeleted && canDeleteContract === true && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(row)}>删除</Button>}
+            {isDeleted && canRestoreContract === true && <Button size="small" icon={<UndoOutlined />} onClick={() => onRestore(row.id)}>恢复</Button>}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -326,10 +484,15 @@ export default function BizContracts() {
         <Space className="v3-page-head-actions" wrap>
           {canUploadOrder === true && <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>}
           {canCreateContract === true && <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载模板</Button>}
-          {canCreateContract === true && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入合同</Button>}
+          {(canCreateContract === true || canBatchCreate === true) && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入合同</Button>}
           {canUpdateContract === true && <Button disabled={!selectedRowKeys.length} loading={batchRunning} onClick={() => void runBatch(true)}>批量校验</Button>}
           {canUpdateContract === true && <Button type="primary" disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchActivate}>批量生效</Button>}
           {canUpdateContract === true && <Button danger icon={<DeleteOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchClear}>批量清空</Button>}
+          {canBatchUpdate === true && <Button icon={<EditOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={openBatchEdit}>批量编辑</Button>}
+          {canBatchDelete === true && <Button danger icon={<DeleteOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchDelete}>批量删除</Button>}
+          {canRestoreContract === true && <Button icon={<UndoOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchRestore}>批量恢复</Button>}
+          {canExportContract === true && <Button icon={<ExportOutlined />} disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchExport}>导出选中</Button>}
+          <Button type={includeDeleted ? 'primary' : 'default'} onClick={() => setIncludeDeleted((v) => !v)}>显示已删除</Button>
           <Input.Search
             allowClear
             placeholder="搜索合同编号或名称"
@@ -360,10 +523,11 @@ export default function BizContracts() {
           pageSizeOptions: ['10', '20', '50', '100'],
           onChange: (current, pageSize) => setPagination({ current, pageSize }),
           showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`,
-        }} rowSelection={canUpdateContract === true ? {
+        }} rowSelection={canUpdateContract === true || canBatchUpdate === true || canBatchDelete === true || canRestoreContract === true || canExportContract === true ? {
           selectedRowKeys,
           onChange: setSelectedRowKeys,
-          getCheckboxProps: (record) => ({ disabled: record.status !== 'draft' }),
+          preserveSelectedRowKeys: true,
+          selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
         } : undefined} />
       </Card>
 
@@ -397,6 +561,42 @@ export default function BizContracts() {
           <p className="ant-upload-hint">识别合同编号、地市分配额和管理费率；同一合同的多地市行会合并为一份合同，并自动生成地市分配和费率记录。</p>
         </Upload.Dragger>
         {importing && <Progress percent={65} status="active" style={{ marginTop: 16 }} />}
+      </Modal>
+
+      {/* 编辑/批量编辑合同 */}
+      <Modal
+        title={editBatch ? `批量编辑（已选 ${selectedRowKeys.length} 份合同）` : `编辑合同 ${editTarget?.contractNo ?? ''}`}
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={() => editForm.submit()}
+        confirmLoading={batchRunning}
+        width={460}
+      >
+        <Form form={editForm} layout="vertical" onFinish={onEditSubmit}>
+          <Form.Item name="contractName" label="合同名称"><Input placeholder="留空则不修改" /></Form.Item>
+          <Form.Item name="startDate" label="开始日期"><Input type="date" /></Form.Item>
+          <Form.Item name="endDate" label="结束日期"><Input type="date" /></Form.Item>
+          <Form.Item
+            name="taxInclusiveAmountFen"
+            label={`含税合同金额（元）${!editBatch && editTarget?.amountLocked ? '（已锁定）' : ''}`}
+          >
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} disabled={!editBatch && Boolean(editTarget?.amountLocked)} />
+          </Form.Item>
+          {editBatch && <Alert type="info" showIcon message="仅填写需要修改的字段，未填写字段保持不变；合同额已锁定的合同不会被修改。" />}
+        </Form>
+      </Modal>
+
+      {/* 批量操作结果（删除/恢复/编辑：成功/失败数量 + 每条失败原因） */}
+      <Modal title={batchDetail?.title} open={batchDetailOpen} footer={null} onCancel={() => setBatchDetailOpen(false)} width={680}>
+        {batchDetail && (
+          <div style={{ marginTop: 12 }}>
+            <p>已检查 {batchDetail.checked} 份合同；{batchDetail.doneLabel} {batchDetail.done.length} 份；跳过 {batchDetail.skipped.length} 份。</p>
+            {batchDetail.skipped.length > 0 && <Table size="small" rowKey={(row) => `${row.id}-${row.contractNo ?? ''}-${row.reason}`} pagination={false} dataSource={batchDetail.skipped} columns={[
+              { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (value: string | undefined) => value ?? '-' },
+              { title: '未处理原因', dataIndex: 'reason', key: 'reason' },
+            ]} />}
+          </div>
+        )}
       </Modal>
 
       {/* 全屏详情 */}

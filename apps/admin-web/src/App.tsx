@@ -29,6 +29,7 @@ const BizPortal = lazy(() => import('@/pages/biz/BizPortal'));
 const BizMaintenancePortal = lazy(() => import('@/pages/biz/BizMaintenancePortal'));
 const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
 const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
+const BizAuditLogs = lazy(() => import('@/pages/biz/BizAuditLogs'));
 const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
 const BizOrders = lazy(() => import('@/pages/biz/BizOrders'));
 const BizOfflineCompletions = lazy(() => import('@/pages/biz/BizOfflineCompletions'));
@@ -134,6 +135,7 @@ export default function App() {
       <Route path="analysis" element={<Suspense fallback={<PageLoading />}><BizAnalysis /></Suspense>} />
       <Route path="settings" element={<Suspense fallback={<PageLoading />}><BizSettings /></Suspense>} />
       <Route path="admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
+      <Route path="audit-logs" element={<Suspense fallback={<PageLoading />}><BizAuditLogs /></Suspense>} />
     </Route>
     {/* 旧版登录（已废弃，保留回退路径） */}
     <Route path="/login" element={<Suspense fallback={<PageLoading />}><LegacyBanner><Login /></LegacyBanner></Suspense>} />

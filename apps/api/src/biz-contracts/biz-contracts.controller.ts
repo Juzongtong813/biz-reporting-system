@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
@@ -34,9 +34,30 @@ export class BizContractsController {
     @Query('cityId') cityId?: string,
     @Query('status') status?: string,
     @Query('keyword') keyword?: string,
+    @Query('includeDeleted') includeDeleted?: string,
   ) {
-    const items = await this.service.list(auth, { provinceId, cityId, status, keyword });
+    const items = await this.service.list(auth, { provinceId, cityId, status, keyword, includeDeleted: includeDeleted === 'true' || includeDeleted === '1' });
     return { items };
+  }
+
+  @Get('export')
+  @BizScope()
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_EXPORT)
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="contracts.csv"')
+  async exportCsv(
+    @BizAuthUser() auth: BizAuthContext,
+    @Query('ids') ids?: string,
+    @Query('includeDeleted') includeDeleted?: string,
+    @Query('provinceId') provinceId?: string,
+    @Query('cityId') cityId?: string,
+    @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
+  ) {
+    const idList = ids ? ids.split(',').map((id) => id.trim()).filter(Boolean) : undefined;
+    return this.service.exportCsv(auth, {
+      ids: idList, includeDeleted: includeDeleted === 'true' || includeDeleted === '1', provinceId, cityId, status, keyword,
+    });
   }
 
   @Post()
@@ -50,7 +71,7 @@ export class BizContractsController {
     storage: memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
   }))
-  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_CREATE)
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_CREATE)
   async upload(@BizAuthUser() auth: BizAuthContext, @UploadedFile() file: Express.Multer.File | undefined) {
     if (!file?.buffer) throw new BadRequestException('请选择合同 Excel 文件');
     return this.service.importWorkbookWithAllocations(auth, file.originalname ?? 'contracts.xlsx', file.buffer);
@@ -100,9 +121,33 @@ export class BizContractsController {
   }
 
   @Post(':id/restore')
-  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_VOID)
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_RESTORE)
   async restore(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
     return this.service.restore(auth, id);
+  }
+
+  @Delete(':id')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_DELETE)
+  async remove(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    return this.service.remove(auth, id);
+  }
+
+  @Post('batch-delete')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_DELETE)
+  async batchRemove(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[] }) {
+    return this.service.batchRemove(auth, body?.ids ?? []);
+  }
+
+  @Post('batch-update')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_UPDATE)
+  async batchUpdate(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[]; dto?: UpdateContractDto }) {
+    return this.service.batchUpdate(auth, body?.ids ?? [], body?.dto ?? {});
+  }
+
+  @Post('batch-restore')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_RESTORE)
+  async batchRestore(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[] }) {
+    return this.service.batchRestore(auth, body?.ids ?? []);
   }
 
   @Post(':id/refresh-alerts')

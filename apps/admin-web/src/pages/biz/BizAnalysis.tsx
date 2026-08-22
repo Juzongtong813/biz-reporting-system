@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { App as AntdApp, Button, Card, Col, Descriptions, Drawer, Progress, Row, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
-  bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts,
+  bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts, bizAnalysisYears,
   bizAggregateRecalc, bizAggregateCheck, bizContractDetail, bizContractList, bizOrderRows, bizCostList, BizContractDetail,
 } from '@/api/biz.api';
 
@@ -36,9 +36,11 @@ export default function BizAnalysis() {
   const [overruns, setOverruns] = useState<Array<Record<string, unknown>>>([]);
   const [contractAlerts, setContractAlerts] = useState<Array<{ contractId: string; contractNo: string; contractName: string; alertType: string; endDate: string | null; status: string }>>([]);
   const [checkResult, setCheckResult] = useState<{ warningCount: number; warnings: Array<Record<string, unknown>> } | null>(null);
+  const [filterYear, setFilterYear] = useState<string | undefined>(String(new Date().getFullYear()));
   const [filterMonth, setFilterMonth] = useState<string | undefined>(undefined);
   const [filterCity, setFilterCity] = useState<string | undefined>(undefined);
   const [cityOptions, setCityOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [yearOptions, setYearOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [monthOptions, setMonthOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [exporting, setExporting] = useState(false);
   const [contractDetail, setContractDetail] = useState<BizContractDetail | null>(null);
@@ -56,10 +58,14 @@ export default function BizAnalysis() {
   } | null>(null);
 
   const load = useCallback(async () => {
-    const params = { month: filterMonth, cityId: filterCity };
-    const [ov, tr, ct, or, al] = await Promise.all([
+    const params = { year: filterYear, month: filterMonth, cityId: filterCity };
+    const [ov, tr, ct, or, al, yr] = await Promise.all([
       bizAnalysisOverview(params),
-      bizAnalysisTrend(12, filterCity), bizAnalysisByCity(filterMonth), bizAnalysisOverrunList({ month: filterMonth, cityId: filterCity }), bizAnalysisAlerts(filterCity),
+      bizAnalysisTrend(12, filterCity, filterYear),
+      bizAnalysisByCity(filterYear, filterMonth),
+      bizAnalysisOverrunList({ year: filterYear, month: filterMonth, cityId: filterCity }),
+      bizAnalysisAlerts(filterCity),
+      bizAnalysisYears(),
     ]);
     setOverview(ov);
     const trendItems = Array.isArray(tr?.items) ? tr.items : [];
@@ -73,7 +79,10 @@ export default function BizAnalysis() {
     setOverruns(overrunItems);
     setCityOptions(cityItems.map((r: Record<string, unknown>) => ({ label: String(r.cityName ?? r.cityId ?? '').slice(0, 12), value: String(r.cityId) })));
     setMonthOptions(trendItems.map((r: Record<string, unknown>) => ({ label: formatMonth(String(r.month)), value: String(r.month) })));
-  }, [filterMonth, filterCity]);
+    const yearSet = new Set<string>([String(new Date().getFullYear())]);
+    for (const y of Array.isArray(yr?.items) ? yr.items : []) yearSet.add(String(y));
+    setYearOptions([...yearSet].sort().map((y) => ({ label: `${y}年`, value: y })));
+  }, [filterYear, filterMonth, filterCity]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -99,7 +108,7 @@ export default function BizAnalysis() {
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `经营分析-地市指标-${filterMonth ?? '累计'}.csv`;
+      a.href = url; a.download = `经营分析-地市指标-${filterYear ?? '累计'}${filterMonth ? filterMonth : '全年'}.csv`;
       a.click(); URL.revokeObjectURL(url);
       msg.success(`已导出 ${rows.length} 条地市指标`);
     } finally {
@@ -197,18 +206,22 @@ export default function BizAnalysis() {
         </Space>
       </div>
       <div className="v3-toolbar">
+        <Select data-testid="analysis-year-filter"
+          allowClear placeholder="年度筛选（经营分析）" style={{ width: 150 }} options={yearOptions}
+          value={filterYear} onChange={(v) => { setFilterYear(v ?? undefined); setFilterMonth(undefined); }}
+        />
         <Select data-testid="analysis-month-filter"
-          allowClear placeholder="月份筛选（经营金额）" style={{ width: 170 }} options={monthOptions}
+          allowClear placeholder="月份筛选（全年）" style={{ width: 170 }} options={monthOptions}
           value={filterMonth} onChange={(v) => setFilterMonth(v ?? undefined)}
         />
         <Select data-testid="analysis-city-filter"
           allowClear placeholder="地市筛选" style={{ width: 170 }} options={cityOptions}
           value={filterCity} onChange={(v) => setFilterCity(v ?? undefined)}
         />
-        {(filterMonth || filterCity) && <Button data-testid="analysis-clear-filter" onClick={() => { setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
+        {(filterYear || filterMonth || filterCity) && <Button data-testid="analysis-clear-filter" onClick={() => { setFilterYear(undefined); setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
         <Button data-testid="analysis-export" icon={<DownloadOutlined />} loading={exporting} onClick={onExport}>导出当前视图</Button>
       </div>
-      <div className="v3-note">月份筛选仅影响经营金额与超额；合同数量/合同额为累计库存口径，不受月份影响；提醒为累计实时口径（到期/满额），不受月份筛选影响。</div>
+      <div className="v3-note">年度/月份筛选影响经营金额、订单完工、成本、毛利、净利、地市对比、超额数据、月度趋势；选年度查全年、选年度+月份查指定年月、清空=累计。合同数量/合同额（库存口径）与到期/满额提醒为累计实时口径，不受年度/月份筛选影响。</div>
 
       <div className="biz-metric-strip">
         <div className="v3-metric"><span className="v3-metric-label">合同数量</span><span className="v3-metric-value" style={{ color: '#2878b8' }}>{overview?.contractCount ?? 0}</span></div>

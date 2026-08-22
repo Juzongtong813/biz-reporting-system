@@ -43,20 +43,20 @@ export class BizAggregateController {
   // ---- 分析聚合 ----
   @Get('analysis/overview')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async overview(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string, @Query('cityId') cityId?: string) {
-    return this.service.overview(auth, month, cityId);
+  async overview(@BizAuthUser() auth: BizAuthContext, @Query('year') year?: string, @Query('month') month?: string, @Query('cityId') cityId?: string) {
+    return this.service.overview(auth, year, month, cityId);
   }
 
   @Get('analysis/trend')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async trend(@BizAuthUser() auth: BizAuthContext, @Query('limit') limit?: string, @Query('cityId') cityId?: string) {
-    return { items: await this.service.trend(auth, Number(limit) || 12, cityId) };
+  async trend(@BizAuthUser() auth: BizAuthContext, @Query('limit') limit?: string, @Query('cityId') cityId?: string, @Query('year') year?: string) {
+    return { items: await this.service.trend(auth, Number(limit) || 12, cityId, year) };
   }
 
   @Get('analysis/by-city')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async byCity(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string) {
-    return { items: await this.service.byCity(auth, month) };
+  async byCity(@BizAuthUser() auth: BizAuthContext, @Query('year') year?: string, @Query('month') month?: string) {
+    return { items: await this.service.byCity(auth, year, month) };
   }
 
   @Get('analysis/alerts')
@@ -67,8 +67,14 @@ export class BizAggregateController {
 
   @Get('analysis/overrun-list')
   @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
-  async overrunList(@BizAuthUser() auth: BizAuthContext, @Query('month') month?: string, @Query('cityId') cityId?: string) {
-    return { items: await this.service.overrunList(auth, month, cityId) };
+  async overrunList(@BizAuthUser() auth: BizAuthContext, @Query('year') year?: string, @Query('month') month?: string, @Query('cityId') cityId?: string) {
+    return { items: await this.service.overrunList(auth, year, month, cityId) };
+  }
+
+  @Get('analysis/years')
+  @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
+  async years(@BizAuthUser() auth: BizAuthContext) {
+    return { items: await this.service.availableYears(auth) };
   }
 
   // ---- 系统设置（DEV-055） ----

@@ -250,6 +250,11 @@ try {
 } finally {
   if (apiProcess && apiProcess.exitCode === null) apiProcess.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 500));
-  rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  console.log(`M2_RBAC_AUTH_CLEANUP_OK root=${testRoot}`);
+  try {
+    rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    console.log(`M2_RBAC_AUTH_CLEANUP_OK root=${testRoot}`);
+  } catch (cleanupError) {
+    // Windows 上子进程句柄可能短暂占用 sqlite 文件；清理失败不掩盖原始断言错误
+    console.error(`M2_RBAC_AUTH_CLEANUP_WARN ${cleanupError?.message ?? cleanupError} root=${testRoot}`);
+  }
 }

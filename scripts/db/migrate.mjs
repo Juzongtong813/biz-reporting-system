@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -188,6 +188,68 @@ async function applyMigration(migration) {
     }
     return;
   }
+  if (migration.version === '020_biz_contract_soft_delete_op_log') {
+    const columns = [
+      ['biz_contracts', 'deleted_at', 'DATETIME NULL'],
+      ['biz_contracts', 'deleted_by', 'VARCHAR(36) NULL'],
+      ['biz_contracts', 'deleted_batch_id', 'VARCHAR(36) NULL'],
+      ['biz_operation_logs', 'summary_before', 'TEXT NULL'],
+      ['biz_operation_logs', 'summary_after', 'TEXT NULL'],
+      ['biz_operation_logs', 'batch_id', 'VARCHAR(36) NULL'],
+      ['biz_operation_logs', 'error_message', 'TEXT NULL'],
+    ];
+    for (const [table, column, definition] of columns) {
+      if (!await adapter.columnExists(table, column)) {
+        await adapter.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    }
+    if (!await adapter.indexExists('biz_contracts', 'idx_biz_contracts_deleted')) {
+      await adapter.exec('CREATE INDEX idx_biz_contracts_deleted ON biz_contracts (deleted_at)');
+    }
+    if (!await adapter.indexExists('biz_operation_logs', 'idx_biz_op_log_batch')) {
+      await adapter.exec('CREATE INDEX idx_biz_op_log_batch ON biz_operation_logs (batch_id)');
+    }
+    return;
+  }
+  if (migration.version === '019_biz_admin_crud_permissions' && dialect === 'sqlite') {
+    const permissions = [
+      'operation.contract.allocate_cancel',
+      'operation.order.batch_void',
+      'operation.order.batch_restore',
+      'operation.cost.create',
+      'operation.cost.submit',
+      'operation.cost.approve',
+      'operation.cost.reject',
+      'operation.cost.void',
+    ];
+    const contractManagerPermissions = [
+      'operation.order.read',
+      'operation.order.upload',
+      'operation.order.batch_void',
+      'operation.order.batch_restore',
+      'operation.order.export',
+      'operation.cost.read',
+      'operation.cost.create',
+      'operation.cost.submit',
+      'operation.cost.approve',
+      'operation.cost.reject',
+      'operation.cost.void',
+      'operation.cost.export',
+    ];
+    const roleIds = await adapter.rows("SELECT id, code FROM biz_roles WHERE code IN ('admin', 'contract_manager')");
+    const permissionRows = await adapter.rows("SELECT code FROM biz_permissions");
+    const known = new Set(permissionRows.map((row) => row.code));
+    const statements = [];
+    for (const role of roleIds) {
+      const codes = role.code === 'admin' ? permissions : contractManagerPermissions;
+      for (const code of codes) {
+        if (!known.has(code)) continue;
+        statements.push(`INSERT OR IGNORE INTO biz_role_permissions (id, role_id, permission_code) VALUES ('${randomUuidSqlite()}', '${role.id}', '${code}');`);
+      }
+    }
+    if (statements.length) await adapter.exec(statements.join('\n'));
+    return;
+  }
   if (migration.version === '016_biz_offline_rate_snapshot') {
     const columns = [
       ['fee_rate_snapshot_bp', 'INT NULL'],
@@ -357,6 +419,45 @@ async function inspectState(version) {
       adapter.columnExists('biz_order_rows', 'validation_status'),
       adapter.columnExists('biz_order_rows', 'validation_error'),
     ]);
+  }
+  if (version === '019_biz_admin_crud_permissions') {
+    if (!await adapter.tableExists('biz_role_permissions')) return 'empty';
+    return adapter.scalar(`SELECT COUNT(*) FROM biz_role_permissions rp
+      JOIN biz_roles r ON r.id = rp.role_id
+      WHERE r.code IN ('admin', 'contract_manager')
+        AND rp.permission_code IN (
+          'operation.contract.allocate_cancel',
+          'operation.order.batch_void',
+          'operation.order.batch_restore',
+          'operation.cost.create',
+          'operation.cost.submit',
+          'operation.cost.approve',
+          'operation.cost.reject',
+          'operation.cost.void'
+        )`).then((count) => count >= 8 ? 'satisfied' : 'empty');
+  }
+  if (version === '020_biz_contract_soft_delete_op_log') {
+    if (!await adapter.tableExists('biz_contracts') || !await adapter.tableExists('biz_operation_logs')) return 'empty';
+    return allOrNothing([
+      adapter.columnExists('biz_contracts', 'deleted_at'),
+      adapter.columnExists('biz_contracts', 'deleted_by'),
+      adapter.columnExists('biz_contracts', 'deleted_batch_id'),
+      adapter.columnExists('biz_operation_logs', 'summary_before'),
+      adapter.columnExists('biz_operation_logs', 'summary_after'),
+      adapter.columnExists('biz_operation_logs', 'batch_id'),
+      adapter.columnExists('biz_operation_logs', 'error_message'),
+      adapter.indexExists('biz_contracts', 'idx_biz_contracts_deleted'),
+      adapter.indexExists('biz_operation_logs', 'idx_biz_op_log_batch'),
+    ]);
+  }
+  if (version === '021_biz_contract_permissions') {
+    if (!await adapter.tableExists('biz_permissions') || !await adapter.tableExists('biz_role_permissions')) return 'empty';
+    const newCodes = `'operation.contract.delete','operation.contract.batch_read','operation.contract.batch_create','operation.contract.batch_update','operation.contract.batch_delete','operation.contract.restore'`;
+    const permOk = await adapter.scalar(`SELECT COUNT(*) FROM biz_permissions WHERE code IN (${newCodes})`).then((c) => c >= 6);
+    const roleOk = await adapter.scalar(`SELECT COUNT(*) FROM biz_role_permissions rp
+      JOIN biz_roles r ON r.id = rp.role_id
+      WHERE r.code IN ('admin', 'contract_manager') AND rp.permission_code IN (${newCodes})`).then((c) => c >= 12);
+    return permOk && roleOk ? 'satisfied' : 'empty';
   }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
@@ -628,6 +729,10 @@ function sqliteAuthSecurityEvents() {
 }
 
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
+function randomUuidSqlite() {
+  const value = randomBytes(16).toString('hex');
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-8${value.slice(17, 20)}-${value.slice(20, 32)}`;
+}
 function clean(value) { return String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 1000); }
 function quoteIdentifier(value) { if (!/^[A-Za-z0-9_]+$/.test(value)) fail('INVALID_IDENTIFIER'); return `"${value}"`; }
 function fail(message) { throw new Error(message); }

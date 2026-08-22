@@ -99,11 +99,52 @@ export class BizAdminController {
   // M8（DEV-066）：操作审计日志（super_admin/admin）
   @Get('operation-logs')
   @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
-  async operationLogs(@Query('limit') limit?: string, @Query('actionType') actionType?: string) {
-    const qb = this.opLogRepo.createQueryBuilder('l');
-    if (actionType) qb.andWhere('l.actionType = :actionType', { actionType });
-    const items = await qb.orderBy('l.createdAt', 'DESC').take(Math.min(Number(limit) || 100, 500)).getMany();
-    return { items };
+  async operationLogs(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('limit') limit?: string,
+    @Query('actionType') actionType?: string,
+    @Query('targetType') targetType?: string,
+    @Query('operatorUserId') operatorUserId?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const currentPage = Math.max(1, Number(page) || 1);
+    const currentPageSize = Math.min(100, Math.max(1, Number(pageSize) || Math.min(Number(limit) || 20, 100)));
+    const qb = this.opLogRepo.createQueryBuilder('l')
+      .leftJoin('biz_users', 'u', 'u.id = l.operator_user_id')
+      .leftJoin('biz_cities', 'c', 'c.id = u.city_id')
+      .select([
+        'l.id AS id',
+        'l.operator_user_id AS operatorUserId',
+        'l.action_type AS actionType',
+        'l.target_type AS targetType',
+        'l.target_id AS targetId',
+        'l.result_status AS resultStatus',
+        'l.summary_before AS summaryBefore',
+        'l.summary_after AS summaryAfter',
+        'l.batch_id AS batchId',
+        'l.error_message AS errorMessage',
+        'l.created_at AS createdAt',
+        'u.username AS username',
+        'u.name AS operatorName',
+        'u.role_code AS roleCode',
+        'u.city_id AS cityId',
+        'c.name AS cityName',
+      ])
+      .where('u.role_code <> :superRole', { superRole: 'super_admin' });
+    if (actionType) qb.andWhere('l.action_type = :actionType', { actionType });
+    if (targetType) qb.andWhere('l.target_type = :targetType', { targetType });
+    if (operatorUserId) qb.andWhere('l.operator_user_id = :operatorUserId', { operatorUserId });
+    if (dateFrom) qb.andWhere('l.created_at >= :dateFrom', { dateFrom: new Date(dateFrom) });
+    if (dateTo) qb.andWhere('l.created_at <= :dateTo', { dateTo: new Date(dateTo) });
+    const total = await qb.getCount();
+    const items = await qb
+      .orderBy('l.created_at', 'DESC')
+      .skip((currentPage - 1) * currentPageSize)
+      .take(currentPageSize)
+      .getRawMany();
+    return { items, total, page: currentPage, pageSize: currentPageSize };
   }
 
   @Get('roles')

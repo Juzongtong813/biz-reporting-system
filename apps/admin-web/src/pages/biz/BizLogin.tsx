@@ -4,6 +4,7 @@ import { LockOutlined, LoginOutlined, SafetyOutlined, UserOutlined } from '@ant-
 import { useNavigate } from 'react-router-dom';
 import { bizLogin } from '@/api/biz.api';
 import { setBizToken } from '@/utils/biz-auth';
+import { clearBizPermissionCache } from '@/utils/biz-permission';
 import './BizLogin.css';
 
 const { Title, Text } = Typography;
@@ -36,6 +37,7 @@ export default function BizLogin() {
       const username = values.username.trim();
       const result = await bizLogin(username, values.password);
       setBizToken(result.accessToken);
+      clearBizPermissionCache();
       try {
         if (values.rememberUsername) localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
         else localStorage.removeItem(REMEMBERED_USERNAME_KEY);

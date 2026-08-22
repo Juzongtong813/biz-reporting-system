@@ -1,22 +1,39 @@
 import { useEffect, useState } from 'react';
 import { bizMe } from '@/api/biz.api';
+import { getBizToken } from '@/utils/biz-auth';
 
 /** me 权限缓存（模块级；登录/刷新时刷新，前端仅控制展示与交互） */
-let cachedPermissions: { isSuper: boolean; codes: Set<string> } | null = null;
+let cachedPermissions: { isSuper: boolean; codes: Set<string>; tokenFingerprint: string } | null = null;
 let cacheLoadedAt = 0;
 const CACHE_TTL = 60_000;
 
+/** 当前会话指纹：token 尾 16 位。登出/切换账号后 token 变化 → 缓存立即失效，避免跨账号污染 */
+function currentFingerprint(): string {
+  const token = getBizToken();
+  return token ? `token:${token.slice(-16)}` : 'anonymous';
+}
+
+/** 显式清空权限缓存（登录成功/登出时调用；token 指纹机制为兜底） */
+export function clearBizPermissionCache(): void {
+  cachedPermissions = null;
+  cacheLoadedAt = 0;
+}
+
 export async function loadBizPermissions(force = false): Promise<{ isSuper: boolean; codes: Set<string> }> {
-  if (!force && cachedPermissions && Date.now() - cacheLoadedAt < CACHE_TTL) return cachedPermissions;
+  const fingerprint = currentFingerprint();
+  if (!force && cachedPermissions && cachedPermissions.tokenFingerprint === fingerprint && Date.now() - cacheLoadedAt < CACHE_TTL) {
+    return cachedPermissions;
+  }
   try {
     const me = await bizMe();
     cachedPermissions = {
       isSuper: me.roleCode === 'super_admin',
       codes: new Set(me.permissions ?? []),
+      tokenFingerprint: fingerprint,
     };
     cacheLoadedAt = Date.now();
   } catch {
-    cachedPermissions = { isSuper: false, codes: new Set() };
+    cachedPermissions = { isSuper: false, codes: new Set(), tokenFingerprint: fingerprint };
   }
   return cachedPermissions;
 }

@@ -108,11 +108,6 @@ export class BizOrderImportService {
 
   /** 上传：创建批次（PARSING）→ 后台解析；返回批次 ID 供轮询 */
   async upload(auth: BizAuthContext, file: Express.Multer.File, idempotencyKey: string): Promise<BizOrderImportBatchEntity> {
-    // 硬限制：仅 super_admin / admin 可上传（权限码可被 override 覆盖，role 级为最终边界）
-    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
-      throw new ForbiddenException('仅 super_admin/admin 可上传订单文件');
-    }
-    if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无订单数据范围');
     if (!file) throw new BadRequestException('缺少上传文件');
     const filename = (file.originalname ?? 'upload.xlsx').trim();
     if (!filename.toLowerCase().endsWith(ORDER_FILE_ALLOWED_EXT)) throw new BadRequestException('仅支持 .xlsx 文件');
@@ -580,9 +575,6 @@ export class BizOrderImportService {
 
   /** Re-validate a retained raw row after an administrator fixes normalized reference data. */
   async maintainRow(auth: BizAuthContext, id: string, input: MaintainOrderRowInput): Promise<Record<string, unknown>> {
-    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
-      throw new ForbiddenException('仅管理员可以维护订单行');
-    }
     const row = await this.rowRepo.findOneBy({ id });
     if (!row) throw new NotFoundException('订单行不存在');
     const batch = await this.batchRepo.findOneBy({ id: row.batchId });
@@ -664,9 +656,6 @@ export class BizOrderImportService {
   /** 批次作废（仅 super_admin）：原始行 is_void=true 退出统计；保留行/账号/时间 */
   /** Delete only failed batches so a failed import can be retried without changing imported data. */
   async deleteFailedBatch(auth: BizAuthContext, id: string): Promise<void> {
-    if (auth.roleCode !== 'super_admin' && auth.roleCode !== 'admin') {
-      throw new ForbiddenException('仅管理员可删除失败导入批次');
-    }
     const batch = await this.batchRepo.findOneBy({ id });
     if (!batch) throw new NotFoundException('批次不存在');
     if (batch.status !== OrderBatchStatus.FAILED) {
@@ -688,8 +677,7 @@ export class BizOrderImportService {
     await this.recordOp(auth.userId, 'order_batch.delete_failed', id);
   }
 
-  async voidBatch(authUserId: string, isSuperAdmin: boolean, id: string, reason: string): Promise<void> {
-    if (!isSuperAdmin) throw new ForbiddenException('仅 super_admin 可作废订单批次');
+  async voidBatch(auth: BizAuthContext, id: string, reason: string): Promise<void> {
     if (!reason?.trim()) throw new BadRequestException('作废原因必填');
     const batch = await this.batchRepo.findOneBy({ id });
     if (!batch) throw new NotFoundException('批次不存在');
@@ -697,18 +685,17 @@ export class BizOrderImportService {
     await this.dataSource.transaction(async (manager) => {
       await manager.update(BizOrderRowEntity, { batchId: id }, { isVoid: true, voidReason: reason });
       batch.status = OrderBatchStatus.VOIDED;
-      batch.voidedBy = authUserId;
+      batch.voidedBy = auth.userId;
       batch.voidedAt = new Date();
       batch.voidReason = reason;
       await manager.save(batch);
     });
-    await this.recordOp(authUserId, 'order_batch.void', id);
+    await this.recordOp(auth.userId, 'order_batch.void', id);
     void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
   /** 批次恢复（仅 super_admin）：恢复原始行统计 */
-  async restoreBatch(authUserId: string, isSuperAdmin: boolean, id: string): Promise<void> {
-    if (!isSuperAdmin) throw new ForbiddenException('仅 super_admin 可恢复订单批次');
+  async restoreBatch(auth: BizAuthContext, id: string): Promise<void> {
     const batch = await this.batchRepo.findOneBy({ id });
     if (!batch) throw new NotFoundException('批次不存在');
     if (batch.status !== OrderBatchStatus.VOIDED) throw new BadRequestException('仅已作废批次可恢复');
@@ -721,7 +708,7 @@ export class BizOrderImportService {
       batch.restoredAt = new Date();
       await manager.save(batch);
     });
-    await this.recordOp(authUserId, 'order_batch.restore', id);
+    await this.recordOp(auth.userId, 'order_batch.restore', id);
     void this.aggregates.recalcInternal({}).catch(() => {});
   }
 
