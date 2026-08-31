@@ -211,6 +211,118 @@ async function applyMigration(migration) {
     }
     return;
   }
+  if (migration.version === '022_biz_province_branch_order_corrections') {
+    const columns = [
+      ['biz_cities', 'unit_type', "VARCHAR(32) NOT NULL DEFAULT 'city'"],
+      ['biz_order_import_batches', 'source_batch_id', 'VARCHAR(36) NULL'],
+      ['biz_order_import_batches', 'batch_purpose', "VARCHAR(16) NOT NULL DEFAULT 'normal'"],
+      ['biz_order_rows', 'replaces_order_row_id', 'VARCHAR(36) NULL'],
+      ['biz_order_rows', 'resolved_by_batch_id', 'VARCHAR(36) NULL'],
+      ['biz_order_rows', 'resolved_by_user_id', 'VARCHAR(36) NULL'],
+      ['biz_order_rows', 'resolved_at', 'DATETIME NULL'],
+    ];
+    for (const [table, column, definition] of columns) {
+      if (!await adapter.columnExists(table, column)) await adapter.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+    if (!await adapter.indexExists('biz_order_import_batches', 'idx_biz_order_batch_source')) {
+      await adapter.exec('CREATE INDEX idx_biz_order_batch_source ON biz_order_import_batches (source_batch_id)');
+    }
+    if (!await adapter.indexExists('biz_order_rows', 'idx_biz_order_row_replaces')) {
+      await adapter.exec('CREATE INDEX idx_biz_order_row_replaces ON biz_order_rows (replaces_order_row_id)');
+    }
+    if (!await adapter.indexExists('biz_order_rows', 'uk_biz_order_row_replaces')) {
+      await adapter.exec('CREATE UNIQUE INDEX uk_biz_order_row_replaces ON biz_order_rows (replaces_order_row_id)');
+    }
+    if (!await adapter.indexExists('biz_order_rows', 'idx_biz_order_row_resolved_batch')) {
+      await adapter.exec('CREATE INDEX idx_biz_order_row_resolved_batch ON biz_order_rows (resolved_by_batch_id)');
+    }
+    const insertIgnore = dialect === 'sqlite' ? 'INSERT OR IGNORE' : 'INSERT IGNORE';
+    await adapter.exec(`${insertIgnore} INTO biz_cities (id, province_id, code, name, unit_type, status)
+      VALUES ('00000000-0000-4000-8000-000000000117', '00000000-0000-4000-8000-000000000030', '370000-BRANCH', '山东省分公司', 'province_branch', 'active')`);
+    const aliases = [
+      ['00000000-0000-4000-8000-000000000181', '山东省分公司'],
+      ['00000000-0000-4000-8000-000000000182', '山东分公司'],
+      ['00000000-0000-4000-8000-000000000183', '山东省公司'],
+      ['00000000-0000-4000-8000-000000000184', '省公司'],
+      ['00000000-0000-4000-8000-000000000185', '省本部'],
+    ];
+    for (const [id, alias] of aliases) {
+      await adapter.exec(`${insertIgnore} INTO biz_city_aliases (id, city_id, alias)
+        VALUES ('${id}', '00000000-0000-4000-8000-000000000117', '${alias}')`);
+    }
+    return;
+  }
+  if (migration.version === '023_biz_contract_import_records') {
+    const contractColumns = [
+      ['archive_contract_no', 'VARCHAR(100) NULL'], ['project_identity_code', 'VARCHAR(160) NULL'],
+      ['contract_category_1', 'VARCHAR(100) NULL'], ['contract_category_2', 'VARCHAR(100) NULL'],
+      ['winning_project_name', 'VARCHAR(500) NULL'], ['signed_date', 'DATE NULL'],
+      ['tax_rate_raw', 'VARCHAR(255) NULL'], ['tax_rate_bp', 'INT NULL'], ['tax_rate_bps_json', 'JSON NULL'],
+      ['source_import_record_id', 'VARCHAR(36) NULL'], ['source_sheet_id', 'VARCHAR(36) NULL'],
+      ['source_row_id', 'VARCHAR(36) NULL'], ['source_row_no', 'INT NULL'],
+    ];
+    for (const [column, definition] of contractColumns) {
+      if (!await adapter.columnExists('biz_contracts', column)) await adapter.exec(`ALTER TABLE biz_contracts ADD COLUMN ${column} ${definition}`);
+    }
+    if (!await adapter.indexExists('biz_contracts', 'idx_biz_contracts_source_import')) {
+      await adapter.exec('CREATE INDEX idx_biz_contracts_source_import ON biz_contracts (source_import_record_id)');
+    }
+    if (!await adapter.tableExists('biz_contract_import_records')) {
+      await adapter.exec(`CREATE TABLE biz_contract_import_records (
+        id VARCHAR(36) PRIMARY KEY, filename VARCHAR(255) NOT NULL, file_hash VARCHAR(64) NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'parsing', sheet_count INT NOT NULL DEFAULT 0,
+        total_rows INT NOT NULL DEFAULT 0, valid_rows INT NOT NULL DEFAULT 0, review_rows INT NOT NULL DEFAULT 0,
+        uploaded_by VARCHAR(36) NOT NULL, data_scope_json TEXT NULL, completed_at DATETIME NULL,
+        failure_reason TEXT NULL, uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`);
+    }
+    if (!await adapter.tableExists('biz_contract_import_sheets')) {
+      await adapter.exec(`CREATE TABLE biz_contract_import_sheets (
+        id VARCHAR(36) PRIMARY KEY, import_record_id VARCHAR(36) NOT NULL, sheet_index INT NOT NULL,
+        sheet_name VARCHAR(255) NOT NULL, start_row INT NOT NULL, start_col INT NOT NULL, row_count INT NOT NULL,
+        column_count INT NOT NULL, header_row_no INT NULL, headers_json JSON NULL,
+        is_contract_sheet BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`);
+    }
+    if (!await adapter.tableExists('biz_contract_source_rows')) {
+      await adapter.exec(`CREATE TABLE biz_contract_source_rows (
+        id VARCHAR(36) PRIMARY KEY, import_record_id VARCHAR(36) NOT NULL, sheet_id VARCHAR(36) NOT NULL,
+        source_row_no INT NOT NULL, row_kind VARCHAR(16) NOT NULL, cells_json JSON NOT NULL,
+        normalization_status VARCHAR(16) NOT NULL DEFAULT 'archived', normalization_message TEXT NULL,
+        province_id VARCHAR(36) NULL, city_id VARCHAR(36) NULL, contract_id VARCHAR(36) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`);
+    }
+    const indexes = [
+      ['biz_contract_import_records', 'uk_biz_contract_import_record_hash', 'file_hash', true],
+      ['biz_contract_import_records', 'idx_biz_contract_import_record_uploaded', 'uploaded_at', false],
+      ['biz_contract_import_records', 'idx_biz_contract_import_record_uploader', 'uploaded_by', false],
+      ['biz_contract_import_sheets', 'uk_biz_contract_import_sheet_position', 'import_record_id, sheet_index', true],
+      ['biz_contract_source_rows', 'uk_biz_contract_source_row_position', 'sheet_id, source_row_no', true],
+      ['biz_contract_source_rows', 'idx_biz_contract_source_row_status', 'import_record_id, normalization_status', false],
+    ];
+    for (const [table, name, columns, unique] of indexes) {
+      if (!await adapter.indexExists(table, name)) await adapter.exec(`CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${name} ON ${table} (${columns})`);
+    }
+    return;
+  }
+  if (migration.version === '024_normalize_primary_contract_numbers') {
+    if (!await adapter.tableExists('biz_contracts')) return;
+    const rows = await adapter.rows('SELECT id, contract_no FROM biz_contracts ORDER BY id');
+    const candidates = rows.map((row) => ({ id: String(row.id), current: String(row.contract_no), target: normalizePrimaryContractNumber(String(row.contract_no)) }));
+    const currentOwners = new Map(rows.map((row) => [String(row.contract_no), String(row.id)]));
+    const targetCounts = new Map();
+    for (const candidate of candidates) targetCounts.set(candidate.target, (targetCounts.get(candidate.target) || 0) + 1);
+    const conflicts = candidates.filter((candidate) => candidate.target && candidate.target !== candidate.current && ((currentOwners.has(candidate.target) && currentOwners.get(candidate.target) !== candidate.id) || targetCounts.get(candidate.target) > 1));
+    if (conflicts.length) fail(`PRIMARY_CONTRACT_NO_CONFLICT ids=${conflicts.map((candidate) => candidate.id).join(',')}`);
+    for (const candidate of candidates) {
+      if (candidate.target && candidate.target !== candidate.current) {
+        await adapter.exec(`UPDATE biz_contracts SET contract_no = ${quoteSqlLiteral(candidate.target)} WHERE id = ${quoteSqlLiteral(candidate.id)}`);
+      }
+    }
+    return;
+  }
   if (migration.version === '019_biz_admin_crud_permissions' && dialect === 'sqlite') {
     const permissions = [
       'operation.contract.allocate_cancel',
@@ -457,6 +569,60 @@ async function inspectState(version) {
     const roleOk = await adapter.scalar(`SELECT COUNT(*) FROM biz_role_permissions rp
       JOIN biz_roles r ON r.id = rp.role_id
       WHERE r.code IN ('admin', 'contract_manager') AND rp.permission_code IN (${newCodes})`).then((c) => c >= 12);
+    return permOk && roleOk ? 'satisfied' : 'empty';
+  }
+  if (version === '022_biz_province_branch_order_corrections') {
+    if (!await adapter.tableExists('biz_cities') || !await adapter.tableExists('biz_order_import_batches') || !await adapter.tableExists('biz_order_rows')) return 'empty';
+    const columnsOk = await Promise.all([
+      adapter.columnExists('biz_cities', 'unit_type'),
+      adapter.columnExists('biz_order_import_batches', 'source_batch_id'),
+      adapter.columnExists('biz_order_import_batches', 'batch_purpose'),
+      adapter.columnExists('biz_order_rows', 'replaces_order_row_id'),
+      adapter.columnExists('biz_order_rows', 'resolved_by_batch_id'),
+      adapter.columnExists('biz_order_rows', 'resolved_by_user_id'),
+      adapter.columnExists('biz_order_rows', 'resolved_at'),
+      adapter.indexExists('biz_order_import_batches', 'idx_biz_order_batch_source'),
+      adapter.indexExists('biz_order_rows', 'idx_biz_order_row_replaces'),
+      adapter.indexExists('biz_order_rows', 'uk_biz_order_row_replaces'),
+      adapter.indexExists('biz_order_rows', 'idx_biz_order_row_resolved_batch'),
+    ]);
+    if (!columnsOk.every(Boolean)) return 'empty';
+    if (!await adapter.tableExists('biz_city_aliases')) return 'empty';
+    const branchOk = await adapter.scalar("SELECT COUNT(*) FROM biz_cities WHERE code = '370000-BRANCH' AND unit_type = 'province_branch'").then((count) => count === 1);
+    const aliasesOk = await adapter.scalar("SELECT COUNT(*) FROM biz_city_aliases WHERE city_id = '00000000-0000-4000-8000-000000000117'").then((count) => count >= 5);
+    return branchOk && aliasesOk ? 'satisfied' : 'empty';
+  }
+  if (version === '023_biz_contract_import_records') {
+    if (!await adapter.tableExists('biz_contracts')) return 'empty';
+    return allOrNothing([
+      ...['archive_contract_no', 'project_identity_code', 'contract_category_1', 'contract_category_2', 'winning_project_name', 'signed_date', 'tax_rate_raw', 'tax_rate_bp', 'tax_rate_bps_json', 'source_import_record_id', 'source_sheet_id', 'source_row_id', 'source_row_no'].map((column) => adapter.columnExists('biz_contracts', column)),
+      adapter.indexExists('biz_contracts', 'idx_biz_contracts_source_import'),
+      adapter.tableExists('biz_contract_import_records'), adapter.tableExists('biz_contract_import_sheets'), adapter.tableExists('biz_contract_source_rows'),
+      adapter.indexExists('biz_contract_import_records', 'uk_biz_contract_import_record_hash'),
+      adapter.indexExists('biz_contract_import_sheets', 'uk_biz_contract_import_sheet_position'),
+      adapter.indexExists('biz_contract_source_rows', 'uk_biz_contract_source_row_position'),
+    ]);
+  }
+  if (version === '024_normalize_primary_contract_numbers') {
+    if (!await adapter.tableExists('biz_contracts')) return 'empty';
+    const rows = await adapter.rows('SELECT contract_no FROM biz_contracts');
+    return rows.every((row) => normalizePrimaryContractNumber(String(row.contract_no)) === String(row.contract_no)) ? 'satisfied' : 'empty';
+  }
+  if (version === '025_biz_messages_announcements') {
+    if (!await adapter.tableExists('biz_announcements') || !await adapter.tableExists('biz_announcement_reads')) return 'empty';
+    return allOrNothing([
+      adapter.indexExists('biz_announcements', 'idx_biz_announcement_status_time'),
+      adapter.indexExists('biz_announcements', 'idx_biz_announcement_scope'),
+      adapter.indexExists('biz_announcements', 'idx_biz_announcement_creator'),
+      adapter.indexExists('biz_announcement_reads', 'uk_biz_announcement_read'),
+      adapter.indexExists('biz_announcement_reads', 'idx_biz_announcement_read_user'),
+      adapter.scalar("SELECT COUNT(*) FROM biz_permissions WHERE code IN ('operation.message.read','operation.announcement.create','operation.announcement.publish','operation.announcement.manage')").then((count) => count === 4),
+    ]);
+  }
+  if (version === '026_biz_region_permissions') {
+    if (!await adapter.tableExists('biz_permissions') || !await adapter.tableExists('biz_role_permissions')) return 'empty';
+    const permOk = await adapter.scalar("SELECT COUNT(*) FROM biz_permissions WHERE code = 'operation.region.manage'").then((count) => count >= 1);
+    const roleOk = await adapter.scalar("SELECT COUNT(*) FROM biz_role_permissions WHERE permission_code = 'operation.region.manage'").then((count) => count >= 1);
     return permOk && roleOk ? 'satisfied' : 'empty';
   }
   fail(`STATE_CHECK_MISSING version=${version}`);
@@ -735,4 +901,9 @@ function randomUuidSqlite() {
 }
 function clean(value) { return String(value ?? '').replace(/[\r\n\t]+/g, ' ').slice(0, 1000); }
 function quoteIdentifier(value) { if (!/^[A-Za-z0-9_]+$/.test(value)) fail('INVALID_IDENTIFIER'); return `"${value}"`; }
+function quoteSqlLiteral(value) { return `'${String(value).replace(/'/g, "''")}'`; }
+function normalizePrimaryContractNumber(value) {
+  const first = String(value ?? '').split(/[\/／\r\n]+/).map((part) => part.trim()).find(Boolean) || '';
+  return first.replace(/-\d{1,2}$/, '').trim();
+}
 function fail(message) { throw new Error(message); }

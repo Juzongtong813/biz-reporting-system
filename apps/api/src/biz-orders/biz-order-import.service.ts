@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx';
 import {
   ORDER_TEMPLATE_COLUMNS, ORDER_TEMPLATE_COLUMN_COUNT, ORDER_TEMPLATE_SHEET_COUNT,
   ORDER_TEMPLATE_COLUMN_INDEX_MAP, ORDER_FILE_MAX_BYTES, ORDER_FILE_MAX_ROWS, ORDER_FILE_ALLOWED_EXT,
+  ORDER_TEMPLATE_SENSITIVE_COLUMN_INDEXES_0BASED,
   OrderBatchStatus,
 } from '@biz-reporting/shared-types';
 import { readWorkbookSafe } from '../common/files/workbook-policy';
@@ -20,6 +21,7 @@ import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-
 import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.entity';
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
+import { CityAliasEntity } from '../main-data/city-alias.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { BizContractsService } from '../biz-contracts/biz-contracts.service';
@@ -37,8 +39,20 @@ interface PendingRow {
   completionAmountFen: number | null;
   feeRateSnapshotBp: number | null;
   grossProfitFen: number | null;
+  replacesOrderRowId: string | null;
   error?: { type: string; field: string; message: string };
 }
+
+const CORRECTION_SOURCE_BATCH_HEADER = '修正来源批次ID';
+const CORRECTION_SOURCE_ROW_HEADER = '修正来源订单行ID';
+const CORRECTION_SOURCE_ROW_NO_HEADER = '原始Excel行号';
+const CORRECTION_ERROR_HEADER = '当前错误原因';
+const CORRECTION_HEADERS = [
+  CORRECTION_SOURCE_BATCH_HEADER,
+  CORRECTION_SOURCE_ROW_HEADER,
+  CORRECTION_SOURCE_ROW_NO_HEADER,
+  CORRECTION_ERROR_HEADER,
+] as const;
 
 interface MaintainOrderRowInput {
   provinceId?: string;
@@ -79,6 +93,8 @@ export class BizOrderImportService {
     private readonly provinceRepo: Repository<ProvinceEntity>,
     @InjectRepository(CityEntity)
     private readonly cityRepo: Repository<CityEntity>,
+    @InjectRepository(CityAliasEntity)
+    private readonly cityAliasRepo: Repository<CityAliasEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
     @InjectRepository(PlatformUserEntity)
@@ -107,7 +123,7 @@ export class BizOrderImportService {
   }
 
   /** 上传：创建批次（PARSING）→ 后台解析；返回批次 ID 供轮询 */
-  async upload(auth: BizAuthContext, file: Express.Multer.File, idempotencyKey: string): Promise<BizOrderImportBatchEntity> {
+  async upload(auth: BizAuthContext, file: Express.Multer.File, idempotencyKey: string, sourceBatchId?: string): Promise<BizOrderImportBatchEntity> {
     if (!file) throw new BadRequestException('缺少上传文件');
     const filename = (file.originalname ?? 'upload.xlsx').trim();
     if (!filename.toLowerCase().endsWith(ORDER_FILE_ALLOWED_EXT)) throw new BadRequestException('仅支持 .xlsx 文件');
@@ -117,6 +133,16 @@ export class BizOrderImportService {
     // 幂等：相同请求键返回原批次
     const existing = await this.batchRepo.findOneBy({ idempotencyKey });
     if (existing) return existing;
+
+    const normalizedSourceBatchId = sourceBatchId?.trim() || null;
+    if (normalizedSourceBatchId) {
+      const source = await this.batchRepo.findOneBy({ id: normalizedSourceBatchId });
+      if (!source) throw new BadRequestException('来源批次不存在');
+      if (source.status !== OrderBatchStatus.IMPORTED) throw new BadRequestException('仅已导入批次可上传修正文件');
+      await this.batchDetail(auth, source.id);
+      const pendingCount = await this.rowRepo.countBy({ batchId: source.id, validationStatus: 'needs_review' });
+      if (pendingCount === 0) throw new BadRequestException('来源批次没有待维护订单');
+    }
 
     // 保存临时文件（校验失败时也删除）
     const tempBatchId = randomUUID();
@@ -151,6 +177,8 @@ export class BizOrderImportService {
       uploadedBy: auth.userId,
       tempFilePath: filePath,
       dataScopeJson: JSON.stringify({ roleCode: auth.roleCode, scopeType: auth.dataScope.scopeType, provinceIds: auth.dataScope.provinceIds ?? [], cityId: auth.dataScope.cityId ?? null }),
+      sourceBatchId: normalizedSourceBatchId,
+      batchPurpose: normalizedSourceBatchId ? 'correction' : 'normal',
     });
 
     // 后台异步解析（单实例进程内任务；幂等与唯一约束保障重试安全）
@@ -188,15 +216,33 @@ export class BizOrderImportService {
 
     // 2. 预加载映射
     const provinceByName = new Map<string, string>();
-    for (const p of await this.provinceRepo.find()) provinceByName.set(p.name, p.id);
+    for (const p of await this.provinceRepo.find()) {
+      for (const key of this.provinceNameAliases(p.name, p.code)) provinceByName.set(key, p.id);
+    }
     const cityByProvinceName = new Map<string, string>();
     for (const c of await this.cityRepo.find()) {
       for (const alias of this.cityNameAliases(c.name)) {
         cityByProvinceName.set(`${c.provinceId}|${alias}`, c.id);
       }
     }
+    for (const alias of await this.cityAliasRepo.find()) {
+      const city = await this.cityRepo.findOneBy({ id: alias.cityId });
+      if (city) cityByProvinceName.set(`${city.provinceId}|${this.normalizeRawCityName(alias.alias)}`, city.id);
+    }
     const contractByNo = new Map<string, { id: string; provinceId: string }>();
-    for (const c of await this.contractRepo.find()) contractByNo.set(c.contractNo, { id: c.id, provinceId: c.provinceId });
+    const ambiguousContractKeys = new Set<string>();
+    for (const c of await this.contractRepo.find()) {
+      const contract = { id: c.id, provinceId: c.provinceId };
+      for (const key of [c.contractNo, c.archiveContractNo].map((value) => value?.trim()).filter((value): value is string => Boolean(value))) {
+        const existing = contractByNo.get(key);
+        if (existing && existing.id !== contract.id) {
+          contractByNo.delete(key);
+          ambiguousContractKeys.add(key);
+        } else if (!ambiguousContractKeys.has(key)) {
+          contractByNo.set(key, contract);
+        }
+      }
+    }
     const allocSet = new Set<string>();
     for (const a of await this.allocRepo.find({ where: { status: 'active' } })) allocSet.add(`${a.contractId}|${a.cityId}`);
     const feeRatesByContractCity = new Map<string, BizContractFeeRateEntity[]>();
@@ -222,17 +268,51 @@ export class BizOrderImportService {
 
     const pending: PendingRow[] = [];
     const errors: Array<{ type: string; rowNo: number | null; field: string | null; message: string }> = [];
+    const correctionIndexes = this.resolveCorrectionIndexes(wb);
+    const correctionRows = batch.batchPurpose === 'correction'
+      ? await this.loadCorrectionSourceRows(batch.sourceBatchId, batch.dataScopeJson)
+      : new Map<string, BizOrderRowEntity>();
+    const replacementIdsInFile = new Set<string>();
 
     dataRows.forEach((row, idx) => {
       const sourceRowNo = idx + 2;
-      const sourceValues = Array.isArray(row) ? row.map((v) => (v === null || v === undefined ? '' : String(v).trim())) : [];
+      const sourceValues = Array.isArray(row) ? row.map((v) => this.stringifyOrderCell(v)) : [];
       if (sourceValues.length === 0 || sourceValues.every((v) => v === '')) return; // 跳过空行
       // 以列名映射为标准化 34 列数组；非关键列不存在时保留为空，不依赖原表列序或总列数。
       const raw = ORDER_TEMPLATE_COLUMNS.map((column) => {
         const inputIndex = columnIndexes.get(column);
         return inputIndex === undefined ? '' : (sourceValues[inputIndex] ?? '');
       });
-      const p: PendingRow = { sourceRowNo, raw, provinceId: null, cityId: null, contractId: null, orderTimeStd: null, businessMonth: null, completionAmountFen: null, feeRateSnapshotBp: null, grossProfitFen: null };
+      const requestedReplacementId = this.correctionSourceRowId(sourceValues, correctionIndexes);
+      const p: PendingRow = { sourceRowNo, raw, provinceId: null, cityId: null, contractId: null, orderTimeStd: null, businessMonth: null, completionAmountFen: null, feeRateSnapshotBp: null, grossProfitFen: null, replacesOrderRowId: null };
+
+      if (batch.batchPurpose === 'correction') {
+        if (!correctionIndexes.sourceBatch || !correctionIndexes.sourceRow) {
+          p.error = { type: 'correction', field: CORRECTION_SOURCE_BATCH_HEADER, message: '修正文件缺少来源批次或来源订单行标识' };
+          pending.push(p);
+          return;
+        }
+        const sourceBatchValue = this.cellFromRow(sourceValues, correctionIndexes.sourceBatch);
+        const sourceRowId = requestedReplacementId ?? '';
+        if (sourceBatchValue !== batch.sourceBatchId || !sourceRowId) {
+          p.error = { type: 'correction', field: CORRECTION_SOURCE_ROW_HEADER, message: '修正行来源批次与订单行标识不匹配' };
+          pending.push(p);
+          return;
+        }
+        const sourceRow = correctionRows.get(sourceRowId);
+        if (!sourceRow) {
+          p.error = { type: 'correction', field: CORRECTION_SOURCE_ROW_HEADER, message: '来源订单行不存在、已接替或不在当前账号数据范围内' };
+          pending.push(p);
+          return;
+        }
+        if (replacementIdsInFile.has(sourceRowId)) {
+          p.error = { type: 'correction', field: CORRECTION_SOURCE_ROW_HEADER, message: '同一来源订单行在修正文件中重复出现' };
+          pending.push(p);
+          return;
+        }
+        replacementIdsInFile.add(sourceRowId);
+        p.replacesOrderRowId = sourceRowId;
+      }
 
       const provinceName = raw[ORDER_TEMPLATE_COLUMN_INDEX_MAP['省份名称']];
       const cityName = raw[ORDER_TEMPLATE_COLUMN_INDEX_MAP['地市名称']];
@@ -240,11 +320,14 @@ export class BizOrderImportService {
       const orderTimeRaw = raw[ORDER_TEMPLATE_COLUMN_INDEX_MAP['下单时间']];
       const amountRaw = raw[ORDER_TEMPLATE_COLUMN_INDEX_MAP['含税总金额']];
 
-      const provinceId = provinceName ? provinceByName.get(provinceName) : undefined;
+      const provinceId = provinceName ? provinceByName.get(this.normalizeProvinceName(provinceName)) : undefined;
       if (!provinceName || !provinceId) { p.error = { type: 'province', field: '省份名称', message: `省份「${provinceName || ''}」无法映射` }; pending.push(p); return; }
       p.provinceId = provinceId;
       // 行级数据范围校验（按上传时快照）
-      const cityId = cityName ? cityByProvinceName.get(`${provinceId}|${this.normalizeCityName(cityName)}`) : undefined;
+      const cityId = cityName
+        ? cityByProvinceName.get(`${provinceId}|${this.normalizeRawCityName(cityName)}`)
+          ?? cityByProvinceName.get(`${provinceId}|${this.normalizeCityName(cityName)}`)
+        : undefined;
       const scopeErr = this.assertRowScope(batch.dataScopeJson, provinceId, cityId);
       if (scopeErr) { p.error = { type: 'scope', field: '省份名称', message: scopeErr }; pending.push(p); return; }
 
@@ -264,7 +347,7 @@ export class BizOrderImportService {
       p.businessMonth = `${orderTime.getFullYear()}-${String(orderTime.getMonth() + 1).padStart(2, '0')}`;
 
       // F 列金额：空/非数值 → 错误；正/零/负全部入账（DEV-034）
-      const amount = amountRaw === '' ? NaN : Number(amountRaw);
+      const amount = this.parseOrderAmount(amountRaw);
       if (!Number.isFinite(amount)) { p.error = { type: 'amount', field: '含税总金额', message: `金额「${amountRaw}」不是有效数值` }; pending.push(p); return; }
       p.completionAmountFen = Math.round(amount * 100);
 
@@ -273,28 +356,26 @@ export class BizOrderImportService {
       const effective = rates.filter((r) => r.effectiveMonth <= p.businessMonth!).sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth))[0];
       if (!effective) { p.error = { type: 'rate', field: '管理费率', message: `合同「${contractNo}」地市在 ${p.businessMonth} 无生效费率` }; pending.push(p); return; }
       p.feeRateSnapshotBp = effective.rateBp;
-      p.grossProfitFen = Math.round((p.completionAmountFen * effective.rateBp) / 10000);
+      p.grossProfitFen = Math.round((p.completionAmountFen * p.feeRateSnapshotBp) / 10000);
 
       pending.push(p);
     });
 
     for (const p of pending) if (p.error) errors.push({ type: p.error.type, rowNo: p.sourceRowNo, field: p.error.field, message: p.error.message });
 
-    // 4. 任一错误 → FAILED 零写入 + 错误报告
-    if (errors.length > 0) {
-      const entities = errors.map((e) => ({
-        id: randomUUID(), batchId, errorType: e.type, rowNo: e.rowNo, field: e.field, message: e.message,
-      }));
-      for (let i = 0; i < entities.length; i += 300) {
-        await this.errorRepo.save(entities.slice(i, i + 300));
-      }
-    }
-
-    // 5. 全过 → 事务插入 + IMPORTED
+    // 4. 原始行、错误、接替关系与上传记录状态必须原子提交。
     batch.totalRows = pending.length;
     batch.importedRows = pending.filter((p) => !p.error).length;
     batch.failureReason = errors.length > 0 ? `已保存全部 ${pending.length} 行，其中 ${errors.length} 行待维护` : null;
     await this.dataSource.transaction(async (manager) => {
+      if (errors.length > 0) {
+        const entities = errors.map((e) => ({
+          id: randomUUID(), batchId, errorType: e.type, rowNo: e.rowNo, field: e.field, message: e.message,
+        }));
+        for (let i = 0; i < entities.length; i += 300) {
+          await manager.insert(BizOrderImportErrorEntity, entities.slice(i, i + 300));
+        }
+      }
       // SQLite/MySQL 变量数上限：300 行 × ~60 列 = 18k 参数，兼容 SQLITE_MAX_VARIABLE_NUMBER
       const chunk = 300;
       for (let i = 0; i < pending.length; i += chunk) {
@@ -352,8 +433,28 @@ export class BizOrderImportService {
             sourceRowJson: p.raw,
             validationStatus: p.error ? 'needs_review' : 'valid',
             validationError: p.error?.message ?? null,
+            replacesOrderRowId: p.replacesOrderRowId,
           })),
         ).execute();
+      }
+      if (batch.batchPurpose === 'correction') {
+        const replaceIds = pending.filter((p) => p.replacesOrderRowId).map((p) => p.replacesOrderRowId as string);
+        if (replaceIds.length > 0) {
+          const replaced = await manager.createQueryBuilder()
+            .update(BizOrderRowEntity)
+            .set({
+              validationStatus: 'superseded', resolvedByBatchId: batch.id,
+              resolvedByUserId: batch.uploadedBy, resolvedAt: new Date(),
+            })
+            .where('id IN (:...replaceIds)', { replaceIds })
+            .andWhere('batch_id = :sourceBatchId', { sourceBatchId: batch.sourceBatchId ?? '' })
+            .andWhere('validation_status = :reviewStatus', { reviewStatus: 'needs_review' })
+            .andWhere('resolved_by_batch_id IS NULL')
+            .execute();
+          if ((replaced.affected ?? 0) !== replaceIds.length) {
+            throw new Error('来源订单行已被其他修正上传接替，请重新下载最新待维护文件');
+          }
+        }
       }
       batch.status = OrderBatchStatus.IMPORTED;
       await manager.save(batch);
@@ -441,9 +542,45 @@ export class BizOrderImportService {
     return value.replace(/\s/g, '').replace(/\(/g, '（').replace(/\)/g, '）').toLowerCase();
   }
 
+  private normalizeProvinceName(value: string): string {
+    return value.trim()
+      .replace(/\s/g, '')
+      .replace(/(?:特别行政区|维吾尔自治区|回族自治区|壮族自治区|自治区|省|市)$/, '')
+      .toLowerCase();
+  }
+
+  private provinceNameAliases(name: string, code: string): string[] {
+    const normalizedName = this.normalizeProvinceName(name);
+    const normalizedCode = code.trim().toLowerCase();
+    return [...new Set([normalizedName, normalizedCode])].filter(Boolean);
+  }
+
+  private parseOrderAmount(raw: string): number {
+    const normalized = raw.trim().replace(/[￥¥元,，\s]/g, '');
+    return normalized === '' ? Number.NaN : Number(normalized);
+  }
+
+  private stringifyOrderCell(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) {
+      const year = value.getFullYear();
+      const month = String(value.getMonth() + 1).padStart(2, '0');
+      const day = String(value.getDate()).padStart(2, '0');
+      const hour = String(value.getHours()).padStart(2, '0');
+      const minute = String(value.getMinutes()).padStart(2, '0');
+      const second = String(value.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+    }
+    return String(value).trim();
+  }
+
   /** Normalize city-company labels such as "XX市公司" and "XX市分公司". */
   private normalizeCityName(value: string): string {
     return value.trim().replace(/\s/g, '').replace(/(?:分)?公司$/, '');
+  }
+
+  private normalizeRawCityName(value: string): string {
+    return value.trim().replace(/\s/g, '').toLowerCase();
   }
 
   private cityNameAliases(value: string): string[] {
@@ -451,6 +588,50 @@ export class BizOrderImportService {
     if (!normalized) return [];
     const withoutSuffix = normalized.endsWith('市') ? normalized.slice(0, -1) : normalized;
     return [...new Set([normalized, withoutSuffix, `${withoutSuffix}市`])];
+  }
+
+  private resolveCorrectionIndexes(wb: XLSX.WorkBook): { sourceBatch?: number; sourceRow?: number } {
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
+    const header = (rows[0] ?? []).map((v) => this.normalizeHeader(String(v)));
+    const indexOf = (value: string): number | undefined => {
+      const index = header.indexOf(this.normalizeHeader(value));
+      return index >= 0 ? index : undefined;
+    };
+    return { sourceBatch: indexOf(CORRECTION_SOURCE_BATCH_HEADER), sourceRow: indexOf(CORRECTION_SOURCE_ROW_HEADER) };
+  }
+
+  private cellFromRow(row: string[], index: number | undefined): string {
+    return index === undefined ? '' : String(row[index] ?? '').trim();
+  }
+
+  private correctionSourceRowId(row: string[], indexes: { sourceRow?: number }): string | null {
+    const value = this.cellFromRow(row, indexes.sourceRow);
+    return value || null;
+  }
+
+  private async loadCorrectionSourceRows(sourceBatchId: string | null, scopeJson: string | null): Promise<Map<string, BizOrderRowEntity>> {
+    if (!sourceBatchId) throw new BadRequestException('修正批次缺少来源批次');
+    const rows = await this.rowRepo.find({ where: { batchId: sourceBatchId, validationStatus: 'needs_review' } });
+    const result = new Map<string, BizOrderRowEntity>();
+    for (const row of rows) {
+      if (row.resolvedByBatchId || !this.rowMatchesScopeSnapshot(row, scopeJson)) continue;
+      result.set(row.id, row);
+    }
+    return result;
+  }
+
+  private rowMatchesScopeSnapshot(row: BizOrderRowEntity, scopeJson: string | null): boolean {
+    if (!scopeJson) return true;
+    let scope: { scopeType?: string; provinceIds?: string[]; cityId?: string | null };
+    try { scope = JSON.parse(scopeJson) as { scopeType?: string; provinceIds?: string[]; cityId?: string | null }; }
+    catch { return false; }
+    if (scope.scopeType === 'all') return true;
+    if (scope.scopeType === 'province') {
+      return !scope.provinceIds?.length || (row.provinceId != null && scope.provinceIds.includes(row.provinceId));
+    }
+    if (scope.scopeType === 'city') return row.cityId != null && row.cityId === scope.cityId;
+    return false;
   }
 
   private assertTemplateStructure(wb: XLSX.WorkBook): string | null {
@@ -477,7 +658,7 @@ export class BizOrderImportService {
     const trimmed = raw.trim();
     // 字符串日期
     if (/^\d{4}[-/.]/.test(trimmed)) {
-      const parsed = new Date(trimmed);
+      const parsed = new Date(trimmed.replace(/[.\/]/g, '-'));
       return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
     // Excel 日期序列号（25569 = 1970-01-01 的 Excel 序列号）
@@ -573,6 +754,66 @@ export class BizOrderImportService {
     return { batch, errors, rowCount };
   }
 
+  async exportReviewFile(auth: BizAuthContext, id: string, sensitive: boolean): Promise<{ filename: string; buffer: Buffer }> {
+    const detail = await this.batchDetail(auth, id);
+    const batch = detail.batch;
+    const visibleCityIds = await this.visibleCityIds(auth);
+    const rowQuery = this.rowRepo.createQueryBuilder('r')
+      .where('r.batch_id = :batchId', { batchId: id })
+      .andWhere('r.validation_status = :reviewStatus', { reviewStatus: 'needs_review' })
+      .orderBy('r.source_row_no', 'ASC');
+    if (visibleCityIds) {
+      if (visibleCityIds.length === 0) throw new ForbiddenException('数据范围不足');
+      rowQuery.andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds });
+    }
+    const rows = await rowQuery.getMany();
+    if (rows.length === 0) throw new BadRequestException('该批次没有可下载的待维护订单');
+    const errorByRow = new Map(detail.errors.filter((item) => item.rowNo != null).map((item) => [Number(item.rowNo), item.message]));
+    const headers = [...ORDER_TEMPLATE_COLUMNS, ...CORRECTION_HEADERS];
+    const values = rows.map((row) => {
+      const raw = this.rawValuesFromRow(row, sensitive);
+      return [
+        ...raw,
+        batch.id,
+        row.id,
+        row.sourceRowNo,
+        errorByRow.get(row.sourceRowNo) ?? row.validationError ?? '',
+      ];
+    });
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, '待维护订单');
+    return {
+      filename: `订单待维护-${batch.id.slice(0, 8)}.xlsx`,
+      buffer: Buffer.from(XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' })),
+    };
+  }
+
+  private rawValuesFromRow(row: BizOrderRowEntity, sensitive: boolean): string[] {
+    const sourceValues = row.sourceRowJson?.slice(0, ORDER_TEMPLATE_COLUMN_COUNT) ?? [];
+    const fallback = new Array<string>(ORDER_TEMPLATE_COLUMN_COUNT).fill('');
+    for (let index = 0; index < sourceValues.length; index += 1) fallback[index] = String(sourceValues[index] ?? '');
+    fallback[0] = row.provinceName ?? '';
+    fallback[1] = row.cityName ?? '';
+    fallback[2] = row.purchaseOrderNo ?? '';
+    fallback[3] = row.supplierName ?? '';
+    fallback[4] = row.orderMainStatus ?? '';
+    fallback[5] = row.taxInclusiveAmountRaw ?? '';
+    fallback[8] = row.contractNoRaw ?? '';
+    fallback[18] = row.receiverNameEnc ?? '';
+    fallback[19] = row.receiverPhoneEnc ?? '';
+    fallback[20] = row.receiverAddressEnc ?? '';
+    fallback[22] = row.orderTimeRaw ?? '';
+    if (!sensitive) {
+      for (const index of ORDER_TEMPLATE_SENSITIVE_COLUMN_INDEXES_0BASED) {
+        if (index === 18) fallback[index] = this.maskName(fallback[index]);
+        if (index === 19) fallback[index] = this.maskPhone(fallback[index]) ?? '';
+        if (index === 20) fallback[index] = this.maskAddress(fallback[index]) ?? '';
+      }
+    }
+    return fallback;
+  }
+
   /** Re-validate a retained raw row after an administrator fixes normalized reference data. */
   async maintainRow(auth: BizAuthContext, id: string, input: MaintainOrderRowInput): Promise<Record<string, unknown>> {
     const row = await this.rowRepo.findOneBy({ id });
@@ -601,7 +842,7 @@ export class BizOrderImportService {
     if (contract.provinceId !== provinceId) throw new BadRequestException('合同不属于所选省份');
     if (!allocation) throw new BadRequestException('合同尚未分配所选地市');
 
-    const amount = Number(String(row.taxInclusiveAmountRaw ?? '').replace(/,/g, '').trim());
+    const amount = this.parseOrderAmount(String(row.taxInclusiveAmountRaw ?? ''));
     const errors: Array<{ type: string; field: string; message: string }> = [];
     if (!Number.isFinite(amount)) errors.push({ type: 'amount', field: '含税总金额', message: `金额“${row.taxInclusiveAmountRaw ?? ''}”不是有效数值` });
     let rateBp: number | null = input.feeRateSnapshotBp ?? null;
@@ -609,8 +850,10 @@ export class BizOrderImportService {
       const effective = await this.contracts.getEffectiveRate(contractId, cityId, businessMonth);
       rateBp = effective?.rateBp ?? null;
     }
-    if (rateBp == null || !Number.isInteger(rateBp) || rateBp <= 0 || rateBp > 10000) {
+    if (rateBp == null) {
       errors.push({ type: 'rate', field: '管理费率', message: `合同“${contract.contractNo}”在 ${businessMonth} 没有有效管理费率` });
+    } else if (!Number.isInteger(rateBp) || rateBp < 0 || rateBp > 10000) {
+      errors.push({ type: 'rate', field: '管理费率', message: '管理费率必须在 0% 到 100% 之间' });
       rateBp = null;
     }
     const completionAmountFen = Number.isFinite(amount) ? Math.round(amount * 100) : null;
@@ -779,6 +1022,11 @@ export class BizOrderImportService {
   private maskPhone(v: string | null): string | null {
     if (!v || v.length < 7) return v;
     return `${v.slice(0, 3)}****${v.slice(-4)}`;
+  }
+
+  private maskName(v: string | null): string {
+    if (!v) return '';
+    return v.length === 1 ? '*' : `${v.slice(0, 1)}${'*'.repeat(Math.min(3, v.length - 1))}`;
   }
 
   private maskAddress(v: string | null): string | null {

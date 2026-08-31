@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, Not, In, IsNull } from 'typeorm';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
 import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole } from '@biz-reporting/shared-types';
 import { BizContractEntity } from '../contracts/biz-contract.entity';
@@ -15,8 +15,32 @@ import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
 import { BizSystemSettingEntity } from '../aggregates/biz-system-setting.entity';
+import { CityAliasEntity } from '../main-data/city-alias.entity';
+import { BizContractImportRecordEntity } from '../contracts/biz-contract-import-record.entity';
+import { BizContractImportSheetEntity } from '../contracts/biz-contract-import-sheet.entity';
+import { BizContractSourceRowEntity } from '../contracts/biz-contract-source-row.entity';
 import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 import { readWorkbookSafe, WORKBOOK_LIMITS } from '../common/files/workbook-policy';
+import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
+
+const LEDGER_PROVINCES: ReadonlyArray<{ code: string; name: string; aliases: string[] }> = [
+  { code: '110000', name: '北京市', aliases: ['北京'] }, { code: '120000', name: '天津市', aliases: ['天津'] },
+  { code: '130000', name: '河北省', aliases: ['河北'] }, { code: '140000', name: '山西省', aliases: ['山西'] },
+  { code: '150000', name: '内蒙古自治区', aliases: ['内蒙古', '内蒙古自治区'] }, { code: '210000', name: '辽宁省', aliases: ['辽宁'] },
+  { code: '220000', name: '吉林省', aliases: ['吉林'] }, { code: '230000', name: '黑龙江省', aliases: ['黑龙江'] },
+  { code: '310000', name: '上海市', aliases: ['上海'] }, { code: '320000', name: '江苏省', aliases: ['江苏'] },
+  { code: '330000', name: '浙江省', aliases: ['浙江'] }, { code: '340000', name: '安徽省', aliases: ['安徽'] },
+  { code: '350000', name: '福建省', aliases: ['福建'] }, { code: '360000', name: '江西省', aliases: ['江西'] },
+  { code: '370000', name: '山东省', aliases: ['山东'] }, { code: '410000', name: '河南省', aliases: ['河南'] },
+  { code: '420000', name: '湖北省', aliases: ['湖北'] }, { code: '430000', name: '湖南省', aliases: ['湖南'] },
+  { code: '440000', name: '广东省', aliases: ['广东'] }, { code: '450000', name: '广西壮族自治区', aliases: ['广西', '广西壮族自治区'] },
+  { code: '460000', name: '海南省', aliases: ['海南'] }, { code: '500000', name: '重庆市', aliases: ['重庆'] },
+  { code: '510000', name: '四川省', aliases: ['四川'] }, { code: '520000', name: '贵州省', aliases: ['贵州'] },
+  { code: '530000', name: '云南省', aliases: ['云南'] }, { code: '540000', name: '西藏自治区', aliases: ['西藏', '西藏自治区'] },
+  { code: '610000', name: '陕西省', aliases: ['陕西'] }, { code: '620000', name: '甘肃省', aliases: ['甘肃'] },
+  { code: '630000', name: '青海省', aliases: ['青海'] }, { code: '640000', name: '宁夏回族自治区', aliases: ['宁夏', '宁夏回族自治区'] },
+  { code: '650000', name: '新疆维吾尔自治区', aliases: ['新疆', '新疆维吾尔自治区'] },
+];
 
 export interface CreateContractDto {
   contractNo: string;
@@ -47,6 +71,34 @@ export interface FeeRateDto {
   effectiveMonth: string; // YYYY-MM
   rateBp: number; // 整数基点
   changeReason?: string | null;
+}
+
+export interface BulkFeeRateDto {
+  cityIds: string[];
+  effectiveMonth: string;
+  rateBp: number;
+  changeReason?: string | null;
+  overwrite?: boolean;
+}
+
+export interface CopyFeeRateDto {
+  sourceMonth: string;
+  targetMonth: string;
+  cityIds?: string[];
+  overwrite?: boolean;
+}
+
+export interface MaintainImportRowDto {
+  contractNo: string;
+  contractName: string;
+  provinceId: string;
+  cityIds: string[];
+  taxInclusiveAmountFen: number;
+  taxExclusiveAmountFen?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  signedDate?: string | null;
+  reason?: string | null;
 }
 
 export interface VoidContractDto {
@@ -85,6 +137,14 @@ export class BizContractsService {
     private readonly provinceRepo: Repository<ProvinceEntity>,
     @InjectRepository(CityEntity)
     private readonly cityRepo: Repository<CityEntity>,
+    @InjectRepository(CityAliasEntity)
+    private readonly cityAliasRepo: Repository<CityAliasEntity>,
+    @InjectRepository(BizContractImportRecordEntity)
+    private readonly importRecordRepo: Repository<BizContractImportRecordEntity>,
+    @InjectRepository(BizContractImportSheetEntity)
+    private readonly importSheetRepo: Repository<BizContractImportSheetEntity>,
+    @InjectRepository(BizContractSourceRowEntity)
+    private readonly sourceRowRepo: Repository<BizContractSourceRowEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
     @InjectRepository(BizCostEntryEntity)
@@ -93,6 +153,7 @@ export class BizContractsService {
     private readonly settingRepo: Repository<BizSystemSettingEntity>,
     private readonly rbac: RbacService,
     private readonly dataSource: DataSource,
+    private readonly aggregates: BizAggregateService,
   ) {}
 
   // ================= 基础 =================
@@ -172,7 +233,135 @@ export class BizContractsService {
         .distinct(true);
     }
     // contract_manager（scopeType='contract'）与 super_admin（all）不加过滤
-    return query.orderBy('c.createdAt', 'DESC').getMany();
+    const contracts = await query.orderBy('c.createdAt', 'DESC').getMany();
+    const provinces = await this.provinceRepo.find();
+    const provinceNames = new Map(provinces.map((province) => [province.id, province.name]));
+    return contracts.map((contract) => ({ ...contract, provinceName: provinceNames.get(contract.provinceId) ?? contract.provinceId }));
+  }
+
+  async overview(auth: BizAuthContext, filter: { provinceId?: string; cityId?: string; keyword?: string; startDate?: string; endDate?: string; status?: string }): Promise<BizContractEntity[]> {
+    const statuses = filter.status ? [filter.status] : [ContractStatus.ACTIVE, ContractStatus.COMPLETED];
+    const lists = await Promise.all(statuses.map((status) => this.list(auth, { provinceId: filter.provinceId, cityId: filter.cityId, keyword: filter.keyword, status })));
+    const startDate = filter.startDate?.trim();
+    const endDate = filter.endDate?.trim();
+    return [...new Map(lists.flat().filter((contract) => contract.sourceImportRecordId != null && (!startDate || (contract.startDate ?? '') >= startDate) && (!endDate || (contract.endDate ?? '') <= endDate)).map((contract) => [contract.id, contract])).values()];
+  }
+
+  /**
+   * 批量完工进度（合同概览"完工进度"列用）：按合同级口径
+   *   progressPct = (有效订单完工 + 已审核线下完工) / 含税合同金额 × 100
+   * 有效订单 = isVoid=false 且 validationStatus=valid；线下 = status=approved。
+   * 数据范围：沿用与列表一致的可见性（city 仅已分配本地市；province 仅范围内省份）。
+   * 金额<=0 或缺失 → 返回 null（前端显示 '-'）；不截断 >100%。
+   */
+  async batchProgress(auth: BizAuthContext, contractIds: string[]): Promise<Record<string, number | null>> {
+    const ids = [...new Set((contractIds ?? []).filter(Boolean))];
+    if (!ids.length) return {};
+    const contracts = await this.contractRepo.find({ where: { id: In(ids), deletedAt: IsNull() } });
+    if (!contracts.length) return {};
+
+    const scope = auth.dataScope;
+    let visibleIds: string[];
+    if (scope.scopeType === 'city') {
+      const allocs = await this.allocationRepo.find({
+        where: { contractId: In(contracts.map((c) => c.id)), cityId: scope.cityId ?? '', status: 'active' },
+      });
+      const okSet = new Set(allocs.map((a) => a.contractId));
+      visibleIds = contracts.filter((c) => okSet.has(c.id)).map((c) => c.id);
+    } else if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
+      visibleIds = contracts.filter((c) => scope.provinceIds.includes(c.provinceId)).map((c) => c.id);
+    } else {
+      visibleIds = contracts.map((c) => c.id);
+    }
+    if (!visibleIds.length) return {};
+
+    const orders = await this.orderRowRepo.find({ where: { contractId: In(visibleIds), isVoid: false, validationStatus: 'valid' } });
+    const offlines = await this.offlineRepo.find({ where: { contractId: In(visibleIds), status: 'approved' } });
+    const orderSum = new Map<string, number>();
+    for (const o of orders) orderSum.set(String(o.contractId), (orderSum.get(String(o.contractId)) ?? 0) + (Number(o.completionAmountFen) || 0));
+    const offlineSum = new Map<string, number>();
+    for (const o of offlines) offlineSum.set(String(o.contractId), (offlineSum.get(String(o.contractId)) ?? 0) + (Number(o.amountFen) || 0));
+
+    const result: Record<string, number | null> = {};
+    for (const c of contracts) {
+      if (!visibleIds.includes(c.id)) continue;
+      const amount = Number(c.taxInclusiveAmountFen) || 0;
+      const completion = (orderSum.get(c.id) ?? 0) + (offlineSum.get(c.id) ?? 0);
+      result[c.id] = amount > 0 ? (completion / amount) * 100 : null;
+    }
+    return result;
+  }
+
+  async listPendingImportRows(auth: BizAuthContext, keyword?: string): Promise<Array<Record<string, unknown>>> {
+    const scope = auth.dataScope;
+    const rows = await this.sourceRowRepo.find({ where: { normalizationStatus: 'needs_review' }, order: { createdAt: 'DESC', sourceRowNo: 'ASC' }, take: 500 });
+    const visibleRows = rows.filter((row) => {
+      if (auth.isSuperAdmin || scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
+      if (scope.scopeType === 'province') return !scope.provinceIds.length || (row.provinceId != null && scope.provinceIds.includes(row.provinceId));
+      return scope.scopeType === 'city' && row.cityId === scope.cityId;
+    });
+    const sheetIds = [...new Set(visibleRows.map((row) => row.sheetId))];
+    const sheets = sheetIds.length ? await this.importSheetRepo.findBy({ id: In(sheetIds) }) : [];
+    const sheetById = new Map(sheets.map((sheet) => [sheet.id, sheet]));
+    const normalizedKeyword = keyword?.trim().toLowerCase();
+    return visibleRows.map((row) => {
+      const sheet = sheetById.get(row.sheetId);
+      const cells = this.decodeSourceCells(row.cellsJson);
+      const read = (names: string[]) => this.cellByHeader(sheet?.headersJson ?? [], cells, names);
+      return {
+        id: `pending:${row.id}`, sourceRowId: row.id, sourceRowNo: row.sourceRowNo, importRecordId: row.importRecordId,
+        sheetName: sheet?.sheetName ?? '-', contractNo: this.normalizePrimaryContractNo(read(['甲方合同编号', '合同编号'])), contractName: read(['合同名称']),
+        provinceId: row.provinceId, provinceName: read(['省份']), cityName: read(['地市']),
+        taxInclusiveAmountRaw: read(['合同金额（含税，万元）']), signedDateRaw: read(['签订日期']), endDateRaw: read(['合同到期时间']),
+        validationError: row.normalizationMessage ?? '需要补充合同信息', status: 'needs_review', isPendingImport: true,
+      };
+    }).filter((row) => !normalizedKeyword || [row.contractNo, row.contractName, row.provinceName, row.cityName, row.validationError].some((value) => String(value ?? '').toLowerCase().includes(normalizedKeyword)));
+  }
+
+  async maintainImportRow(auth: BizAuthContext, sourceRowId: string, dto: MaintainImportRowDto): Promise<BizContractEntity> {
+    const sourceRow = await this.sourceRowRepo.findOneBy({ id: sourceRowId });
+    if (!sourceRow || sourceRow.normalizationStatus !== 'needs_review') throw new NotFoundException('待维护合同原始行不存在');
+    const scope = auth.dataScope;
+    if (!auth.isSuperAdmin && scope.scopeType !== 'all' && scope.scopeType !== 'contract') {
+      if (scope.scopeType === 'province' && sourceRow.provinceId != null && scope.provinceIds.includes(sourceRow.provinceId)) {
+        // province-scoped maintain is permitted for rows already mapped to this province.
+      } else if (scope.scopeType !== 'city' || sourceRow.cityId !== scope.cityId) throw new ForbiddenException('数据范围不足');
+    }
+    const contractNo = this.normalizePrimaryContractNo(dto.contractNo);
+    const contractName = dto.contractName.trim();
+    const cityIds = [...new Set(dto.cityIds.map((cityId) => cityId.trim()).filter(Boolean))].sort();
+    if (!contractNo || !contractName || !dto.provinceId || !Number.isFinite(dto.taxInclusiveAmountFen) || dto.taxInclusiveAmountFen <= 0) {
+      throw new BadRequestException('合同编号、合同名称、省份和正数含税合同金额为必填项');
+    }
+    if (await this.contractRepo.findOneBy({ contractNo })) throw new BadRequestException('合同编号已存在');
+    const province = await this.provinceRepo.findOneBy({ id: dto.provinceId });
+    if (!province) throw new BadRequestException('省份不存在');
+    const cities = cityIds.length ? await this.cityRepo.findBy({ id: In(cityIds), status: 'active' }) : [];
+    if (cities.length !== cityIds.length || cities.some((city) => city.provinceId !== dto.provinceId)) throw new BadRequestException('经营单位不存在或不属于所选省份');
+    const importSheet = await this.importSheetRepo.findOneBy({ id: sourceRow.sheetId });
+    const cells = this.decodeSourceCells(sourceRow.cellsJson);
+    const read = (names: string[]) => this.cellByHeader(importSheet?.headersJson ?? [], cells, names);
+    const contractId = randomUUID();
+    const amountFen = Math.round(dto.taxInclusiveAmountFen);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.insert(BizContractEntity, {
+        id: contractId, contractNo, contractName, taxInclusiveAmountFen: amountFen,
+        taxExclusiveAmountFen: dto.taxExclusiveAmountFen != null ? Math.round(dto.taxExclusiveAmountFen) : null,
+        archiveContractNo: read(['档案室合同编号']) || null, projectIdentityCode: read(['项目唯一识别编码']) || null,
+        contractCategory1: read(['合同分类-1']) || null, contractCategory2: read(['合同分类-2']) || null,
+        winningProjectName: read(['中标项目名称']) || null, signedDate: dto.signedDate ?? this.parseLedgerDate(read(['签订日期'])),
+        taxRateRaw: read(['税率']) || null, taxRateBp: null, taxRateBpsJson: this.parseTaxRateBps(read(['税率'])),
+        sourceImportRecordId: sourceRow.importRecordId, sourceSheetId: sourceRow.sheetId, sourceRowId: sourceRow.id, sourceRowNo: sourceRow.sourceRowNo,
+        provinceId: dto.provinceId, startDate: dto.startDate ?? null, endDate: dto.endDate ?? null,
+        status: ContractStatus.ACTIVE, tags: [], amountLocked: true, parentContractId: null, versionNo: 1, createdBy: auth.userId, updatedBy: auth.userId,
+      });
+      for (const [cityId, quotaFen] of this.averageAllocationFens(amountFen, cityIds)) {
+        await manager.insert(BizContractCityAllocationEntity, { id: randomUUID(), contractId, cityId, quotaFen, status: 'active', versionNo: 1 });
+      }
+      await manager.update(BizContractSourceRowEntity, { id: sourceRow.id }, { normalizationStatus: 'valid', normalizationMessage: dto.reason?.trim() || null, provinceId: dto.provinceId, cityId: cityIds.length === 1 ? cityIds[0] : null, contractId });
+      await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import_row.maintain', targetType: 'contract', targetId: contractId, resultStatus: 'success', batchId: sourceRow.importRecordId, summaryAfter: dto.reason?.trim() || '待维护台账行已创建执行中合同' });
+    });
+    return this.getContractOrFail(contractId);
   }
 
   /** 详情聚合（基础/分配/费率/进度/预警/来源汇总） */
@@ -195,7 +384,8 @@ export class BizContractsService {
 
     const allocations = (await this.allocationRepo.findBy({ contractId: id })).filter((a) => inScope(a.cityId));
     const feeRates = (await this.feeRateRepo.findBy({ contractId: id })).filter((f) => inScope(f.cityId));
-    const alerts = await this.alertRepo.findBy({ contractId: id, currentStatus: 'active' });
+    const alerts = (await this.alertRepo.findBy({ contractId: id, currentStatus: 'active' }))
+      .filter((alert) => alert.alertType !== ContractTag.EXPIRED);
 
     // 有效完工（订单未作废 + 线下完工已审核未作废；按可见地市过滤）
     const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
@@ -259,6 +449,17 @@ export class BizContractsService {
         parentContractId: contract.parentContractId,
         versionNo: contract.versionNo,
         createdAt: contract.createdAt,
+        archiveContractNo: contract.archiveContractNo,
+        projectIdentityCode: contract.projectIdentityCode,
+        contractCategory1: contract.contractCategory1,
+        contractCategory2: contract.contractCategory2,
+        winningProjectName: contract.winningProjectName,
+        signedDate: contract.signedDate,
+        taxRateRaw: contract.taxRateRaw,
+        taxRateBp: contract.taxRateBp,
+        sourceImportRecordId: contract.sourceImportRecordId,
+        sourceSheetId: contract.sourceSheetId,
+        sourceRowNo: contract.sourceRowNo,
       },
       allocations: cityRows,
       feeRates: feeRates.map((f) => ({ cityId: f.cityId, effectiveMonth: f.effectiveMonth, rateBp: f.rateBp, changeReason: f.changeReason })),
@@ -283,7 +484,7 @@ export class BizContractsService {
   // ================= 创建/编辑 =================
 
   async create(auth: BizAuthContext, dto: CreateContractDto): Promise<BizContractEntity> {
-    const contractNo = dto.contractNo.trim();
+    const contractNo = this.normalizePrimaryContractNo(dto.contractNo);
     if (!contractNo) throw new BadRequestException('合同编号不能为空');
     const existing = await this.contractRepo.findOneBy({ contractNo });
     if (existing) throw new BadRequestException('合同编号已存在'); // CON-001 服务端唯一
@@ -346,7 +547,7 @@ export class BizContractsService {
         const index = indexes.get(name);
         return index === undefined ? '' : values[index] ?? '';
       };
-      const contractNo = read('合同编号');
+      const contractNo = this.normalizePrimaryContractNo(read('合同编号'));
       const contractName = read('合同名称');
       const amountText = read('含税合同额（元）').replace(/,/g, '');
       const amount = Number(amountText);
@@ -413,125 +614,296 @@ export class BizContractsService {
     return { created: pending.length, contractNos: pending.map((row) => row.contractNo) };
   }
 
-  async importWorkbookWithAllocations(auth: BizAuthContext, filename: string, buffer: Buffer): Promise<{ created: number; contractNos: string[]; allocations: number; feeRates: number; issues: string[] }> {
-    if (!filename.toLowerCase().endsWith('.xlsx')) throw new BadRequestException('仅支持 .xlsx 合同文件');
+  async importWorkbookWithAllocations(auth: BizAuthContext, filename: string, buffer: Buffer): Promise<Record<string, unknown>> {
+    if (!filename.toLowerCase().endsWith('.xlsx')) throw new BadRequestException('仅支持 .xlsx 原始合同台账');
     if (!['super_admin', 'admin', 'contract_manager'].includes(auth.roleCode)) throw new ForbiddenException('当前账号无合同导入权限');
-
     const workbook = readWorkbookSafe(buffer, { maxRowsPerSheet: WORKBOOK_LIMITS.maxRowsPerSheet });
-    if (workbook.SheetNames.length !== 1) throw new BadRequestException('合同导入文件必须包含一个工作表');
-    const sourceRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: true, defval: '' });
-    const header = (sourceRows[0] ?? []).map((value) => String(value).trim());
-    const indexOf = (aliases: string[]) => header.findIndex((value) => aliases.includes(this.normalizeImportHeader(value)));
-    const indexes = {
-      province: indexOf(['省份名称', '所属省份', '省份']),
-      city: indexOf(['地市名称', '地市', '市公司']),
-      contractNo: indexOf(['合同编号', '合同号']),
-      contractName: indexOf(['合同名称', '合同名']),
-      amount: indexOf(['合同含税金额', '合同含税总额（元）', '含税合同额（元）', '含税合同额', '合同金额（元）', '合同金额']),
-      period: indexOf(['合同期限', '合同日期', '合同起止日期']),
-      startDate: indexOf(['开始日期', '合同开始日期']),
-      endDate: indexOf(['结束日期', '合同结束日期']),
-      rate: indexOf(['管理费比例', '管理费率', '费率']),
-    };
-    const missing = Object.entries(indexes).filter(([key, value]) => ['province', 'city', 'contractNo', 'contractName', 'amount', 'rate'].includes(key) && value < 0).map(([key]) => key);
-    if (missing.length) throw new BadRequestException(`缺少合同导入必填列：${missing.join('、')}`);
+    const fileHash = createHash('sha256').update(buffer).digest('hex');
+    if (await this.importRecordRepo.findOneBy({ fileHash })) throw new BadRequestException('该文件已上传过，请从上传记录查看结果');
 
+    const ledgerAreaHints = this.collectLedgerAreaHints(workbook);
+    const provinces = await this.provinceRepo.find();
     const provinceByKey = new Map<string, string>();
-    for (const province of await this.provinceRepo.find()) {
-      provinceByKey.set(this.normalizeAreaName(province.name), province.id);
-      provinceByKey.set(province.code.trim(), province.id);
+    const provinceCodeById = new Map<string, string>();
+    const pendingProvinces: Array<Partial<ProvinceEntity>> = [];
+    for (const province of provinces) {
+      provinceByKey.set(this.normalizeLedgerName(province.name), province.id);
+      provinceByKey.set(this.normalizeLedgerName(province.code), province.id);
+      const standard = LEDGER_PROVINCES.find((item) => item.code === province.code);
+      for (const alias of standard?.aliases ?? []) {
+        provinceByKey.set(this.normalizeLedgerName(alias), province.id);
+      }
+      provinceCodeById.set(province.id, province.code);
     }
-    const cityByKey = new Map<string, CityEntity>();
-    for (const city of await this.cityRepo.find()) {
-      cityByKey.set(`${city.provinceId}:${this.normalizeAreaName(city.name)}`, city);
-      cityByKey.set(`${city.provinceId}:${city.code.trim()}`, city);
+    for (const hint of ledgerAreaHints) {
+      const known = this.findLedgerProvince(hint.provinceText);
+      if (!known) continue;
+      const normalizedName = this.normalizeLedgerName(known.name);
+      if (provinceByKey.has(normalizedName)) continue;
+      const id = this.stableUuid(`province:${known.code}`);
+      const province: Partial<ProvinceEntity> = { id, code: known.code, name: known.name, status: 'active' };
+      pendingProvinces.push(province);
+      provinceByKey.set(normalizedName, id);
+      for (const alias of known.aliases) provinceByKey.set(this.normalizeLedgerName(alias), id);
+      provinceCodeById.set(id, known.code);
+    }
+    const units = await this.cityRepo.find({ where: { status: 'active' } });
+    const aliases = await this.cityAliasRepo.find();
+    const unitByKey = new Map<string, CityEntity>();
+    for (const unit of units) unitByKey.set(`${unit.provinceId}|${this.normalizeLedgerName(unit.name)}`, unit);
+    for (const alias of aliases) {
+      const unit = units.find((item) => item.id === alias.cityId);
+      if (unit) unitByKey.set(`${unit.provinceId}|${this.normalizeLedgerName(alias.alias)}`, unit);
+    }
+    const pendingCities: CityEntity[] = [];
+    const unitKeySet = new Set(unitByKey.keys());
+    for (const hint of ledgerAreaHints) {
+      const provinceId = provinceByKey.get(this.normalizeLedgerName(hint.provinceText));
+      if (!provinceId) continue;
+      const provinceCode = provinceCodeById.get(provinceId);
+      if (!provinceCode) continue;
+      for (const cityToken of this.extractLedgerCityTokens(hint.cityText)) {
+        const normalizedCity = this.normalizeLedgerName(cityToken);
+        const key = `${provinceId}|${normalizedCity}`;
+        if (unitKeySet.has(key)) continue;
+        const cityId = this.stableUuid(`city:${provinceCode}:${normalizedCity}`);
+        const adminSuffix = /(市|盟|旗|自治州|地区|区|县)$/;
+        const cityName = adminSuffix.test(cityToken) ? cityToken : `${cityToken}市`;
+        const city: CityEntity = { id: cityId, provinceId, code: `AUTO-${provinceCode}-${cityId.slice(0, 8)}`, name: cityName, unitType: 'city', status: 'active', createdAt: new Date(), updatedAt: new Date() };
+        pendingCities.push(city);
+        units.push(city);
+        unitKeySet.add(key);
+      }
     }
 
-    type ImportRow = { rowNo: number; contractNo: string; contractName: string; amountFen: number; provinceId: string; cityId?: string; rateBp?: number; startDate: string | null; endDate: string | null };
-    const rows: ImportRow[] = [];
-    const errors: string[] = [];
+    const recordId = randomUUID();
     const issues: string[] = [];
-    sourceRows.slice(1).forEach((source, offset) => {
-      const values = Array.isArray(source) ? source : [];
-      if (values.every((value) => String(value ?? '').trim() === '')) return;
-      const read = (index: number) => index < 0 ? '' : String(values[index] ?? '').trim();
-      const rowNo = offset + 2;
-      const provinceText = read(indexes.province);
-      const cityText = read(indexes.city);
-      const amountText = read(indexes.amount).replace(/[￥¥元,，]/g, '').trim();
-      const rateText = read(indexes.rate).replace(/％/g, '%').trim();
-      const provinceId = provinceByKey.get(this.normalizeAreaName(provinceText));
-      const city = provinceId ? cityByKey.get(`${provinceId}:${this.normalizeAreaName(cityText)}`) : undefined;
-      const amount = Number(amountText);
-      const rateBp = this.parseImportRate(rateText);
-      const period = this.parseImportPeriod(read(indexes.period));
-      const startDate = this.normalizeContractDate(read(indexes.startDate)) ?? period.startDate;
-      const endDate = this.normalizeContractDate(read(indexes.endDate)) ?? period.endDate;
-      const contractNo = read(indexes.contractNo);
-      const contractName = read(indexes.contractName);
-      const rowErrors: string[] = [];
-      const rowIssues: string[] = [];
-      if (!contractNo) rowErrors.push('合同编号为空');
-      if (!contractName) rowErrors.push('合同名称为空');
-      if (!provinceId) rowErrors.push(`省份无法匹配：${provinceText || '空'}`);
-      if (!Number.isFinite(amount) || amount < 0) rowErrors.push(`含税金额无效：${amountText || '空'}`);
-      if (!city) rowIssues.push(`地市无法匹配：${cityText || '空'}（省级公司不能替代具体地市）`);
-      if (rateBp == null) rowIssues.push(`管理费率无效：${rateText || '空'}`);
-      if ((read(indexes.startDate) && !startDate) || (read(indexes.endDate) && !endDate) || (read(indexes.period) && !startDate && !endDate)) rowIssues.push('合同期限无法解析，需在生效前补充起止日期');
-      if (rowErrors.length) {
-        errors.push(`第 ${rowNo} 行：${rowErrors.join('；')}`);
-        return;
+    const contractNos = new Map<string, number>();
+    type ParsedLedgerRow = { sourceRow: BizContractSourceRowEntity; parsed: { contractNo: string; contractName: string; provinceId: string | null; cityIds: string[]; amountFen: number | null; amountExclusiveFen: number | null; taxRateRaw: string; taxRates: number[]; signedDate: string | null; startDate: string | null; endDate: string | null; archiveNo: string; projectCode: string; category1: string; category2: string; winningProject: string }; cityText: string };
+    const preparedSheets: Array<{ sheet: BizContractImportSheetEntity; rows: BizContractSourceRowEntity[]; headers: string[]; values: unknown[][]; indexes: Record<string, number>; isContractSheet: boolean; parsedRows: ParsedLedgerRow[] }> = [];
+    let totalRows = 0;
+    for (let sheetIndex = 0; sheetIndex < workbook.SheetNames.length; sheetIndex += 1) {
+      const sheetName = workbook.SheetNames[sheetIndex];
+      const sheet = workbook.Sheets[sheetName];
+      const ref = sheet['!ref'] ?? 'A1:A1';
+      const range = XLSX.utils.decode_range(ref);
+      const values = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: null });
+      const headers = (values[0] ?? []).map((value) => String(value ?? ''));
+      const normalized = headers.map((value) => this.normalizeImportHeader(value));
+      const indexOf = (names: string[]) => names.map((name) => this.normalizeImportHeader(name)).map((name) => normalized.indexOf(name)).find((index) => index >= 0) ?? -1;
+      const indexes = {
+        archiveNo: indexOf(['档案室合同编号']), contractNo: indexOf(['甲方合同编号', '合同编号']), projectCode: indexOf(['项目唯一识别编码']),
+        category1: indexOf(['合同分类-1']), category2: indexOf(['合同分类-2']), winningProject: indexOf(['中标项目名称']), contractName: indexOf(['合同名称']),
+        province: indexOf(['省份']), city: indexOf(['地市']), taxExclusive: indexOf(['合同金额（不含税，万元）']), taxRate: indexOf(['税率']), taxInclusive: indexOf(['合同金额（含税，万元）']),
+        signedDate: indexOf(['签订日期']), endDate: indexOf(['合同到期时间']), period: indexOf(['合同期限']),
+      };
+      const isContractSheet = indexes.contractNo >= 0 && indexes.contractName >= 0 && indexes.province >= 0 && indexes.taxInclusive >= 0;
+      const importSheet: BizContractImportSheetEntity = { id: randomUUID(), importRecordId: recordId, sheetIndex, sheetName, startRow: range.s.r + 1, startCol: range.s.c + 1, rowCount: range.e.r - range.s.r + 1, columnCount: range.e.c - range.s.c + 1, headerRowNo: 1, headersJson: headers, isContractSheet, createdAt: new Date() };
+      const sourceRows: BizContractSourceRowEntity[] = [];
+      const normalizedRows = values.map((row, offset) => {
+        const fixed = Array.from({ length: importSheet.columnCount }, (_, col) => row?.[col] ?? null);
+        const cells = fixed.map((value) => this.encodeLedgerCell(value));
+        const blank = fixed.every((value) => value === null || value === undefined || String(value).trim() === '');
+        const rowNo = offset + 1;
+        sourceRows.push({ id: randomUUID(), importRecordId: recordId, sheetId: importSheet.id, sourceRowNo: rowNo, rowKind: rowNo === 1 ? 'header' : blank ? 'blank' : 'data', cellsJson: JSON.stringify(cells), normalizationStatus: isContractSheet && rowNo > 1 && !blank ? 'needs_review' : 'archived', normalizationMessage: null, provinceId: null, cityId: null, contractId: null, createdAt: new Date() });
+        return fixed;
+      });
+      const parsedRows: ParsedLedgerRow[] = [];
+      if (isContractSheet) {
+        for (let offset = 1; offset < normalizedRows.length; offset += 1) {
+          const raw = normalizedRows[offset];
+          if (raw.every((value) => value === null || value === undefined || String(value).trim() === '')) continue;
+          totalRows += 1;
+          const sourceRow = sourceRows[offset];
+          const read = (index: number) => index < 0 ? '' : String(raw[index] ?? '').trim();
+          const contractNo = this.normalizePrimaryContractNo(read(indexes.contractNo));
+          const groupKey = contractNo && !this.isPlaceholder(contractNo) ? contractNo : `__row_${recordId}_${sheetIndex}_${offset + 1}`;
+          contractNos.set(groupKey, (contractNos.get(groupKey) ?? 0) + 1);
+          const contractName = read(indexes.contractName);
+          const provinceText = read(indexes.province);
+          const provinceId = provinceByKey.get(this.normalizeLedgerName(provinceText));
+        const cityText = read(indexes.city);
+        const candidateCities = provinceId ? this.matchLedgerUnits(cityText, provinceId, units, aliases) : [];
+        const city = candidateCities.length === 1 ? candidateCities[0] : undefined;
+          const amountFen = this.parseWanToFen(raw[indexes.taxInclusive]);
+          const amountExclusiveFen = this.parseWanToFen(raw[indexes.taxExclusive]);
+          const taxRateRaw = read(indexes.taxRate);
+          const taxRates = this.parseTaxRateBps(taxRateRaw);
+          const signedDate = this.parseLedgerDate(raw[indexes.signedDate]);
+          const periodDates = this.parsePeriodDates(read(indexes.period));
+          const endDate = this.parseLedgerDate(raw[indexes.endDate]) ?? periodDates.endDate;
+          const startDate = periodDates.startDate;
+          const blockingIssues: string[] = [];
+          const warnings: string[] = [];
+          if (!contractNo || this.isPlaceholder(contractNo)) blockingIssues.push('甲方合同编号为空或为占位值');
+          if (!contractName) blockingIssues.push('合同名称为空');
+          if (!provinceId) blockingIssues.push(`省份无法精确匹配：${provinceText || '空'}`);
+          if (amountFen == null || !Number.isSafeInteger(amountFen) || amountFen < 0) blockingIssues.push('含税合同金额（万元）无法解析');
+          if (!signedDate && read(indexes.signedDate)) blockingIssues.push('签订日期无法解析');
+          if (!endDate && read(indexes.endDate) && !this.isPlaceholder(read(indexes.endDate))) blockingIssues.push('合同到期时间无法解析');
+          if (!candidateCities.length && cityText) warnings.push(`地市无法精确映射：${cityText}`);
+          const messages = [...blockingIssues, ...warnings];
+          sourceRow.normalizationStatus = blockingIssues.length ? 'needs_review' : 'valid';
+          sourceRow.normalizationMessage = messages.length ? messages.join('；') : null;
+          sourceRow.provinceId = provinceId ?? null;
+          sourceRow.cityId = city?.id ?? null;
+          if (messages.length) issues.push(`第 ${offset + 1} 行：${messages.join('；')}`);
+          parsedRows.push({ sourceRow, cityText, parsed: { contractNo, contractName, provinceId: provinceId ?? null, cityIds: candidateCities.map((item) => item.id), amountFen, amountExclusiveFen, taxRateRaw, taxRates, signedDate, startDate, endDate, archiveNo: read(indexes.archiveNo), projectCode: read(indexes.projectCode), category1: read(indexes.category1), category2: read(indexes.category2), winningProject: read(indexes.winningProject) } });
+        }
       }
-      if (rowIssues.length) issues.push(`第 ${rowNo} 行：${rowIssues.join('；')}`);
-      rows.push({ rowNo, contractNo, contractName, amountFen: Math.round(amount * 100), provinceId: provinceId as string, cityId: city?.id, rateBp: rateBp ?? undefined, startDate, endDate });
-    });
-    if (!rows.length && !errors.length) throw new BadRequestException('合同导入文件没有数据行');
-    if (errors.length && !rows.length) throw new BadRequestException(errors.slice(0, 20).join('；'));
-    issues.push(...errors);
-
-    const grouped = new Map<string, ImportRow[]>();
-    for (const row of rows) grouped.set(row.contractNo, [...(grouped.get(row.contractNo) ?? []), row]);
-    const existing = await this.contractRepo.findBy({ contractNo: In([...grouped.keys()]) });
-    for (const contract of existing) {
-      grouped.delete(contract.contractNo);
-      issues.push(`合同编号 ${contract.contractNo} 已存在，本次未重复导入`);
+      preparedSheets.push({ sheet: importSheet, rows: sourceRows, headers, values: normalizedRows, indexes, isContractSheet, parsedRows });
     }
+    if (!preparedSheets.some((item) => item.isContractSheet)) throw new BadRequestException('未找到包含甲方合同编号、合同名称、省份和含税金额的合同工作表');
+    const groups = new Map<string, ParsedLedgerRow[]>();
+    for (const prepared of preparedSheets) for (const row of prepared.parsedRows) {
+      const key = row.parsed.contractNo && !this.isPlaceholder(row.parsed.contractNo) ? row.parsed.contractNo : row.sourceRow.id;
+      const list = groups.get(key) ?? []; list.push(row); groups.set(key, list);
+    }
+    const existingContracts = groups.size ? await this.contractRepo.find({ where: { contractNo: In([...groups.keys()].filter((key) => !key.startsWith('__row_') && !this.isPlaceholder(key))) }, select: { id: true, contractNo: true } }) : [];
+    const existingByNo = new Map(existingContracts.map((contract) => [contract.contractNo, contract]));
+    for (const contractNo of existingByNo.keys()) issues.push(`合同编号已存在：${contractNo}`);
+    let validRows = 0; let reviewRows = 0; let allocationCount = 0; const createdContractNos: string[] = [];
+    const plannedContracts: Array<{ id: string; first: ParsedLedgerRow['parsed']; rows: ParsedLedgerRow[]; cityIds: string[] }> = [];
+    for (const [groupKey, rows] of groups) {
+      const first = rows[0].parsed;
+      const inconsistency: string[] = [];
+      const compare = (label: string, values: unknown[]) => { const normalized = values.map((value) => value == null ? '' : String(value)); if (new Set(normalized).size > 1) inconsistency.push(label); };
+      compare('合同名称', rows.map((row) => row.parsed.contractName)); compare('省份', rows.map((row) => row.parsed.provinceId)); compare('含税合同金额（万元）', rows.map((row) => row.parsed.amountFen)); compare('签订日期', rows.map((row) => row.parsed.signedDate)); compare('合同开始日期', rows.map((row) => row.parsed.startDate)); compare('合同到期日期', rows.map((row) => row.parsed.endDate));
+      const groupIssue = inconsistency.length ? `同合同编号组字段不一致：${inconsistency.join('、')}` : existingByNo.has(groupKey) ? `合同编号已存在：${groupKey}` : null;
+      const amountInvalid = first.amountFen == null || !Number.isSafeInteger(first.amountFen) || first.amountFen < 0;
+      const coreInvalid = !first.contractNo || this.isPlaceholder(first.contractNo) || !first.contractName || !first.provinceId || amountInvalid;
+      const coreIssues = [
+        !first.contractNo || this.isPlaceholder(first.contractNo) ? '合同编号为空或为占位值' : null,
+        !first.contractName ? '合同名称为空' : null,
+        !first.provinceId ? '省份无法精确匹配' : null,
+        amountInvalid ? '含税合同金额（万元）无法解析' : null,
+      ].filter((value): value is string => Boolean(value));
+      const cityIds = [...new Set(rows.flatMap((row) => row.parsed.cityIds))].sort();
+      const shouldCreate = !groupIssue && !coreInvalid;
+      let contractId: string | null = null;
+      if (shouldCreate) { contractId = randomUUID(); plannedContracts.push({ id: contractId, first, rows, cityIds }); createdContractNos.push(first.contractNo); }
+      for (const row of rows) {
+        const rowIssues = [groupIssue, ...coreIssues, row.parsed.cityIds.length === 0 && row.cityText ? `地市无法精确映射：${row.cityText}` : null].filter((value): value is string => Boolean(value));
+        row.sourceRow.normalizationStatus = rowIssues.length ? 'needs_review' : 'valid'; row.sourceRow.normalizationMessage = rowIssues.length ? rowIssues.join('；') : null; row.sourceRow.provinceId = row.parsed.provinceId; row.sourceRow.cityId = row.parsed.cityIds.length === 1 ? row.parsed.cityIds[0] : null; row.sourceRow.contractId = contractId;
+        if (rowIssues.length) { reviewRows += 1; issues.push(`第 ${row.sourceRow.sourceRowNo} 行：${rowIssues.join('；')}`); } else validRows += 1;
+      }
+    }
+    const record: BizContractImportRecordEntity = { id: recordId, filename, fileHash, status: 'imported', sheetCount: preparedSheets.length, totalRows, validRows: 0, reviewRows: 0, uploadedBy: auth.userId, dataScopeJson: JSON.stringify({ scopeType: auth.dataScope.scopeType, provinceIds: auth.dataScope.provinceIds ?? [], cityId: auth.dataScope.cityId ?? null }), completedAt: new Date(), failureReason: issues.length ? issues.slice(0, 100).join('；') : null, uploadedAt: new Date(), updatedAt: new Date() };
+    try {
+      await this.dataSource.transaction(async (manager) => {
+      if (pendingProvinces.length > 0) await manager.insert(ProvinceEntity, pendingProvinces);
+      if (pendingCities.length > 0) await manager.insert(CityEntity, pendingCities);
+      for (const province of pendingProvinces) {
+        await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'master_data.province.auto_configure', targetType: 'province', targetId: String(province.id), resultStatus: 'success', batchId: recordId });
+      }
+      for (const city of pendingCities) {
+        await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'master_data.city.auto_configure', targetType: 'city', targetId: city.id, resultStatus: 'success', batchId: recordId });
+      }
+      await manager.insert(BizContractImportRecordEntity, record);
+      for (const prepared of preparedSheets) {
+        await manager.insert(BizContractImportSheetEntity, prepared.sheet);
+        await manager.insert(BizContractSourceRowEntity, prepared.rows.map((row) => ({ ...row, contractId: null })));
+      }
+        for (const planned of plannedContracts) {
+          const first = planned.first;
+          await manager.insert(BizContractEntity, { id: planned.id, contractNo: first.contractNo, contractName: first.contractName, taxInclusiveAmountFen: first.amountFen as number, taxExclusiveAmountFen: first.amountExclusiveFen, archiveContractNo: first.archiveNo || null, projectIdentityCode: first.projectCode || null, contractCategory1: first.category1 || null, contractCategory2: first.category2 || null, winningProjectName: first.winningProject || null, signedDate: first.signedDate, taxRateRaw: first.taxRateRaw || null, taxRateBp: first.taxRates.length === 1 ? first.taxRates[0] : null, taxRateBpsJson: first.taxRates.length ? first.taxRates : null, sourceImportRecordId: recordId, sourceSheetId: planned.rows[0].sourceRow.sheetId, sourceRowId: planned.rows[0].sourceRow.id, sourceRowNo: planned.rows[0].sourceRow.sourceRowNo, provinceId: first.provinceId as string, startDate: first.startDate, endDate: first.endDate, status: ContractStatus.ACTIVE, tags: [], amountLocked: true, parentContractId: null, versionNo: 1, createdBy: auth.userId, updatedBy: auth.userId });
+          for (const [cityId, quotaFen] of this.averageAllocationFens(first.amountFen as number, planned.cityIds)) { await manager.insert(BizContractCityAllocationEntity, { id: randomUUID(), contractId: planned.id, cityId, quotaFen, status: 'active', versionNo: 1 }); allocationCount += 1; }
+          await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import', targetType: 'contract', targetId: planned.id, resultStatus: 'success', batchId: recordId });
+        }
+        for (const prepared of preparedSheets) for (const row of prepared.rows) if (row.contractId) await manager.update(BizContractSourceRowEntity, { id: row.id }, { contractId: row.contractId, normalizationStatus: row.normalizationStatus, normalizationMessage: row.normalizationMessage, provinceId: row.provinceId, cityId: row.cityId });
+        const actualReview = await manager.count(BizContractSourceRowEntity, { where: { importRecordId: recordId, normalizationStatus: 'needs_review' } }); const actualValid = await manager.count(BizContractSourceRowEntity, { where: { importRecordId: recordId, normalizationStatus: 'valid' } });
+        await manager.update(BizContractImportRecordEntity, { id: recordId }, { validRows: actualValid, reviewRows: actualReview }); await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import_record', targetType: 'contract_import_record', targetId: recordId, resultStatus: actualReview ? 'needs_review' : 'success', batchId: recordId });
+      });
+    } catch (error: unknown) {
+      if (!this.isDuplicateDatabaseError(error)) throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (/file.?hash|uk_biz_contract_import/i.test(errorMessage)) throw new BadRequestException('该文件已上传过，请从上传记录查看结果');
+      const conflictRecord: BizContractImportRecordEntity = { ...record, validRows: 0, reviewRows: totalRows, failureReason: '合同编号已存在，相关原始行已保存为待维护' };
+      const parsedByRowId = new Map(preparedSheets.flatMap((prepared) => prepared.parsedRows.map((row) => [row.sourceRow.id, row.parsed] as const)));
+      await this.dataSource.transaction(async (manager) => {
+        await manager.insert(BizContractImportRecordEntity, conflictRecord);
+        for (const prepared of preparedSheets) {
+          await manager.insert(BizContractImportSheetEntity, prepared.sheet);
+          const conflictRows = prepared.rows.map((row) => { const parsed = parsedByRowId.get(row.id); return { ...row, contractId: null, normalizationStatus: row.rowKind === 'data' ? 'needs_review' : row.normalizationStatus, normalizationMessage: row.rowKind === 'data' ? [row.normalizationMessage, parsed?.contractNo ? `合同编号已存在：${parsed.contractNo}` : '合同编号无法处理'].filter(Boolean).join('；') : row.normalizationMessage }; });
+          await manager.insert(BizContractSourceRowEntity, conflictRows);
+        }
+        await manager.insert(BizOperationLogEntity, { id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import_record', targetType: 'contract_import_record', targetId: recordId, resultStatus: 'needs_review', batchId: recordId, summaryAfter: '合同唯一键并发冲突，原始行已转待维护' });
+      });
+      return { importRecordId: recordId, created: 0, contractNos: [], allocations: 0, sheetCount: preparedSheets.length, totalRows, validRows: 0, reviewRows: totalRows, issues: ['合同编号已存在或发生并发冲突，原始行已保存为待维护'] };
+    }
+    return { importRecordId: recordId, created: createdContractNos.length, contractNos: createdContractNos, allocations: allocationCount, sheetCount: preparedSheets.length, totalRows, validRows, reviewRows, issues: issues.slice(0, 100) };
+  }
 
-    const contracts = [...grouped.entries()].map(([contractNo, contractRows]) => {
-      const first = contractRows[0];
-      if (contractRows.some((row) => row.contractName !== first.contractName || row.provinceId !== first.provinceId || row.startDate !== first.startDate || row.endDate !== first.endDate)) {
-        issues.push(`合同编号 ${contractNo} 的名称、省份或期限不一致，已按首行基础信息保存，需管理员核对`);
-      }
-      const cityRates = new Map<string, number>();
-      for (const row of contractRows) {
-        if (!row.cityId || row.rateBp == null) continue;
-        const existingRate = cityRates.get(row.cityId);
-        if (existingRate != null && existingRate !== row.rateBp) issues.push(`合同编号 ${contractNo} 同一地市存在不同管理费率，已保留首个费率`);
-        else cityRates.set(row.cityId, row.rateBp);
-      }
-      return { id: randomUUID(), first, contractRows, amountFen: contractRows.reduce((sum, row) => sum + row.amountFen, 0) };
-    });
-    let allocationCount = 0;
-    let feeRateCount = 0;
+  private assertImportRecordDownloadScope(auth: BizAuthContext): void {
+    if (auth.isSuperAdmin || auth.dataScope.scopeType === 'all' || auth.dataScope.scopeType === 'contract') return;
+    throw new ForbiddenException('原始台账下载仅限合同全量数据范围账号');
+  }
+
+  async listImportRecords(auth: BizAuthContext): Promise<BizContractImportRecordEntity[]> {
+    this.assertImportRecordDownloadScope(auth);
+    return this.importRecordRepo.find({ order: { uploadedAt: 'DESC' }, take: 100 });
+  }
+
+  async importRecordDetail(auth: BizAuthContext, id: string): Promise<{ record: BizContractImportRecordEntity; sheets: BizContractImportSheetEntity[]; issues: BizContractSourceRowEntity[] }> {
+    this.assertImportRecordDownloadScope(auth);
+    const record = await this.importRecordRepo.findOneBy({ id });
+    if (!record) throw new NotFoundException('上传记录不存在');
+    const [sheets, issues] = await Promise.all([
+      this.importSheetRepo.find({ where: { importRecordId: id }, order: { sheetIndex: 'ASC' } }),
+      this.sourceRowRepo.find({ where: { importRecordId: id, normalizationStatus: 'needs_review' }, order: { sourceRowNo: 'ASC' }, take: 500 }),
+    ]);
+    return { record, sheets, issues };
+  }
+
+  async exportImportRecord(auth: BizAuthContext, id: string): Promise<{ filename: string; buffer: Buffer }> {
+    this.assertImportRecordDownloadScope(auth);
+    const record = await this.importRecordRepo.findOneBy({ id });
+    if (!record) throw new NotFoundException('上传记录不存在');
+    const sheets = await this.importSheetRepo.find({ where: { importRecordId: id }, order: { sheetIndex: 'ASC' } });
+    const workbook = XLSX.utils.book_new();
+    for (const sheet of sheets) {
+      const rows = await this.sourceRowRepo.find({ where: { importRecordId: id, sheetId: sheet.id }, order: { sourceRowNo: 'ASC' } });
+      const values = rows.map((row) => ((typeof row.cellsJson === 'string' ? JSON.parse(row.cellsJson) : row.cellsJson) as unknown[]).map((cell) => {
+        if (cell && typeof cell === 'object' && 'kind' in cell && (cell as { kind?: string }).kind === 'date') return new Date(String((cell as unknown as { value: string }).value));
+        return cell;
+      }));
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(values), sheet.sheetName.slice(0, 31) || `Sheet${sheet.sheetIndex + 1}`);
+    }
+    await this.recordOp(auth.userId, 'contract.import_record.download', id);
+    return { filename: `原始合同台账-${record.filename.replace(/\.xlsx$/i, '')}.xlsx`, buffer: Buffer.from(XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' })) };
+  }
+
+  async deleteImportRecord(auth: BizAuthContext, id: string): Promise<void> {
+    this.assertImportRecordDownloadScope(auth);
+    const record = await this.importRecordRepo.findOneBy({ id });
+    if (!record) throw new NotFoundException('上传记录不存在');
+    const contracts = await this.contractRepo.findBy({ sourceImportRecordId: id });
+    const contractIds = contracts.map((contract) => contract.id);
+    if (contracts.some((contract) => contract.status !== ContractStatus.DRAFT || contract.amountLocked)) {
+      throw new BadRequestException('该上传记录已创建执行中或已锁定合同，不能删除');
+    }
+    if (contractIds.length > 0) {
+      const [orderCount, offlineCount] = await Promise.all([
+        this.orderRowRepo.count({ where: { contractId: In(contractIds) } }),
+        this.offlineRepo.count({ where: { contractId: In(contractIds) } }),
+      ]);
+      if (orderCount > 0 || offlineCount > 0) throw new BadRequestException('该上传记录关联的合同已有订单或线下完工，不能删除');
+    }
     await this.dataSource.transaction(async (manager) => {
-      await manager.insert(BizContractEntity, contracts.map(({ id, first, amountFen }) => ({ id, contractNo: first.contractNo, contractName: first.contractName, taxInclusiveAmountFen: amountFen, taxExclusiveAmountFen: null, provinceId: first.provinceId, startDate: first.startDate, endDate: first.endDate, status: ContractStatus.DRAFT, tags: [], amountLocked: false, parentContractId: null, versionNo: 1, createdBy: auth.userId, updatedBy: auth.userId })));
-      const allocations = contracts.flatMap(({ id, contractRows }) => {
-        const quotaByCity = new Map<string, number>();
-        for (const row of contractRows) if (row.cityId) quotaByCity.set(row.cityId, (quotaByCity.get(row.cityId) ?? 0) + row.amountFen);
-        return [...quotaByCity.entries()].map(([cityId, quotaFen]) => ({ id: randomUUID(), contractId: id, cityId, quotaFen, status: 'active', versionNo: 1 }));
+      if (contractIds.length > 0) {
+        await manager.delete(BizContractFeeRateEntity, { contractId: In(contractIds) });
+        await manager.delete(BizContractCityAllocationEntity, { contractId: In(contractIds) });
+        await manager.delete(BizContractAlertEntity, { contractId: In(contractIds) });
+        await manager.delete(BizContractEntity, { id: In(contractIds), sourceImportRecordId: id });
+      }
+      await manager.delete(BizContractSourceRowEntity, { importRecordId: id });
+      await manager.delete(BizContractImportSheetEntity, { importRecordId: id });
+      await manager.delete(BizContractImportRecordEntity, { id });
+      await manager.insert(BizOperationLogEntity, {
+        id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import_record.delete',
+        targetType: 'contract_import_record', targetId: id, resultStatus: 'success', batchId: id,
       });
-      const rates = contracts.flatMap(({ id, contractRows, first }) => {
-        const rateByCity = new Map<string, number>();
-        for (const row of contractRows) if (row.cityId && row.rateBp != null && !rateByCity.has(row.cityId)) rateByCity.set(row.cityId, row.rateBp);
-        return [...rateByCity.entries()].map(([cityId, rateBp]) => ({ id: randomUUID(), contractId: id, cityId, effectiveMonth: first.startDate?.slice(0, 7) ?? '2026-01', rateBp, changeReason: 'Excel导入' }));
-      });
-      allocationCount = allocations.length;
-      feeRateCount = rates.length;
-      if (allocations.length) await manager.insert(BizContractCityAllocationEntity, allocations);
-      if (rates.length) await manager.insert(BizContractFeeRateEntity, rates);
-      await manager.insert(BizOperationLogEntity, contracts.map(({ id }) => ({ id: randomUUID(), operatorUserId: auth.userId, actionType: 'contract.import', targetType: 'contract', targetId: id, resultStatus: 'success' })));
     });
-    return { created: contracts.length, contractNos: contracts.map(({ first }) => first.contractNo), allocations: allocationCount, feeRates: feeRateCount, issues };
   }
 
   async batchClearDrafts(auth: BizAuthContext, ids: string[]): Promise<{ cleared: number; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
@@ -562,6 +934,156 @@ export class BizContractsService {
 
   private normalizeImportHeader(value: string): string {
     return value.replace(/\s/g, '').replace(/\(/g, '（').replace(/\)/g, '）');
+  }
+
+  private normalizeLedgerName(value: string): string {
+    return value.trim().replace(/\s/g, '').replace(/(自治区|省|市|县|区)$/, '');
+  }
+
+  private normalizePrimaryContractNo(value: string): string {
+    const first = value.split(/[\/／\r\n]+/).map((part) => part.trim()).find(Boolean) ?? '';
+    return first.replace(/-\d{1,2}$/, '').trim();
+  }
+
+  private stableUuid(seed: string): string {
+    const hex = createHash('sha256').update(seed).digest('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  }
+
+  private findLedgerProvince(value: string): { code: string; name: string; aliases: string[] } | null {
+    const normalized = this.normalizeLedgerName(value);
+    return LEDGER_PROVINCES.find((item) => [item.name, ...item.aliases].some((alias) => this.normalizeLedgerName(alias) === normalized)) ?? null;
+  }
+
+  private collectLedgerAreaHints(workbook: XLSX.WorkBook): Array<{ provinceText: string; cityText: string }> {
+    const hints: Array<{ provinceText: string; cityText: string }> = [];
+    for (const sheetName of workbook.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1, raw: true, defval: null });
+      const header = (rows[0] ?? []).map((value) => this.normalizeImportHeader(String(value ?? '')));
+      const provinceIndex = ['省份', '省份名称', '所属省份'].map((value) => header.indexOf(this.normalizeImportHeader(value))).find((index) => index >= 0) ?? -1;
+      const cityIndex = ['地市', '地市名称', '市公司'].map((value) => header.indexOf(this.normalizeImportHeader(value))).find((index) => index >= 0) ?? -1;
+      if (provinceIndex < 0 || cityIndex < 0) continue;
+      for (const row of rows.slice(1)) {
+        const provinceText = String(row?.[provinceIndex] ?? '').trim();
+        const cityText = String(row?.[cityIndex] ?? '').trim();
+        if (provinceText || cityText) hints.push({ provinceText, cityText });
+      }
+    }
+    return hints;
+  }
+
+  private decodeSourceCells(serialized: string): unknown[] {
+    try { return JSON.parse(serialized) as unknown[]; } catch { return []; }
+  }
+
+  private cellByHeader(headers: string[], cells: unknown[], names: string[]): string {
+    const normalized = headers.map((header) => this.normalizeImportHeader(header));
+    const index = names.map((name) => normalized.indexOf(this.normalizeImportHeader(name))).find((item) => item >= 0) ?? -1;
+    const value = cells[index];
+    if (value && typeof value === 'object' && 'kind' in value && (value as { kind?: string }).kind === 'date') return String((value as { value?: string }).value ?? '').slice(0, 10);
+    return index >= 0 ? String(value ?? '').trim() : '';
+  }
+
+  private extractLedgerCityTokens(value: string): string[] {
+    const text = value.replace(/[\r\n、，,；;\/]+/g, '、');
+    const tokens = text.split('、').map((part) => part.trim()).filter(Boolean);
+    return [...new Set(tokens.flatMap((token) => {
+      const matches = token.match(/[\u4e00-\u9fa5]{2,8}市/g) ?? [];
+      if (matches.length > 0) return matches;
+      // 保留盟/旗/自治州/地区/区/县等合法行政区划后缀（不再整体丢弃），仅排除省级后缀
+      if (/^[\u4e00-\u9fa5]{2,6}$/.test(token) && !/(省|自治区)$/.test(token)) return [token];
+      return [];
+    }))];
+  }
+
+  private matchLedgerUnits(value: string, provinceId: string, units: CityEntity[], aliases: CityAliasEntity[]): CityEntity[] {
+    const text = this.normalizeLedgerName(value);
+    if (!text) return [];
+    const names = new Map<string, CityEntity>();
+    for (const unit of units.filter((item) => item.provinceId === provinceId)) {
+      names.set(this.normalizeLedgerName(unit.name), unit);
+      names.set(this.normalizeLedgerName(unit.name.replace(/市$/, '')), unit);
+    }
+    for (const alias of aliases) {
+      const unit = units.find((item) => item.id === alias.cityId && item.provinceId === provinceId);
+      if (unit) names.set(this.normalizeLedgerName(alias.alias), unit);
+    }
+    const matches: CityEntity[] = [];
+    for (const [name, unit] of names) {
+      if (name.length >= 2 && text.includes(name)) matches.push(unit);
+    }
+    return [...new Map(matches.map((unit) => [unit.id, unit])).values()].sort((a, b) => b.name.length - a.name.length);
+  }
+
+  private averageAllocationFens(totalFen: number, cityIds: string[]): Array<[string, number]> {
+    const ids = [...new Set(cityIds)].sort();
+    if (ids.length === 0) return [];
+    const quotient = Math.trunc(totalFen / ids.length);
+    const remainder = totalFen - quotient * ids.length;
+    return ids.map((cityId, index) => [cityId, quotient + (index < remainder ? 1 : 0)]);
+  }
+
+  private isPlaceholder(value: string): boolean {
+    return ['无', '暂无', 'null', 'NULL', '-', '—', ''].includes(value.trim());
+  }
+
+  private encodeLedgerCell(value: unknown): unknown {
+    if (value instanceof Date) return { kind: 'date', value: value.toISOString() };
+    if (value === undefined || value === null) return null;
+    return value;
+  }
+
+  /** 台账金额统一按“万元”读取，先换算为元，再换算为整数分。 */
+  private parseWanToFen(value: unknown): number | null {
+    if (value === null || value === undefined || this.isPlaceholder(String(value))) return null;
+    const text = String(value).replace(/[￥¥元,，\s]/g, '').trim();
+    if (!/^[-+]?\d+(?:\.\d+)?$/.test(text)) return null;
+    const [integer, fraction = ''] = text.replace(/^\+/, '').split('.');
+    const sign = text.startsWith('-') ? -1 : 1;
+    const scaled = BigInt(integer.replace('-', '')) * 1_000_000n + BigInt((fraction + '000000').slice(0, 6));
+    const fen = Number(BigInt(sign) * scaled);
+    return Number.isSafeInteger(fen) ? fen : null;
+  }
+
+  private isDuplicateDatabaseError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const candidate = error as { code?: unknown; errno?: unknown; message?: unknown; driverError?: { code?: unknown; errno?: unknown; message?: unknown } };
+    const code = String(candidate.code ?? candidate.driverError?.code ?? '');
+    const errno = String(candidate.errno ?? candidate.driverError?.errno ?? '');
+    const message = String(candidate.message ?? candidate.driverError?.message ?? '');
+    return code === 'ER_DUP_ENTRY' || errno === '1062' || /duplicate entry|unique constraint|unique failed|constraint failed/i.test(message);
+  }
+
+  private parseTaxRateBps(value: string): number[] {
+    if (!value || this.isPlaceholder(value)) return [];
+    const values = value.replace(/％/g, '%').split(/[\/、,，]/).map((item) => item.trim()).filter(Boolean);
+    const result: number[] = [];
+    for (const item of values) {
+      const numericText = item.replace(/%$/, '');
+      const numeric = Number(numericText);
+      if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) continue;
+      result.push(Math.round((item.endsWith('%') ? numeric : numeric <= 1 ? numeric * 100 : numeric) * 100));
+    }
+    return [...new Set(result)];
+  }
+
+  private parseLedgerDate(value: unknown): string | null {
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value * 86400000));
+      return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+    }
+    const text = String(value ?? '').trim();
+    if (!text || this.isPlaceholder(text)) return null;
+    const match = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+    if (!match) return null;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+  }
+
+  private parsePeriodDates(value: string): { startDate: string | null; endDate: string | null } {
+    const matches = value.match(/\d{4}[./-]\d{1,2}[./-]\d{1,2}/g) ?? [];
+    return { startDate: this.parseLedgerDate(matches[0]), endDate: this.parseLedgerDate(matches[1]) };
   }
 
   private normalizeAreaName(value: string): string {
@@ -628,7 +1150,7 @@ export class BizContractsService {
 
   // ================= 状态机 =================
 
-  /** 完整性校验：编号/名称/含税金额>0/起止日期/已分配地市均有费率 */
+  /** 完整性校验：编号/名称/含税金额>0/起止日期/至少一个经营单位分配；管理费率不阻断生效。 */
   private async completenessIssues(contract: BizContractEntity): Promise<string[]> {
     const missing: string[] = [];
     if (!contract.contractNo?.trim()) missing.push('合同编号');
@@ -640,12 +1162,6 @@ export class BizContractsService {
 
     const allocations = await this.allocationRepo.findBy({ contractId: contract.id, status: 'active' });
     if (allocations.length === 0) throw new BadRequestException('合同资料不完整，缺少：地市分配');
-    for (const alloc of allocations) {
-      const rate = await this.feeRateRepo.findOneBy({
-        contractId: contract.id, cityId: alloc.cityId,
-      });
-      if (!rate) missing.push(`地市费率(${alloc.cityId})`);
-    }
     return missing;
   }
 
@@ -950,25 +1466,99 @@ export class BizContractsService {
 
   // ================= 费率 =================
 
-  /** 新增费率记录（合同+地市+生效月份唯一）；0 < rateBp ≤ 10000 */
+  /** 单经营单位费率维护；0% 是无费率时的默认利润口径，可显式保存。 */
   async addFeeRate(auth: BizAuthContext, contractId: string, dto: FeeRateDto): Promise<BizContractFeeRateEntity> {
+    const rates = await this.upsertFeeRates(auth, contractId, { cityIds: [dto.cityId], effectiveMonth: dto.effectiveMonth, rateBp: dto.rateBp, changeReason: dto.changeReason, overwrite: false });
+    return rates[0];
+  }
+
+  async upsertFeeRates(auth: BizAuthContext, contractId: string, dto: BulkFeeRateDto): Promise<BizContractFeeRateEntity[]> {
     const contract = await this.getContractOrFail(contractId);
     if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废');
     if (!/^\d{4}-\d{2}$/.test(dto.effectiveMonth)) throw new BadRequestException('生效月份格式应为 YYYY-MM');
-    if (!Number.isInteger(dto.rateBp) || dto.rateBp <= 0 || dto.rateBp > 10000) {
-      throw new BadRequestException('管理费率必须大于 0% 且不超过 100%');
+    if (!Number.isInteger(dto.rateBp) || dto.rateBp < 0 || dto.rateBp > 10000) {
+      throw new BadRequestException('管理费率必须在 0% 到 100% 之间');
     }
-    const alloc = await this.allocationRepo.findOneBy({ contractId, cityId: dto.cityId });
-    if (!alloc) throw new BadRequestException('费率地市必须先分配');
-    const existing = await this.feeRateRepo.findOneBy({ contractId, cityId: dto.cityId, effectiveMonth: dto.effectiveMonth });
-    if (existing) throw new BadRequestException('该合同+地市+生效月份费率已存在');
-    const rate = await this.feeRateRepo.save({
-      id: randomUUID(), contractId, cityId: dto.cityId,
-      effectiveMonth: dto.effectiveMonth, rateBp: dto.rateBp,
-      changeReason: dto.changeReason ?? null,
+    const cityIds = [...new Set(dto.cityIds.map((cityId) => cityId.trim()).filter(Boolean))];
+    if (cityIds.length === 0) throw new BadRequestException('请至少选择一个经营单位');
+    const allocations = await this.allocationRepo.findBy({ contractId, status: 'active' });
+    const allocationIds = new Set(allocations.map((allocation) => allocation.cityId));
+    if (cityIds.some((cityId) => !allocationIds.has(cityId))) throw new BadRequestException('费率经营单位必须已在合同分配中');
+    const existingRates = await this.feeRateRepo.findBy({ contractId, effectiveMonth: dto.effectiveMonth });
+    const byCity = new Map(existingRates.map((rate) => [rate.cityId, rate]));
+    if (!dto.overwrite && cityIds.some((cityId) => byCity.has(cityId))) throw new BadRequestException('存在相同经营单位和生效月份的费率，请确认覆盖后再提交');
+    const saved: BizContractFeeRateEntity[] = [];
+    await this.dataSource.transaction(async (manager) => {
+      for (const cityId of cityIds) {
+        const existing = byCity.get(cityId);
+        if (existing) {
+          existing.rateBp = dto.rateBp;
+          existing.changeReason = dto.changeReason ?? null;
+          saved.push(await manager.save(existing));
+        } else {
+          const rate = manager.create(BizContractFeeRateEntity, { id: randomUUID(), contractId, cityId, effectiveMonth: dto.effectiveMonth, rateBp: dto.rateBp, changeReason: dto.changeReason ?? null });
+          saved.push(await manager.save(rate));
+        }
+      }
     });
-    await this.recordOp(auth.userId, 'contract.fee_rate.create', contractId);
-    return rate;
+    await this.repriceOrdersForRates(contractId, cityIds, dto.effectiveMonth);
+    await this.recordOp(auth.userId, dto.overwrite ? 'contract.fee_rate.overwrite' : 'contract.fee_rate.create', contractId);
+    return saved;
+  }
+
+  async copyFeeRates(auth: BizAuthContext, contractId: string, dto: CopyFeeRateDto): Promise<BizContractFeeRateEntity[]> {
+    if (!/^\d{4}-\d{2}$/.test(dto.sourceMonth) || !/^\d{4}-\d{2}$/.test(dto.targetMonth)) throw new BadRequestException('费率月份格式应为 YYYY-MM');
+    if (dto.sourceMonth === dto.targetMonth) throw new BadRequestException('复制来源月份和目标月份不能相同');
+    const contract = await this.getContractOrFail(contractId);
+    if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废');
+    const sourceRates = await this.feeRateRepo.findBy({ contractId, effectiveMonth: dto.sourceMonth });
+    const requested = dto.cityIds?.length ? new Set(dto.cityIds) : null;
+    const selected = sourceRates.filter((rate) => !requested || requested.has(rate.cityId));
+    if (selected.length === 0) throw new BadRequestException('来源月份没有可复制的费率');
+    const existing = await this.feeRateRepo.findBy({ contractId, effectiveMonth: dto.targetMonth });
+    const byCity = new Map(existing.map((rate) => [rate.cityId, rate]));
+    if (!dto.overwrite && selected.some((rate) => byCity.has(rate.cityId))) throw new BadRequestException('目标月份存在费率，请确认覆盖后再复制');
+    const saved: BizContractFeeRateEntity[] = [];
+    await this.dataSource.transaction(async (manager) => {
+      for (const source of selected) {
+        const target = byCity.get(source.cityId);
+        if (target) {
+          target.rateBp = source.rateBp;
+          target.changeReason = `复制自 ${dto.sourceMonth}`;
+          saved.push(await manager.save(target));
+        } else {
+          const rate = manager.create(BizContractFeeRateEntity, { id: randomUUID(), contractId, cityId: source.cityId, effectiveMonth: dto.targetMonth, rateBp: source.rateBp, changeReason: `复制自 ${dto.sourceMonth}` });
+          saved.push(await manager.save(rate));
+        }
+      }
+    });
+    await this.repriceOrdersForRates(contractId, selected.map((rate) => rate.cityId), dto.targetMonth);
+    await this.recordOp(auth.userId, 'contract.fee_rate.copy', contractId);
+    return saved;
+  }
+
+  private async repriceOrdersForRates(contractId: string, cityIds: string[], fromMonth: string): Promise<void> {
+    const allRates = await this.feeRateRepo.find({ where: { contractId, cityId: In(cityIds) }, order: { effectiveMonth: 'ASC' } });
+    const ratesByCity = new Map<string, BizContractFeeRateEntity[]>();
+    for (const rate of allRates) ratesByCity.set(rate.cityId, [...(ratesByCity.get(rate.cityId) ?? []), rate]);
+    const rows = await this.orderRowRepo.createQueryBuilder('o')
+      .where('o.contract_id = :contractId', { contractId })
+      .andWhere('o.city_id IN (:...cityIds)', { cityIds })
+      .andWhere('o.business_month >= :fromMonth', { fromMonth })
+      .andWhere('o.validation_status = :status', { status: 'valid' })
+      .andWhere('o.is_void = 0')
+      .getMany();
+    if (rows.length > 0) {
+      await this.dataSource.transaction(async (manager) => {
+        for (const row of rows) {
+          const effective = (ratesByCity.get(row.cityId ?? '') ?? []).filter((rate) => rate.effectiveMonth <= (row.businessMonth ?? '')).at(-1);
+          row.feeRateSnapshotBp = effective?.rateBp ?? 0;
+          row.grossProfitFen = Math.round((Number(row.completionAmountFen) || 0) * row.feeRateSnapshotBp / 10000);
+          await manager.save(row);
+        }
+      });
+    }
+    void this.aggregates.recalcInternal({ contractId }).catch(() => {});
   }
 
   /** 生效费率快照：≤ 业务月份的最大生效月份费率（订单/完工入账时调用；历史完工不回溯） */
@@ -1006,7 +1596,7 @@ export class BizContractsService {
     return { referenceCostFen: costFen, grossProfitFen, referenceNetProfitFen: grossProfitFen - costFen, isReference: true };
   }
 
-  /** 生成/更新合同预警（nearly_full / overfull / expiring / expired；到期阈值来自系统设置） */
+  /** 生成/更新合同预警（nearly_full / overfull / expiring；过期历史仅保留审计，不再显示）。 */
   async refreshAlerts(auth: BizAuthContext, contractId: string): Promise<void> {
     const contract = await this.getContractOrFail(contractId);
     const detail = await this.detail(auth, contractId);
@@ -1026,7 +1616,6 @@ export class BizContractsService {
       const warningDays = Number(setting?.settingValue ?? 90);
       const thresholdMs = warningDays * 24 * 3600 * 1000;
       if (end.getTime() - now.getTime() <= thresholdMs && end.getTime() >= now.getTime() - 24 * 3600 * 1000) tags.push(ContractTag.EXPIRING);
-      if (end < new Date(today)) tags.push(ContractTag.EXPIRED);
     }
     contract.tags = tags;
     contract.updatedBy = auth.userId;

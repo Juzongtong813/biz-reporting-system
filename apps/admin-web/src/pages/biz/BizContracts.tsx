@@ -13,16 +13,17 @@ import {
   bizContractActivate, bizContractBatchActivate, bizContractBatchClearDrafts, bizContractVoid, bizContractUpsertAllocation,
   bizContractCancelAllocation, bizContractAddFeeRate,
   bizContractUpload, bizContractDelete, bizContractBatchDelete, bizContractBatchUpdate, bizContractBatchRestore, bizContractRestore, bizContractExport,
+  bizContractImportRecords, bizContractImportRecordDetail, bizContractImportRecordDownload, bizContractImportRecordDelete, bizMaintainPendingContractRow, bizPendingContractRows, type BizContractImportRecord, type BizPendingContractRow,
   type BizContractDetail, type BizContractItem,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
 
 const STATUS_LABEL: Record<string, string> = {
-  draft: '草稿', active: '执行中', completed: '已完成', voided: '已作废',
+  draft: '待生效', active: '执行中', completed: '已完成', voided: '已作废', cancelled: '已取消',
 };
 const STATUS_COLOR: Record<string, string> = {
-  draft: 'default', active: 'blue', completed: 'green', voided: 'red',
+  draft: 'default', active: 'blue', completed: 'green', voided: 'red', cancelled: 'default',
 };
 const ALERT_LABEL: Record<string, string> = {
   nearly_full: '接近满额', overfull: '满额/超额', expiring: '即将到期', expired: '已到期', pending_complete: '待完成确认',
@@ -56,8 +57,9 @@ export default function BizContracts() {
   const canRestoreContract = useBizPermission('operation.contract.restore');
   const canExportContract = useBizPermission('operation.contract.export');
   const [items, setItems] = useState<BizContractItem[]>([]);
+  const [pendingItems, setPendingItems] = useState<BizPendingContractRow[]>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
-  const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
+  const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string; unitType?: 'city' | 'province_branch' }>>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [keyword, setKeyword] = useState('');
@@ -76,27 +78,38 @@ export default function BizContracts() {
   const [allocForm] = Form.useForm();
   const [rateForm] = Form.useForm();
   const [editForm] = Form.useForm();
+  const [maintenanceForm] = Form.useForm();
   const [editOpen, setEditOpen] = useState(false);
   const [editBatch, setEditBatch] = useState(false);
   const [editTarget, setEditTarget] = useState<BizContractItem | null>(null);
   const [batchDetail, setBatchDetail] = useState<{ title: string; checked: number; doneLabel: string; done: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> } | null>(null);
   const [batchDetailOpen, setBatchDetailOpen] = useState(false);
+  const [importRecords, setImportRecords] = useState<BizContractImportRecord[]>([]);
+  const [importRecordOpen, setImportRecordOpen] = useState(false);
+  const [importRecordDetail, setImportRecordDetail] = useState<{ record: BizContractImportRecord; sheets: Array<Record<string, unknown>>; issues: Array<Record<string, unknown>> } | null>(null);
+  const [maintenanceTarget, setMaintenanceTarget] = useState<BizPendingContractRow | null>(null);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, p, c] = await Promise.all([
-        bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}), includeDeleted }),
+      const isPending = statusFilter === 'needs_review';
+      const [list, pending, p, c, records] = await Promise.all([
+        isPending ? Promise.resolve({ items: [] as BizContractItem[] }) : bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}), includeDeleted }),
+        isPending ? bizPendingContractRows(appliedKeyword) : Promise.resolve({ items: [] as BizPendingContractRow[] }),
         bizAdminProvinces().catch(() => ({ items: [] })),
         bizAdminCities().catch(() => ({ items: [] })),
+        bizContractImportRecords().catch(() => ({ items: [] })),
       ]);
       setItems((list.items ?? []).map((item) => ({
         ...item,
         tags: Array.isArray(item.tags) ? item.tags : [],
       })));
+      setPendingItems(pending.items ?? []);
       setPagination((value) => ({ ...value, current: 1 }));
       setProvinces((p.items ?? []).map((x) => ({ id: String(x.id), name: String(x.name) })));
-      setCities((c.items ?? []).map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
+      setCities((c.items ?? []).map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId), unitType: x.unitType })));
+      setImportRecords(records.items ?? []);
     } finally {
       setLoading(false);
     }
@@ -132,7 +145,7 @@ export default function BizContracts() {
       await bizContractCreate({
         contractNo: String(values.contractNo),
         contractName: String(values.contractName),
-        taxInclusiveAmountFen: Math.round(Number(values.taxInclusiveAmountFen) * 100),
+        taxInclusiveAmountFen: Math.round(Number(values.taxInclusiveAmount) * (values.taxInclusiveAmountUnit === 'wan' ? 1_000_000 : 100)),
         provinceId: String(values.provinceId),
         startDate: values.startDate ? dayjs(String(values.startDate)).format('YYYY-MM-DD') : null,
         endDate: values.endDate ? dayjs(String(values.endDate)).format('YYYY-MM-DD') : null,
@@ -162,10 +175,10 @@ export default function BizContracts() {
     setImporting(true);
     try {
       const result = await bizContractUpload(file);
-      message.success(`已导入 ${result.created} 份合同，并生成 ${result.allocations ?? 0} 条地市分配和 ${result.feeRates ?? 0} 条费率`);
+       message.success(`上传记录已完成：创建合同 ${result.created} 份，地市分配 ${result.allocations ?? 0} 条，待维护 ${result.reviewRows} 行`);
       if (result.issues?.length) {
         Modal.warning({
-          title: `导入完成，${result.issues.length} 项待管理员维护`,
+          title: `上传完成，${result.issues.length} 项待维护`,
           width: 760,
           content: <div style={{ maxHeight: 420, overflow: 'auto', marginTop: 12 }}>{result.issues.map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}</div>,
         });
@@ -179,6 +192,27 @@ export default function BizContracts() {
       setImporting(false);
     }
     return false;
+  };
+
+  const onDeleteImportRecord = (row: BizContractImportRecord) => {
+    Modal.confirm({
+      title: '删除上传记录',
+      content: `将删除“${row.filename}”的原始工作表、原始行和其中尚未生效且没有业务数据的合同。已生效或已产生业务数据的记录不能删除。确认继续？`,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await bizContractImportRecordDelete(row.id);
+          message.success('上传记录已删除');
+          setImportRecords((items) => items.filter((item) => item.id !== row.id));
+          void load();
+        } catch (error: unknown) {
+          const detail = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+          message.error(detail ?? '上传记录删除失败');
+          throw error;
+        }
+      },
+    });
   };
 
   const onActivate = async (id: string) => {
@@ -440,8 +474,36 @@ export default function BizContracts() {
     }
   };
 
+  const openMaintenance = (row: BizPendingContractRow) => {
+    const rawAmount = Number(String(row.taxInclusiveAmountRaw ?? '').replace(/[￥¥元,，\s]/g, ''));
+    maintenanceForm.setFieldsValue({
+      contractNo: row.contractNo, contractName: row.contractName, provinceId: row.provinceId ?? undefined,
+      cityIds: [], taxInclusiveAmountYuan: Number.isFinite(rawAmount) ? rawAmount * 10000 : undefined,
+      signedDate: row.signedDateRaw || undefined, endDate: row.endDateRaw || undefined, reason: '',
+    });
+    setMaintenanceTarget(row);
+    setMaintenanceOpen(true);
+  };
+
+  const onMaintainPending = async (values: { contractNo: string; contractName: string; provinceId: string; cityIds: string[]; taxInclusiveAmountYuan: number; signedDate?: string; endDate?: string; reason?: string }) => {
+    if (!maintenanceTarget) return;
+    try {
+      await bizMaintainPendingContractRow(maintenanceTarget.sourceRowId, {
+        contractNo: values.contractNo, contractName: values.contractName, provinceId: values.provinceId, cityIds: values.cityIds ?? [],
+        taxInclusiveAmountFen: Math.round(Number(values.taxInclusiveAmountYuan) * 100), signedDate: values.signedDate || null, endDate: values.endDate || null, reason: values.reason || null,
+      });
+      message.success('待维护台账行已创建执行中合同');
+      setMaintenanceOpen(false);
+      setMaintenanceTarget(null);
+      await load();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '合同维护保存失败');
+    }
+  };
+
   const columns = [
-    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', render: (v: string, row: BizContractItem) => <a data-testid={`contract-detail-${v}`} onClick={() => openDetail(row.id)}>{v}</a> },
+    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', width: 180, ellipsis: true, render: (v: string, row: BizContractItem) => <a data-testid={`contract-detail-${v}`} onClick={() => openDetail(row.id)}>{v}</a> },
     { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
     { title: '含税合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'amount', render: (v: number) => fenToYuan(Number(v)) },
     {
@@ -475,6 +537,17 @@ export default function BizContracts() {
     },
   ];
 
+  const pendingColumns = [
+    { title: '原始行号', dataIndex: 'sourceRowNo', key: 'sourceRowNo', width: 90 },
+    { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', width: 160, render: (value: string) => value || '-' },
+    { title: '合同名称', dataIndex: 'contractName', key: 'contractName', width: 280, ellipsis: true, render: (value: string) => value || '-' },
+    { title: '省份', dataIndex: 'provinceName', key: 'provinceName', width: 110, render: (value: string) => value || '-' },
+    { title: '地市/范围', dataIndex: 'cityName', key: 'cityName', width: 260, ellipsis: true, render: (value: string) => value || '-' },
+    { title: '含税金额（万元）', dataIndex: 'taxInclusiveAmountRaw', key: 'amount', width: 140, render: (value: string) => value || '-' },
+    { title: '待维护原因', dataIndex: 'validationError', key: 'validationError', width: 360, ellipsis: true },
+    { title: '操作', key: 'action', fixed: 'right' as const, width: 100, render: (_: unknown, row: BizPendingContractRow) => canUpdateContract === true ? <Button size="small" type="primary" onClick={() => openMaintenance(row)}>维护</Button> : '-' },
+  ];
+
   return (
     <div className="v3-content">
       <div className="v3-page-head">
@@ -483,7 +556,7 @@ export default function BizContracts() {
         </div>
         <Space className="v3-page-head-actions" wrap>
           {canUploadOrder === true && <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>}
-          {canCreateContract === true && <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载模板</Button>}
+          {canCreateContract === true && <Button icon={<DownloadOutlined />} onClick={() => message.info('请从上传记录下载数据库重建的原始台账')}>原始台账下载</Button>}
           {(canCreateContract === true || canBatchCreate === true) && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入合同</Button>}
           {canUpdateContract === true && <Button disabled={!selectedRowKeys.length} loading={batchRunning} onClick={() => void runBatch(true)}>批量校验</Button>}
           {canUpdateContract === true && <Button type="primary" disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchActivate}>批量生效</Button>}
@@ -508,14 +581,22 @@ export default function BizContracts() {
           <Select
             allowClear placeholder="状态筛选" style={{ width: 140 }} value={statusFilter}
             onChange={(v) => setStatusFilter(v)}
-            options={Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))}
+            options={[{ value: 'active', label: '执行中' }, { value: 'draft', label: '待生效' }, { value: 'needs_review', label: '待维护' }, { value: 'voided', label: '已作废' }]}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建合同</Button>
         </Space>
       </div>
       <Card>
-        <Table scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{
+        {statusFilter === 'needs_review' ? <Table<BizPendingContractRow> scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={pendingColumns} dataSource={pendingItems} pagination={{
+          current: pagination.current,
+          pageSize: pagination.pageSize,
+          total: pendingItems.length,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50', '100'],
+          onChange: (current, pageSize) => setPagination({ current, pageSize }),
+          showTotal: (total, range) => `${range[0]}-${range[1]} / 共 ${total} 条`,
+        }} /> : <Table<BizContractItem> scroll={{ x: "max-content" }} rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={{
           current: pagination.current,
           pageSize: pagination.pageSize,
           total: items.length,
@@ -528,7 +609,7 @@ export default function BizContracts() {
           onChange: setSelectedRowKeys,
           preserveSelectedRowKeys: true,
           selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
-        } : undefined} />
+        } : undefined} />}
       </Card>
 
       {/* 新建合同 */}
@@ -536,8 +617,11 @@ export default function BizContracts() {
         <Form form={createForm} layout="vertical" onFinish={onCreate}>
           <Form.Item name="contractNo" label="合同编号" rules={[{ required: true, message: '真实合同号，全局唯一' }]}><Input /></Form.Item>
           <Form.Item name="contractName" label="合同名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="taxInclusiveAmountFen" label="含税合同金额（元）" rules={[{ required: true, message: '草稿可暂填，生效前须>0' }]}>
-            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
+          <Form.Item label="含税合同金额" required>
+            <Space.Compact block>
+              <Form.Item name="taxInclusiveAmount" noStyle rules={[{ required: true, message: '请输入合同金额' }]}><InputNumber min={0} precision={2} style={{ width: '72%' }} /></Form.Item>
+              <Form.Item name="taxInclusiveAmountUnit" noStyle initialValue="yuan"><Select style={{ width: '28%' }} options={[{ value: 'yuan', label: '元' }, { value: 'wan', label: '万元' }]} /></Form.Item>
+            </Space.Compact>
           </Form.Item>
           <Form.Item name="provinceId" label="所属省份" rules={[{ required: true }]}>
             <Select options={provinces.map((p) => ({ value: p.id, label: p.name }))} />
@@ -558,10 +642,41 @@ export default function BizContracts() {
         >
           <p className="ant-upload-drag-icon"><UploadOutlined /></p>
           <p className="ant-upload-text">点击或拖拽合同 .xlsx 文件到此处</p>
-          <p className="ant-upload-hint">识别合同编号、地市分配额和管理费率；同一合同的多地市行会合并为一份合同，并自动生成地市分配和费率记录。</p>
+          <p className="ant-upload-hint">直接上传实际合同台账；所有工作表、列顺序、空单元格和原始行都会保存，无法可靠标准化的行会标记为待维护。</p>
         </Upload.Dragger>
         {importing && <Progress percent={65} status="active" style={{ marginTop: 16 }} />}
       </Modal>
+
+      <Card title="上传记录" style={{ marginTop: 16 }}>
+        <Table size="small" rowKey="id" dataSource={importRecords} pagination={{ pageSize: 8 }} columns={[
+          { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
+          { title: '上传时间', dataIndex: 'uploadedAt', key: 'uploadedAt', render: (value: string) => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-' },
+          { title: '状态', dataIndex: 'status', key: 'status', render: (value: string) => value === 'imported' ? <Tag color="green">已完成</Tag> : <Tag color="orange">{value}</Tag> },
+          { title: '行数', dataIndex: 'totalRows', key: 'totalRows' },
+          { title: '有效', dataIndex: 'validRows', key: 'validRows' },
+          { title: '待维护', dataIndex: 'reviewRows', key: 'reviewRows', render: (value: number) => value ? <Tag color="orange">{value}</Tag> : 0 },
+          { title: '操作', key: 'action', render: (_: unknown, row: BizContractImportRecord) => <Space><Button size="small" onClick={async () => { setImportRecordDetail(await bizContractImportRecordDetail(row.id)); setImportRecordOpen(true); }}>详情</Button><Button size="small" icon={<DownloadOutlined />} onClick={async () => { const blob = await bizContractImportRecordDownload(row.id); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `原始合同台账-${row.filename}`; anchor.click(); URL.revokeObjectURL(url); }}>下载原始台账</Button>{canBatchDelete === true && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDeleteImportRecord(row)}>删除</Button>}</Space> },
+        ]} />
+      </Card>
+
+      <Drawer title={importRecordDetail ? `上传详情：${importRecordDetail.record.filename}` : '上传详情'} open={importRecordOpen} onClose={() => setImportRecordOpen(false)} width={760}>
+        {importRecordDetail && <><Descriptions bordered size="small" column={2}><Descriptions.Item label="上传时间">{dayjs(importRecordDetail.record.uploadedAt).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item><Descriptions.Item label="工作表">{importRecordDetail.record.sheetCount}</Descriptions.Item><Descriptions.Item label="总行数">{importRecordDetail.record.totalRows}</Descriptions.Item><Descriptions.Item label="有效行">{importRecordDetail.record.validRows}</Descriptions.Item><Descriptions.Item label="待维护行">{importRecordDetail.record.reviewRows}</Descriptions.Item></Descriptions><Table style={{ marginTop: 16 }} size="small" rowKey={(row) => String(row.id)} dataSource={importRecordDetail.issues} pagination={{ pageSize: 10 }} columns={[{ title: '原始行号', dataIndex: 'sourceRowNo', key: 'sourceRowNo' }, { title: '说明', dataIndex: 'normalizationMessage', key: 'normalizationMessage' }]} /></>}
+      </Drawer>
+
+      <Drawer title={maintenanceTarget ? `维护台账行 ${maintenanceTarget.sourceRowNo}` : '维护台账行'} open={maintenanceOpen} onClose={() => setMaintenanceOpen(false)} width={520}>
+        <Alert type="info" showIcon message="原始台账内容保持不变；保存后创建一份执行中合同，并按所选经营单位平均分配额度。" style={{ marginBottom: 16 }} />
+        <Form form={maintenanceForm} layout="vertical" onFinish={(values) => void onMaintainPending(values)}>
+          <Form.Item name="contractNo" label="合同编号" rules={[{ required: true, message: '请输入合同编号' }]}><Input /></Form.Item>
+          <Form.Item name="contractName" label="合同名称" rules={[{ required: true, message: '请输入合同名称' }]}><Input /></Form.Item>
+          <Form.Item name="provinceId" label="省份" rules={[{ required: true, message: '请选择省份' }]}><Select options={provinces.map((province) => ({ value: province.id, label: province.name }))} onChange={() => maintenanceForm.setFieldValue('cityIds', [])} /></Form.Item>
+          <Form.Item shouldUpdate noStyle>{() => <Form.Item name="cityIds" label="经营单位" rules={[{ required: true, message: '请选择至少一个经营单位' }]}><Select mode="multiple" maxTagCount="responsive" placeholder="可多选，保存后自动平均分配额度" options={cities.filter((city) => city.provinceId === maintenanceForm.getFieldValue('provinceId')).map((city) => ({ value: city.id, label: `${city.name}${city.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} /></Form.Item>}</Form.Item>
+          <Form.Item name="taxInclusiveAmountYuan" label="含税合同金额（元）" rules={[{ required: true, message: '请输入正数金额' }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="signedDate" label="签订日期"><Input type="date" /></Form.Item>
+          <Form.Item name="endDate" label="合同到期日期"><Input type="date" /></Form.Item>
+          <Form.Item name="reason" label="维护说明"><Input.TextArea rows={3} maxLength={255} /></Form.Item>
+          <Button type="primary" htmlType="submit" block>保存并创建执行中合同</Button>
+        </Form>
+      </Drawer>
 
       {/* 编辑/批量编辑合同 */}
       <Modal
@@ -634,12 +749,13 @@ export default function BizContracts() {
                 ),
               },
               {
-                key: 'alloc', label: '地市分配与额度',
+                key: 'alloc', label: '经营单位分配与额度',
                 children: (
                   <div>
+                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 10 }}>系统已根据台账中的地市文本自动列出可识别经营单位；额度默认为 0，请管理员逐项填写后再生效。</Typography.Text>
                     <Form form={allocForm} layout="inline" style={{ marginBottom: 12 }}>
                       <Form.Item name="cityId" rules={[{ required: true }]}>
-                        <Select placeholder="选择地市" style={{ width: 160 }} options={cities.map((c) => ({ value: c.id, label: c.name }))} />
+                        <Select placeholder="选择经营单位" style={{ width: 180 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
                       </Form.Item>
                       <Form.Item name="quotaFen" rules={[{ required: true }]}>
                         <InputNumber placeholder="固定额度（元）" min={0} precision={2} style={{ width: 160 }} />
@@ -649,7 +765,7 @@ export default function BizContracts() {
                     <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey="cityId" pagination={false} dataSource={detail.allocations}
                       columns={[
-                        { title: '地市', dataIndex: 'cityName', key: 'cityName' },
+                        { title: '经营单位', dataIndex: 'cityName', key: 'cityName' },
                         { title: '固定额度（元）', dataIndex: 'quotaFen', key: 'quotaFen', render: (v: number) => fenToYuan(Number(v)) },
                         { title: '累计完工（元）', dataIndex: 'completionFen', key: 'completionFen', render: (v: number) => fenToYuan(Number(v)) },
                         { title: '地市进度', dataIndex: 'progress', key: 'progress', render: (v: number) => <Progress percent={Math.round(v)} size="small" /> },
@@ -672,7 +788,7 @@ export default function BizContracts() {
                   <div>
                     <Form form={rateForm} layout="inline" style={{ marginBottom: 12 }}>
                       <Form.Item name="cityId" rules={[{ required: true }]}>
-                        <Select placeholder="地市" style={{ width: 140 }} options={cities.map((c) => ({ value: c.id, label: c.name }))} />
+                        <Select placeholder="经营单位" style={{ width: 160 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
                       </Form.Item>
                       <Form.Item name="effectiveMonth" rules={[{ required: true }]}><Input placeholder="生效月份 YYYY-MM" style={{ width: 140 }} /></Form.Item>
                         <Form.Item name="rateBp" rules={[{ required: true }]}><InputNumber placeholder="费率（%）" min={0.01} max={100} precision={2} style={{ width: 110 }} /></Form.Item>
@@ -682,7 +798,7 @@ export default function BizContracts() {
                     <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey={(r) => `${r.cityId}-${r.effectiveMonth}`} pagination={false} dataSource={detail.feeRates}
                       columns={[
-                        { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => cities.find((c) => c.id === v)?.name ?? v },
+                        { title: '经营单位', dataIndex: 'cityId', key: 'cityId', render: (v: string) => { const unit = cities.find((c) => c.id === v); return unit ? `${unit.name}${unit.unitType === 'province_branch' ? '（省级直属）' : ''}` : v; } },
                         { title: '生效月份', dataIndex: 'effectiveMonth', key: 'effectiveMonth' },
                         { title: '费率', dataIndex: 'rateBp', key: 'rateBp', render: (v: number) => `${(Number(v) / 100).toFixed(2)}%` },
                         { title: '变更原因', dataIndex: 'changeReason', key: 'changeReason' },

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { CostStatus, PlatformRole } from '@biz-reporting/shared-types';
 import { BizCostEntryEntity } from '../costs/biz-cost-entry.entity';
@@ -25,12 +25,17 @@ export interface MonthlyCostDto {
   entries: Array<{ categoryCode: string; amountFen?: number | null; description?: string | null }>;
 }
 
+export interface MonthlyReturnDto {
+  cityId: string;
+  businessMonth: string;
+  comment: string;
+}
+
 /**
  * 地市成本服务（新基线 M5）
  * 基线：01 §7 / 04 §6 —— 成本独立核算，不关联合同；
  *  - 分类必填且来自字典；金额 >0；月份非未来；
- *  - 审核授权：默认仅 super_admin（operation.cost.approve 通配）；admin 经账号例外授权后也可审核；
- *  - 状态机：draft → submitted → approved / rejected；approved → voided（受权作废/恢复）；
+ *  - 成本提交即生效：draft/rejected → approved；管理员可将已生效记录退回，地市修改后重新提交；
  *  - 乐观锁并发（@VersionColumn）。
  */
 @Injectable()
@@ -44,6 +49,7 @@ export class BizCostService {
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
     @InjectRepository(CityEntity)
     private readonly cityRepo: Repository<CityEntity>,
+    private readonly dataSource: DataSource,
     private readonly rbac: RbacService,
     private readonly aggregates: BizAggregateService,
   ) {}
@@ -90,7 +96,7 @@ export class BizCostService {
 
   // ================= 列表/详情 =================
 
-  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string; businessMonth?: string }): Promise<Array<BizCostEntryEntity & { cityName?: string }>> {
+  async list(auth: BizAuthContext, filter: { cityId?: string; status?: string; businessMonth?: string; year?: string; categoryCode?: string }): Promise<Array<BizCostEntryEntity & { cityName?: string }>> {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.costRepo.createQueryBuilder('c');
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
@@ -104,6 +110,8 @@ export class BizCostService {
     if (filter.cityId) qb.andWhere('c.cityId = :cityId', { cityId: filter.cityId });
     if (filter.status) qb.andWhere('c.status = :status', { status: filter.status });
     if (filter.businessMonth) qb.andWhere('c.businessMonth = :businessMonth', { businessMonth: filter.businessMonth });
+    if (filter.year) qb.andWhere('c.businessMonth LIKE :yearPrefix', { yearPrefix: `${filter.year}-%` });
+    if (filter.categoryCode) qb.andWhere('c.categoryCode = :categoryCode', { categoryCode: filter.categoryCode });
     const items = await qb.orderBy('c.createdAt', 'DESC').getMany();
     const cities = await this.cityRepo.findBy({ id: In([...new Set(items.map((item) => item.cityId))]) });
     const names = new Map(cities.map((city) => [city.id, city.name]));
@@ -163,16 +171,14 @@ export class BizCostService {
         saved.push(await this.create(auth, { cityId, businessMonth: dto.businessMonth, categoryCode: entry.categoryCode, amountFen, description: entry.description ?? null }));
       }
     }
-    if (dto.submit) {
-      for (const item of saved) await this.submit(auth, item.id);
-    }
+    if (dto.submit) for (const item of saved) await this.submit(auth, item.id);
     return { items: saved };
   }
 
   async update(auth: BizAuthContext, id: string, dto: Partial<CostEntryDto>): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
     await this.assertCityAccess(auth, item.cityId);
-    if (item.status !== CostStatus.DRAFT && item.status !== CostStatus.REJECTED) throw new BadRequestException('仅草稿或已驳回记录可编辑');
+    if (item.status !== CostStatus.DRAFT && item.status !== CostStatus.REJECTED) throw new BadRequestException('仅草稿或已退回记录可编辑');
     const merged: CostEntryDto & { cityId: string } = {
       cityId: this.resolveCityId(auth, dto.cityId ?? item.cityId),
       businessMonth: dto.businessMonth ?? item.businessMonth,
@@ -198,19 +204,21 @@ export class BizCostService {
   async submit(auth: BizAuthContext, id: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
     await this.assertCityAccess(auth, item.cityId);
-    if (item.status !== CostStatus.DRAFT && item.status !== CostStatus.REJECTED) throw new BadRequestException('仅草稿或已驳回记录可提交');
+    if (item.status !== CostStatus.DRAFT && item.status !== CostStatus.REJECTED) throw new BadRequestException('仅草稿或已退回记录可提交');
     await this.assertRules({
       cityId: item.cityId, businessMonth: item.businessMonth,
       categoryCode: item.categoryCode, amountFen: Number(item.amountFen), description: item.description,
     });
-    item.status = CostStatus.PENDING;
+    // 提交即生效，不再进入待审核队列；保留 pending 仅用于兼容历史记录。
+    item.status = CostStatus.APPROVED;
     item.submittedBy = auth.userId;
     item.submittedAt = new Date();
-    item.reviewerId = null;
-    item.reviewedAt = null;
+    item.reviewerId = auth.userId;
+    item.reviewedAt = new Date();
     item.reviewComment = null;
     await this.costRepo.save(item);
     await this.recordOp(auth.userId, 'cost.submit', id);
+    void this.aggregates.recalcInternal({ cityId: item.cityId }).catch(() => {});
     return item;
   }
 
@@ -232,7 +240,7 @@ export class BizCostService {
   async approve(auth: BizAuthContext, id: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
     await this.assertCityAccess(auth, item.cityId);
-    if (item.status !== CostStatus.PENDING) throw new BadRequestException('仅已提交记录可审核');
+    if (item.status !== CostStatus.PENDING) throw new BadRequestException('仅历史待审核记录可审核');
     item.status = CostStatus.APPROVED;
     item.reviewerId = auth.userId;
     item.reviewedAt = new Date();
@@ -253,7 +261,7 @@ export class BizCostService {
   async reject(auth: BizAuthContext, id: string, comment: string): Promise<BizCostEntryEntity> {
     const item = await this.getOrFail(id);
     await this.assertCityAccess(auth, item.cityId);
-    if (item.status !== CostStatus.PENDING) throw new BadRequestException('仅已提交记录可驳回');
+    if (item.status !== CostStatus.PENDING && item.status !== CostStatus.APPROVED) throw new BadRequestException('仅待审核或已生效记录可退回');
     if (!comment?.trim()) throw new BadRequestException('驳回原因必填');
     item.status = CostStatus.REJECTED;
     item.reviewerId = auth.userId;
@@ -261,7 +269,32 @@ export class BizCostService {
     item.reviewComment = comment.trim().slice(0, 500);
     await this.costRepo.save(item);
     await this.recordOp(auth.userId, 'cost.reject', id);
+    if (item.status === CostStatus.REJECTED) void this.aggregates.recalcInternal({ cityId: item.cityId }).catch(() => {});
     return item;
+  }
+
+  async returnMonthly(auth: BizAuthContext, dto: MonthlyReturnDto): Promise<{ items: BizCostEntryEntity[] }> {
+    if (!dto.cityId || !/^\d{4}-\d{2}$/.test(dto.businessMonth)) throw new BadRequestException('地市和业务月份必填');
+    if (!dto.comment?.trim()) throw new BadRequestException('退回原因必填');
+    await this.assertCityAccess(auth, dto.cityId);
+    const returned = await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(BizCostEntryEntity);
+      const opRepo = manager.getRepository(BizOperationLogEntity);
+      const items = await repo.find({ where: { cityId: dto.cityId, businessMonth: dto.businessMonth, status: CostStatus.APPROVED }, order: { categoryCode: 'ASC' } });
+      if (!items.length) throw new BadRequestException('该地市该月份没有已生效成本');
+      const comment = dto.comment.trim().slice(0, 500);
+      for (const item of items) {
+        item.status = CostStatus.REJECTED;
+        item.reviewerId = auth.userId;
+        item.reviewedAt = new Date();
+        item.reviewComment = comment;
+        await repo.save(item);
+        await opRepo.save({ id: randomUUID(), operatorUserId: auth.userId, actionType: 'cost.monthly_return', targetType: 'cost_entry', targetId: item.id, resultStatus: 'success' });
+      }
+      return items;
+    });
+    void this.aggregates.recalcInternal({ cityId: dto.cityId }).catch(() => {});
+    return { items: returned };
   }
 
   async voidItem(auth: BizAuthContext, id: string, reason: string): Promise<BizCostEntryEntity> {

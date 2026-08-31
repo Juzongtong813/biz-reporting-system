@@ -20,5 +20,10 @@
   "018_biz_order_row_validation": "a3ea807ce8f42a3ea96e41094b30fc19124d32b58df5a9730bf7b56eb5a69cfb",
   "019_biz_admin_crud_permissions": "05b95964238b3b77fa6c0f738a0d9a06b259542b10421fd2ba1dbca435ab0de3",
   "020_biz_contract_soft_delete_op_log": "0b838c8bc4ac7ab1ec1f295e85c4cdd03ffb2fd9c9c47f348a434ad1f098105b",
-  "021_biz_contract_permissions": "413f693bbd062b9f30339faaa92de58fbab0ca6edf116a1b878c0c71e24a18e1"
+  "021_biz_contract_permissions": "413f693bbd062b9f30339faaa92de58fbab0ca6edf116a1b878c0c71e24a18e1",
+  "022_biz_province_branch_order_corrections": "a4701f05481eaa3e02759300b04dcb0b97ca897f5c47005152e99098374f9580",
+  "023_biz_contract_import_records": "05c2eaa845250f44e76d950afd963d6a17b2c873c6a22b99d20f7ee850bcc017",
+  "024_normalize_primary_contract_numbers": "785bc60f210106afa2e115a30a15c7b15f8332ae9dffc54e6403b2b819f97272",
+  "025_biz_messages_announcements": "b731fb2303f7e431356fbd96d1a207e6b4e473648b55b76c6ff4fcfaf3dbc21f",
+  "026_biz_region_permissions": "5a7b1ac8bf3454236b2976ae7a1ec929cd028487c84828b24365757f88ba029f"
 }

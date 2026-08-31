@@ -1,7 +1,7 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 /**
- * 地市标准字典（新基线 biz_cities）
+ * 经营单位标准字典（兼容表名 biz_cities）
  * 基线：01 §3.3 / 07 TABLE 3 —— 地市归属省份，同名地市通过省份 + UUID 区分；
  * 订单以"省份 + 地市"共同映射，不能只按地市名称匹配。
  */
@@ -25,6 +25,10 @@ export class CityEntity {
   /** 标准地市名称（如"济南市"） */
   @Column({ type: 'varchar', length: 100 })
   name: string;
+
+  /** city=普通地市；province_branch=省级直属经营单位 */
+  @Column({ name: 'unit_type', type: 'varchar', length: 32, default: 'city' })
+  unitType: 'city' | 'province_branch';
 
   /** 状态：active / disabled */
   @Column({ type: 'varchar', length: 16, default: 'active' })

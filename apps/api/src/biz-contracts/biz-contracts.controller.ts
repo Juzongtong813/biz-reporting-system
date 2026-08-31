@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
@@ -10,9 +10,10 @@ import { BizScope } from '../biz-auth/biz-scope.decorator';
 import { BizAuthUser } from '../biz-auth/biz-auth-user.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
 import {
-  BizContractsService, CreateContractDto, UpdateContractDto, AllocationDto, FeeRateDto, VoidContractDto,
+  BizContractsService, CreateContractDto, UpdateContractDto, AllocationDto, FeeRateDto, BulkFeeRateDto, CopyFeeRateDto, MaintainImportRowDto, VoidContractDto,
 } from './biz-contracts.service';
 import { BizPermissionCode } from '@biz-reporting/shared-types';
+import type { Response } from 'express';
 
 /**
  * 合同域 API（新基线）
@@ -60,6 +61,33 @@ export class BizContractsController {
     });
   }
 
+  @Get('overview')
+  @BizScope()
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_READ)
+  async overview(
+    @BizAuthUser() auth: BizAuthContext,
+    @Query('provinceId') provinceId?: string,
+    @Query('cityId') cityId?: string,
+    @Query('keyword') keyword?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('status') status?: string,
+  ) {
+    return { items: await this.service.overview(auth, { provinceId, cityId, keyword, startDate, endDate, status }) };
+  }
+
+  @Get('pending-maintenance')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_READ)
+  async pendingMaintenance(@BizAuthUser() auth: BizAuthContext, @Query('keyword') keyword?: string) {
+    return { items: await this.service.listPendingImportRows(auth, keyword) };
+  }
+
+  @Post('pending-maintenance/:sourceRowId')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
+  async maintainPendingRow(@BizAuthUser() auth: BizAuthContext, @Param('sourceRowId') sourceRowId: string, @Body() dto: MaintainImportRowDto) {
+    return this.service.maintainImportRow(auth, sourceRowId, dto);
+  }
+
   @Post()
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_CREATE)
   async create(@BizAuthUser() auth: BizAuthContext, @Body() dto: CreateContractDto) {
@@ -77,10 +105,47 @@ export class BizContractsController {
     return this.service.importWorkbookWithAllocations(auth, file.originalname ?? 'contracts.xlsx', file.buffer);
   }
 
+  @Get('import-records')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_READ)
+  async importRecords(@BizAuthUser() auth: BizAuthContext) {
+    return { items: await this.service.listImportRecords(auth) };
+  }
+
+  @Get('import-records/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_READ)
+  async importRecordDetail(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    return this.service.importRecordDetail(auth, id);
+  }
+
+  @Get('import-records/:id/source-workbook')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_READ)
+  async importRecordWorkbook(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Res() response: Response) {
+    const file = await this.service.exportImportRecord(auth, id);
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`);
+    response.setHeader('Cache-Control', 'no-store');
+    response.send(file.buffer);
+  }
+
+  @Delete('import-records/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_BATCH_DELETE)
+  async deleteImportRecord(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    await this.service.deleteImportRecord(auth, id);
+    return { ok: true };
+  }
+
   @Post('batch-clear-drafts')
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_UPDATE)
   async batchClearDrafts(@BizAuthUser() auth: BizAuthContext, @Body() body: { ids?: string[] }) {
     return this.service.batchClearDrafts(auth, body?.ids ?? []);
+  }
+
+  @Get('batch-progress')
+  @BizScope()
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_READ)
+  async batchProgress(@BizAuthUser() auth: BizAuthContext, @Query('ids') ids?: string) {
+    const idList = ids ? ids.split(',').map((id) => id.trim()).filter(Boolean) : [];
+    return { progress: await this.service.batchProgress(auth, idList) };
   }
 
   @Get(':id')
@@ -183,6 +248,18 @@ export class BizContractsController {
   @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_RATE)
   async addFeeRate(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() dto: FeeRateDto) {
     return this.service.addFeeRate(auth, id, dto);
+  }
+
+  @Post(':id/fee-rates/batch')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_RATE)
+  async batchFeeRates(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() dto: BulkFeeRateDto) {
+    return { items: await this.service.upsertFeeRates(auth, id, dto) };
+  }
+
+  @Post(':id/fee-rates/copy')
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_RATE)
+  async copyFeeRates(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() dto: CopyFeeRateDto) {
+    return { items: await this.service.copyFeeRates(auth, id, dto) };
   }
 
   @Get(':id/effective-rate')

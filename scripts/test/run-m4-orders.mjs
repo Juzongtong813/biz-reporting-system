@@ -107,6 +107,20 @@ async function uploadFile(token, buffer, idempotencyKey, filename = 'orders.xlsx
   return api('POST', '/biz/orders/upload', { token, form });
 }
 
+async function uploadContractLedger(token, buffer, filename = '合同台账.xlsx') {
+  const form = new FormData();
+  form.append('file', new Blob([buffer]), filename);
+  return api('POST', '/biz/contracts/upload', { token, form });
+}
+
+function buildContractLedgerBuffer(rows) {
+  const header = ['甲方合同编号', '合同名称', '省份', '地市', '合同金额（含税，万元）', '税率', '签订日期', '合同到期时间', '合同期限'];
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '合同台账');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 async function waitBatch(id, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -219,6 +233,58 @@ try {
   assert.equal(rows.data.items[0].feeRateSnapshotBp, 1200, 'ORD-005 fee rate snapshot 12%');
   assert.equal(rows.data.items[0].grossProfitFen, 12_000, 'ORD-005 gross profit 100000*12%=12000');
 
+  // ============ ORD-005A 输入兼容：受控省份别名、地市后缀、金额格式、日期格式和表头别名 ============
+  const compatibleHeader = [...HEADER];
+  compatibleHeader[2] = '订单编号';
+  compatibleHeader[5] = '订单金额';
+  compatibleHeader[8] = '合同号';
+  compatibleHeader[22] = '订单时间';
+  const compatibleRow = makeRow('PO-005A', 'HT-ORD-001', '济南市分公司', '山东', '￥1,000.00 元', '2026/01/20 09:00:00');
+  const compatibleWs = XLSX.utils.aoa_to_sheet([compatibleHeader, compatibleRow]);
+  const compatibleWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(compatibleWb, compatibleWs, '兼容订单');
+  res = await uploadFile(superToken, XLSX.write(compatibleWb, { type: 'buffer', bookType: 'xlsx' }), randomUUID(), 'compatible-orders.xlsx');
+  detail = await waitBatch(res.data.batchId);
+  assert.equal(detail.batch.importedRows, 1, `ORD-005A aliases must import: ${detail.batch.failureReason ?? ''}`);
+  rows = await api('GET', `/biz/orders/rows?batchId=${detail.batch.id}`, { token: superToken });
+  assert.equal(rows.data.items[0].completionAmountFen, 100_000, 'ORD-005A currency-formatted amount in fen');
+  assert.equal(rows.data.items[0].businessMonth, '2026-01', 'ORD-005A slash date parsed');
+
+  // ============ ORD-005B 省外别名：合同台账自动配置黑龙江省，订单“黑龙江”必须可映射 ============
+  const ledger = buildContractLedgerBuffer([[
+    'HT-HL-9001', '黑龙江鹤岗订单测试合同', '黑龙江', '鹤岗', 100, '9%', '2026.01.01', '2026/12/31', '2026.01.01-2026.12.31',
+  ]]);
+  res = await uploadContractLedger(superToken, ledger, '黑龙江合同台账.xlsx');
+  assert.equal(res.status, 201, `ORD-005B ledger upload failed: ${JSON.stringify(res.data)}`);
+  const provincesAfterLedger = await api('GET', '/biz/admin/provinces', { token: superToken });
+  const heilongjiangId = provincesAfterLedger.data.items.find((p) => p.code === '230000').id;
+  const heilongjiangCities = await api('GET', `/biz/admin/cities?provinceId=${heilongjiangId}`, { token: superToken });
+  const hegangId = heilongjiangCities.data.items.find((c) => c.name === '鹤岗市').id;
+  res = await api('POST', '/biz/contracts', { token: superToken, body: {
+    contractNo: 'HT-HL-9002', contractName: '黑龙江鹤岗订单测试合同', taxInclusiveAmountFen: 100_000_000,
+    provinceId: heilongjiangId, startDate: '2026-01-01', endDate: '2026-12-31',
+  } });
+  assert.equal(res.status, 201, `ORD-005B create province contract failed: ${JSON.stringify(res.data)}`);
+  const heilongjiangContractId = res.data.id;
+  res = await api('POST', `/biz/contracts/${heilongjiangContractId}/allocations`, { token: superToken, body: { cityId: hegangId, quotaFen: 100_000_000 } });
+  assert.equal(res.status, 201, `ORD-005B allocation failed: ${JSON.stringify(res.data)}`);
+  res = await api('POST', `/biz/contracts/${heilongjiangContractId}/fee-rates`, { token: superToken, body: { cityId: hegangId, effectiveMonth: '2026-01', rateBp: 900 } });
+  assert.equal(res.status, 201, `ORD-005B rate failed: ${JSON.stringify(res.data)}`);
+  const heilongjiangOrder = buildXlsxBuffer([makeRow('PO-005B', 'HT-HL-9002', '鹤岗', '黑龙江', 1000, '2026.01.21 09:00:00')]);
+  res = await uploadFile(superToken, heilongjiangOrder, randomUUID(), 'heilongjiang-orders.xlsx');
+  detail = await waitBatch(res.data.batchId);
+  assert.equal(detail.batch.importedRows, 1, `ORD-005B province alias must import: ${detail.batch.failureReason ?? ''}`);
+
+  // ============ ORD-005C 严格性：缺管理费率保留为待维护，不能按 0% 进入统计 ============
+  const qingdao = await api('GET', '/biz/admin/cities', { token: superToken });
+  const qingdaoId = qingdao.data.items.find((city) => city.code === '370200').id;
+  await api('POST', `/biz/contracts/${contractId}/allocations`, { token: superToken, body: { cityId: qingdaoId, quotaFen: 100_000_00 } });
+  const noRateOrder = buildXlsxBuffer([makeRow('PO-005C', 'HT-ORD-001', '青岛市', '山东省', 1000, '2026-01-21 09:00:00')]);
+  res = await uploadFile(superToken, noRateOrder, randomUUID(), 'no-rate-orders.xlsx');
+  detail = await waitBatch(res.data.batchId);
+  assert.equal(detail.batch.importedRows, 0, 'ORD-005C missing fee rate must not import as valid');
+  assert.ok(detail.errors.some((item) => item.errorType === 'rate'), 'ORD-005C missing fee rate reported');
+
   // ============ ORD-006 幂等：相同 idempotencyKey 返回原批次 ============
   const sameKey = randomUUID();
   res = await uploadFile(superToken, validBuffer, sameKey);
@@ -248,22 +314,26 @@ try {
   detail = await waitBatch(res.data.batchId);
   assert.equal(detail.batch.status, 'imported', 'ORD-010 overrun must not block import');
 
-  // ============ ORD-011 作废/恢复：admin 403；super 作废+恢复 ============
+  // ============ ORD-011 超级管理员物理删除：普通管理员拒绝，批次及本批订单行同步移除 ============
   const voidBuffer = buildXlsxBuffer([makeRow('PO-011', 'HT-ORD-001', '济南市', '山东省', 888, '2026-01-19 08:30:00')]);
   res = await uploadFile(superToken, voidBuffer, randomUUID());
   detail = await waitBatch(res.data.batchId);
   const batchId = detail.batch.id;
-  res = await api('POST', `/biz/orders/batches/${batchId}/void`, { token: adminToken, body: { reason: 'x' } });
-  assert.equal(res.status, 403, 'ORD-011 admin void must be 403');
-  res = await api('POST', `/biz/orders/batches/${batchId}/void`, { token: superToken, body: { reason: '测试作废' } });
-  assert.equal(res.status, 201);
-  detail = await api('GET', `/biz/orders/batches/${batchId}`, { token: superToken });
-  assert.equal(detail.data.batch.status, 'voided');
-  assert.equal(detail.data.batch.voidReason, '测试作废');
-  res = await api('POST', `/biz/orders/batches/${batchId}/restore`, { token: superToken });
-  assert.equal(res.status, 201);
-  detail = await api('GET', `/biz/orders/batches/${batchId}`, { token: superToken });
-  assert.equal(detail.data.batch.status, 'imported', 'ORD-011 restore');
+  res = await api('GET', '/biz/admin/data/resources', { token: adminToken });
+  assert.equal(res.status, 403, 'ORD-011 only super admin can access global deletion resources');
+  res = await api('GET', '/biz/admin/data/resources', { token: superToken });
+  assert.equal(res.status, 200);
+  assert.ok(res.data.items.some((item) => item.code === 'order-import-record'), 'ORD-011 global deletion exposes order import records');
+  res = await api('DELETE', `/biz/orders/batches/${batchId}`, { token: adminToken });
+  assert.equal(res.status, 403, 'ORD-011 admin cannot physically delete batch');
+  res = await api('DELETE', `/biz/orders/batches/${batchId}`, { token: superToken });
+  assert.equal(res.status, 200);
+  assert.equal(res.data.deleted.orderImportRecords, 1, 'ORD-011 batch record deleted');
+  assert.equal(res.data.deleted.orderRows, 1, 'ORD-011 batch order row deleted');
+  res = await api('GET', `/biz/orders/batches/${batchId}`, { token: superToken });
+  assert.equal(res.status, 404, 'ORD-011 deleted batch is not queryable');
+  res = await api('GET', `/biz/orders/rows?batchId=${batchId}`, { token: superToken });
+  assert.equal(res.data.total, 0, 'ORD-011 deleted batch rows are not queryable');
 
   // ============ ORD-012 列表/详情 ============
   res = await api('GET', '/biz/orders/batches', { token: superToken });

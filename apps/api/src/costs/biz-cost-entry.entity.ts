@@ -8,7 +8,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColum
  *  - 成本只关联地市和业务月份，不关联合同；
  *  - 业务月份不得晚于当前月份；金额 >= 0（0 允许提交和审核但不改变指标）；
  *  - 同地市、同月份、同分类允许多条明细，系统自动汇总；
- *  - 状态机：draft → pending → approved / rejected；pending 可撤回；approved 可作废；
+ *  - 状态机：draft/rejected → approved（提交即生效）；approved 可被授权管理员退回或作废；
  *  - 默认仅 super_admin 审核成本；可授权其他角色审核和作废；
  *  - 已通过成本不可直接修改，只能由授权角色作废后重新上报；作废必须填写原因。
  */
@@ -39,7 +39,7 @@ export class BizCostEntryEntity {
   @Column({ type: 'varchar', length: 500, nullable: true })
   description: string | null;
 
-  /** 状态：draft / pending / approved / rejected / voided */
+  /** 状态：draft / pending(历史兼容) / approved(已生效) / rejected(已退回) / voided */
   @Column({ type: 'varchar', length: 16, default: 'draft' })
   status: string;
 

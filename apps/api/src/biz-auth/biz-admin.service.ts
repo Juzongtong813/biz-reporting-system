@@ -34,6 +34,9 @@ export interface DataScopeInput {
   cityId?: string | null;
 }
 
+export interface ProvinceInput { code: string; name: string; }
+export interface CityInput { provinceId: string; code: string; name: string; unitType?: 'city' | 'province_branch'; }
+
 /**
  * 账号与权限管理服务（新基线，仅 super_admin）
  * 基线：01 §3 / 02 —— 创建/停用/重置、角色默认权限+账号例外、数据范围；
@@ -206,5 +209,49 @@ export class BizAdminService {
       where: provinceId ? { provinceId } : {},
       order: { code: 'ASC' },
     });
+  }
+
+  async createProvince(operatorId: string, input: ProvinceInput): Promise<ProvinceEntity> {
+    const code = input.code.trim(); const name = input.name.trim();
+    if (!code || !name) throw new BadRequestException('省份编码和名称不能为空');
+    if (await this.provinceRepo.findOne({ where: [{ code }, { name }] })) throw new BadRequestException('省份编码或名称已存在');
+    const item = await this.provinceRepo.save({ id: randomUUID(), code, name, status: 'active' });
+    await this.recordOp(operatorId, 'master_data.province.create', 'province', item.id); return item;
+  }
+
+  async updateProvince(operatorId: string, id: string, input: Partial<ProvinceInput>): Promise<ProvinceEntity> {
+    const item = await this.provinceRepo.findOneBy({ id }); if (!item) throw new NotFoundException('省份不存在');
+    const code = input.code?.trim(); const name = input.name?.trim();
+    if (code) item.code = code; if (name) item.name = name;
+    const duplicate = await this.provinceRepo.findOne({ where: [{ code: item.code }, { name: item.name }] }); if (duplicate && duplicate.id !== id) throw new BadRequestException('省份编码或名称已存在');
+    const saved = await this.provinceRepo.save(item); await this.recordOp(operatorId, 'master_data.province.update', 'province', id); return saved;
+  }
+
+  async deleteProvince(operatorId: string, id: string): Promise<void> {
+    const item = await this.provinceRepo.findOneBy({ id }); if (!item) throw new NotFoundException('省份不存在');
+    if (await this.cityRepo.countBy({ provinceId: id })) throw new BadRequestException('该省份下仍有经营单位，不能删除');
+    await this.provinceRepo.remove(item); await this.recordOp(operatorId, 'master_data.province.delete', 'province', id);
+  }
+
+  async createCity(operatorId: string, input: CityInput): Promise<CityEntity> {
+    const province = await this.provinceRepo.findOneBy({ id: input.provinceId }); if (!province) throw new BadRequestException('所属省份不存在');
+    const code = input.code.trim(); const name = input.name.trim(); if (!code || !name) throw new BadRequestException('经营单位编码和名称不能为空');
+    if (await this.cityRepo.findOne({ where: [{ code }, { provinceId: input.provinceId, name }] })) throw new BadRequestException('经营单位编码或名称已存在');
+    const item = await this.cityRepo.save({ id: randomUUID(), provinceId: input.provinceId, code, name, unitType: input.unitType ?? 'city', status: 'active' });
+    await this.recordOp(operatorId, 'master_data.city.create', 'city', item.id); return item;
+  }
+
+  async updateCity(operatorId: string, id: string, input: Partial<CityInput>): Promise<CityEntity> {
+    const item = await this.cityRepo.findOneBy({ id }); if (!item) throw new NotFoundException('经营单位不存在');
+    if (input.provinceId && !(await this.provinceRepo.findOneBy({ id: input.provinceId }))) throw new BadRequestException('所属省份不存在');
+    if (input.provinceId) item.provinceId = input.provinceId; if (input.code?.trim()) item.code = input.code.trim(); if (input.name?.trim()) item.name = input.name.trim(); if (input.unitType) item.unitType = input.unitType;
+    const duplicate = await this.cityRepo.findOne({ where: [{ code: item.code }, { provinceId: item.provinceId, name: item.name }] }); if (duplicate && duplicate.id !== id) throw new BadRequestException('经营单位编码或名称已存在');
+    const saved = await this.cityRepo.save(item); await this.recordOp(operatorId, 'master_data.city.update', 'city', id); return saved;
+  }
+
+  async deleteCity(operatorId: string, id: string): Promise<void> {
+    const item = await this.cityRepo.findOneBy({ id }); if (!item) throw new NotFoundException('经营单位不存在');
+    if (await this.userRepo.countBy({ cityId: id })) throw new BadRequestException('该经营单位仍绑定账号，不能删除');
+    await this.cityRepo.remove(item); await this.recordOp(operatorId, 'master_data.city.delete', 'city', id);
   }
 }

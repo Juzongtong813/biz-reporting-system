@@ -31,11 +31,20 @@ const BizPlaceholder = lazy(() => import('@/pages/biz/BizPlaceholder'));
 const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
 const BizAuditLogs = lazy(() => import('@/pages/biz/BizAuditLogs'));
 const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
+const BizContractOverview = lazy(() => import('@/pages/biz/BizContractOverview'));
 const BizOrders = lazy(() => import('@/pages/biz/BizOrders'));
 const BizOfflineCompletions = lazy(() => import('@/pages/biz/BizOfflineCompletions'));
 const BizCosts = lazy(() => import('@/pages/biz/BizCosts'));
 const BizAnalysis = lazy(() => import('@/pages/biz/BizAnalysis'));
+const BizAnalysisOverview = lazy(() => import('@/pages/biz/BizAnalysisOverview'));
+const BizAnalysisTrend = lazy(() => import('@/pages/biz/BizAnalysisTrend'));
+const BizAnalysisCities = lazy(() => import('@/pages/biz/BizAnalysisCities'));
+const BizAnalysisCityDetail = lazy(() => import('@/pages/biz/BizAnalysisCityDetail'));
+const BizAnalysisOverruns = lazy(() => import('@/pages/biz/BizAnalysisOverruns'));
 const BizSettings = lazy(() => import('@/pages/biz/BizSettings'));
+const BizMessages = lazy(() => import('@/pages/biz/BizMessages'));
+const BizDataDeletion = lazy(() => import('@/pages/biz/BizDataDeletion'));
+const BizRegionSettings = lazy(() => import('@/pages/biz/BizRegionSettings'));
 
 function PageLoading() {
   return <div style={{ minHeight: 240, display: 'grid', placeItems: 'center' }}><Spin /></div>;
@@ -129,13 +138,21 @@ export default function App() {
       <Route path="maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
       <Route path="placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
       <Route path="operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
+      <Route path="contract-overview" element={<Suspense fallback={<PageLoading />}><BizContractOverview /></Suspense>} />
       <Route path="orders" element={<Suspense fallback={<PageLoading />}><BizOrders /></Suspense>} />
       <Route path="offline-completions" element={<Suspense fallback={<PageLoading />}><BizOfflineCompletions /></Suspense>} />
       <Route path="costs" element={<Suspense fallback={<PageLoading />}><BizCosts /></Suspense>} />
-      <Route path="analysis" element={<Suspense fallback={<PageLoading />}><BizAnalysis /></Suspense>} />
+      <Route path="analysis" element={<Suspense fallback={<PageLoading />}><BizAnalysisOverview /></Suspense>} />
+      <Route path="analysis/trend" element={<Suspense fallback={<PageLoading />}><BizAnalysisTrend /></Suspense>} />
+      <Route path="analysis/cities" element={<Suspense fallback={<PageLoading />}><BizAnalysisCities /></Suspense>} />
+      <Route path="analysis/city/:cityId" element={<Suspense fallback={<PageLoading />}><BizAnalysisCityDetail /></Suspense>} />
+      <Route path="analysis/overruns" element={<Suspense fallback={<PageLoading />}><BizAnalysisOverruns /></Suspense>} />
       <Route path="settings" element={<Suspense fallback={<PageLoading />}><BizSettings /></Suspense>} />
+      <Route path="messages" element={<Suspense fallback={<PageLoading />}><BizMessages /></Suspense>} />
       <Route path="admin" element={<Suspense fallback={<PageLoading />}><BizAdmin /></Suspense>} />
+      <Route path="region-settings" element={<Suspense fallback={<PageLoading />}><BizRegionSettings /></Suspense>} />
       <Route path="audit-logs" element={<Suspense fallback={<PageLoading />}><BizAuditLogs /></Suspense>} />
+      <Route path="data-delete" element={<Suspense fallback={<PageLoading />}><BizDataDeletion /></Suspense>} />
     </Route>
     {/* 旧版登录（已废弃，保留回退路径） */}
     <Route path="/login" element={<Suspense fallback={<PageLoading />}><LegacyBanner><Login /></LegacyBanner></Suspense>} />

@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Spin } from 'antd';
 import { useBizPermission } from '@/utils/biz-permission';
-import { Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
-  bizAdminGetUserPermissions, bizAdminSetOverrides, bizAdminRoles, bizAdminPermissions, bizAdminProvinces, bizAdminCities,
-  bizOperationLogs,
+  bizAdminGetUserPermissions, bizAdminSetOverrides, bizAdminRoles, bizAdminPermissions, bizAdminCities,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -19,44 +18,22 @@ const ROLE_LABEL: Record<string, string> = {
 const MODULE_LABEL: Record<string, string> = {
   home: '经营首页', analysis: '经营分析', contract: '合同管理', order: '订单管理',
   completion: '线下完工', cost: '地市成本', user: '用户管理', settings: '系统设置',
-  module: '模块管理', role: '角色管理',
-  portal: '门户管理', maintenance: '维护管理',
+  module: '模块管理', role: '角色管理', region: '省市设置',
+  portal: '一级门户入口', maintenance: '二级门户入口', announcement: '公告发布', message: '消息中心',
 };
-
-/** 账号与权限管理（新基线，仅 super_admin） */
-function OperationLogsPanel() {
-  const [logs, setLogs] = useState<Array<Record<string, unknown>>>([]);
-  const loadLogs = useCallback(async () => {
-    try {
-      const data = await bizOperationLogs({ limit: 100 });
-      setLogs(data.items);
-    } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
-      message.error(detail ?? '审计日志加载失败');
-    }
-  }, []);
-  useEffect(() => { void loadLogs(); }, [loadLogs]);
-  return (
-    <Card>
-      <Table
-        size="small" rowKey="id" dataSource={logs} pagination={{ pageSize: 10 }}
-        scroll={{ x: 'max-content' }}
-        columns={[
-          { title: '时间', dataIndex: 'createdAt', key: 'createdAt', width: 170 },
-          { title: '操作人', dataIndex: 'operatorUserId', key: 'op', render: (v: string) => v?.slice(0, 8) ?? '-' },
-          { title: '动作', dataIndex: 'actionType', key: 'action', width: 180 },
-          { title: '对象', dataIndex: 'targetType', key: 'tt', width: 110 },
-          { title: '对象 ID', dataIndex: 'targetId', key: 'tid', render: (v: string) => v?.slice(0, 12) ?? '-' },
-          { title: '结果', dataIndex: 'resultStatus', key: 'result' },
-        ]}
-      />
-    </Card>
-  );
-}
+const MODULE_DESCRIPTION: Record<string, string> = {
+  portal: '登录后是否能看到工程管理/维护管理入口', maintenance: '进入维护管理后是否能看到经营管理、资产管理、人员管理入口', home: '门户首页和经营入口', analysis: '经营分析概览、趋势、单位对比和超额清单', contract: '合同查看、上传、分配和费率维护', order: '订单上传、待维护、作废和导出',
+  completion: '线下完工填报、提交和审核', cost: '地市成本填报、退回和导出', user: '账号创建、停用、密码和数据范围', settings: '系统参数和预警设置',
+  module: '业务模块入口配置', role: '角色与账号权限配置', region: '省份与经营单位字典的新增、修改和删除',
+  announcement: '公告草稿、发布、撤回和范围管理', message: '流程消息、公告查看和已读处理',
+};
+const PORTAL_GROUPS = new Set(['portal', 'maintenance']);
 
 type PermissionItem = { code: string; name: string; action: string };
 
-function buildPermissionGroups(rows: Array<Record<string, unknown>>) {
+type PermissionGroup = { key: string; label: string; description: string; permissions: PermissionItem[] };
+
+function buildPermissionGroups(rows: Array<Record<string, unknown>>): PermissionGroup[] {
   const groups = new Map<string, PermissionItem[]>();
   for (const row of rows) {
     const code = String(row.code ?? '');
@@ -67,14 +44,13 @@ function buildPermissionGroups(rows: Array<Record<string, unknown>>) {
     list.push({ code, name: String(row.name ?? code), action: String(row.action ?? '') });
     groups.set(key, list);
   }
-  return Array.from(groups.entries()).map(([key, permissions]) => ({ key, label: MODULE_LABEL[key] ?? key, permissions }));
+  return Array.from(groups.entries()).map(([key, permissions]) => ({ key, label: MODULE_LABEL[key] ?? key, description: MODULE_DESCRIPTION[key] ?? '该业务模块的访问和操作权限', permissions }));
 }
 
 export default function BizAdmin() {
   const canManage = useBizPermission('operation.user.manage');
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
   const [roles, setRoles] = useState<Array<{ code: string; name: string }>>([]);
-  const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -95,10 +71,9 @@ export default function BizAdmin() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, r, p, c] = await Promise.all([bizAdminListUsers(), bizAdminRoles(), bizAdminProvinces(), bizAdminCities()]);
+      const [u, r, c] = await Promise.all([bizAdminListUsers(), bizAdminRoles(), bizAdminCities()]);
       setUsers(u.items);
       setRoles(r.items.map((x) => ({ code: String(x.code), name: String(x.name) })));
-      setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
       setCities(c.items.map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
     } finally {
       setLoading(false);
@@ -168,7 +143,7 @@ export default function BizAdmin() {
     const effective = new Set(detail.effective);
     const levels: Record<string, 'none' | 'read' | 'edit'> = {};
     for (const group of permissionGroups) {
-      const readable = group.permissions.some((permission) => permission.action === 'read' && effective.has(permission.code));
+      const readable = group.permissions.some((permission) => (permission.action === 'read' || permission.action === 'enter') && effective.has(permission.code));
       const writable = group.permissions.some((permission) => permission.action !== 'read' && effective.has(permission.code));
       levels[group.key] = writable ? 'edit' : readable ? 'read' : 'none';
     }
@@ -184,7 +159,7 @@ export default function BizAdmin() {
         const level = moduleLevels[group.key] ?? 'none';
         return group.permissions.map((permission) => ({
           permissionCode: permission.code,
-          effect: (level === 'none' || (level === 'read' && permission.action !== 'read')) ? 'deny' as const : 'allow' as const,
+          effect: (level === 'none' || (level === 'read' && permission.action !== 'read' && permission.action !== 'enter')) ? 'deny' as const : 'allow' as const,
         }));
       });
       const generatedCodes = new Set(generated.map((item) => item.permissionCode));
@@ -199,6 +174,19 @@ export default function BizAdmin() {
     } finally {
       setPermSaving(false);
     }
+  };
+
+  const restoreRoleDefaults = () => {
+    if (!permDetail || permDetail.roleCode === 'super_admin') return;
+    const base = new Set(permDetail.base);
+    const levels: Record<string, 'none' | 'read' | 'edit'> = {};
+    for (const group of permissionGroups) {
+      const readable = group.permissions.some((permission) => (permission.action === 'read' || permission.action === 'enter') && base.has(permission.code));
+      const writable = group.permissions.some((permission) => permission.action !== 'read' && permission.action !== 'enter' && base.has(permission.code));
+      levels[group.key] = writable ? 'edit' : readable ? 'read' : 'none';
+    }
+    setModuleLevels(levels);
+    message.info('已载入角色默认权限，请确认后点击保存权限');
   };
 
   const columns = [
@@ -270,22 +258,29 @@ export default function BizAdmin() {
         </Form>
       </Modal>
 
-      <Drawer title="模块权限" open={permOpen} onClose={() => setPermOpen(false)} width={560} extra={<Button type="primary" loading={permSaving} onClick={() => { void onSavePermissions(); }}>保存权限</Button>}>
+      <Drawer title="模块权限" open={permOpen} onClose={() => setPermOpen(false)} width={680} extra={<Space><Button disabled={!permDetail || permDetail.roleCode === 'super_admin'} onClick={restoreRoleDefaults}>恢复角色默认</Button><Button type="primary" loading={permSaving} onClick={() => { void onSavePermissions(); }}>保存权限</Button></Space>}>
         {permDetail && (
           <div>
             <p><b>角色：</b>{ROLE_LABEL[permDetail.roleCode] ?? permDetail.roleCode}</p>
+            <Alert
+              type="info"
+              showIcon
+              message="权限级别说明"
+              description="无权访问：门户入口和菜单隐藏，接口拒绝；可进入/查看：允许进入门户或查看数据；可操作：在查看基础上增加新增、修改、提交、审核或发布等操作。门户入口的“可进入/查看”不会授予业务数据权限，业务功能仍需单独配置。保存后，账号下次登录生效。"
+              style={{ marginBottom: 16 }}
+            />
             <Table
               size="small"
               pagination={false}
               rowKey="key"
               dataSource={permissionGroups}
               columns={[
-                { title: '业务模块', dataIndex: 'label', key: 'label' },
-                { title: '权限级别', key: 'level', render: (_: unknown, row: { key: string }) => (
+                { title: '功能分类', key: 'label', width: 260, render: (_: unknown, row: PermissionGroup) => <Space direction="vertical" size={0}><Space size={4}><Tag color={PORTAL_GROUPS.has(row.key) ? 'purple' : 'blue'}>{PORTAL_GROUPS.has(row.key) ? '门户入口' : '业务功能'}</Tag><Text strong>{row.label}</Text></Space><Text type="secondary" style={{ fontSize: 12 }}>{row.description}</Text></Space> },
+                { title: '当前级别', key: 'level', width: 150, render: (_: unknown, row: PermissionGroup) => (
                   <Select
                     value={moduleLevels[row.key] ?? 'none'}
-                    style={{ width: 150 }}
-                    options={[{ value: 'none', label: '无权限' }, { value: 'read', label: '只读' }, { value: 'edit', label: '编辑' }]}
+                    style={{ width: 130 }}
+                    options={[{ value: 'none', label: '无权访问' }, { value: 'read', label: '可进入/查看' }, { value: 'edit', label: '可操作' }]}
                     onChange={(value: 'none' | 'read' | 'edit') => setModuleLevels((prev) => ({ ...prev, [row.key]: value }))}
                   />
                 ) },

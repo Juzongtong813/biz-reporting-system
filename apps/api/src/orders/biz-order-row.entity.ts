@@ -16,6 +16,9 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryColumn } from 'typeorm'
 @Index('idx_biz_order_row_batch', ['batchId'])
 @Index('idx_biz_order_row_city_month', ['cityId', 'businessMonth'])
 @Index('idx_biz_order_row_contract', ['contractId'])
+@Index('idx_biz_order_row_replaces', ['replacesOrderRowId'])
+@Index('uk_biz_order_row_replaces', ['replacesOrderRowId'], { unique: true })
+@Index('idx_biz_order_row_resolved_batch', ['resolvedByBatchId'])
 export class BizOrderRowEntity {
   /** 系统 order_row_id（UUID） */
   @PrimaryColumn({ type: 'varchar', length: 36 })
@@ -123,10 +126,25 @@ export class BizOrderRowEntity {
   sourceRowJson: string[] | null;
 
   @Column({ name: 'validation_status', type: 'varchar', length: 16, default: 'valid' })
-  validationStatus: 'valid' | 'needs_review';
+  validationStatus: 'valid' | 'needs_review' | 'superseded';
 
   @Column({ name: 'validation_error', type: 'text', nullable: true })
   validationError: string | null;
+
+  /** 修正批次中的新行接替的旧待维护行 */
+  @Column({ name: 'replaces_order_row_id', type: 'varchar', length: 36, nullable: true })
+  replacesOrderRowId: string | null;
+
+  /** 旧行被接替后的新批次 */
+  @Column({ name: 'resolved_by_batch_id', type: 'varchar', length: 36, nullable: true })
+  resolvedByBatchId: string | null;
+
+  /** 执行接替的账号 */
+  @Column({ name: 'resolved_by_user_id', type: 'varchar', length: 36, nullable: true })
+  resolvedByUserId: string | null;
+
+  @Column({ name: 'resolved_at', type: 'datetime', nullable: true })
+  resolvedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;

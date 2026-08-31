@@ -35,7 +35,7 @@ try {
   const rolePermCount = db.prepare("SELECT COUNT(*) FROM biz_role_permissions").pluck().get();
   db.close();
 
-  assert.equal(firstLedger.length, 22, 'expected twenty-two migration ledger rows');
+  assert.equal(firstLedger.length, 25, 'expected twenty-five migration ledger rows');
   assert.equal(firstLedger.find((row) => row.version === '002_add_contract_month_invoice_order_amount')?.execution_mode, 'executed');
   assert.equal(firstLedger.find((row) => row.version === '008_v3_fact_lifecycle')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '009_production_governance')?.status, 'applied');
@@ -51,6 +51,9 @@ try {
   assert.equal(firstLedger.find((row) => row.version === '019_biz_admin_crud_permissions')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '020_biz_contract_soft_delete_op_log')?.status, 'applied');
   assert.equal(firstLedger.find((row) => row.version === '021_biz_contract_permissions')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '022_biz_province_branch_order_corrections')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '023_biz_contract_import_records')?.status, 'applied');
+  assert.equal(firstLedger.find((row) => row.version === '024_normalize_primary_contract_numbers')?.status, 'applied');
   for (const column of ['lifecycle_status', 'warning_count', 'blocking_error_count', 'effective_at']) assert.ok(batchColumns.has(column), `008 batch column missing: ${column}`);
   for (const column of ['city_id', 'contract_id', 'period_year', 'period_month', 'lifecycle_status', 'supersedes_version_id', 'superseded_by_version_id', 'changed_fields_json', 'warning_summary_json']) assert.ok(versionColumns.has(column), `008 version column missing: ${column}`);
   assert.ok(batchIndexes.has('idx_fact_batch_lifecycle'));
@@ -75,7 +78,7 @@ try {
   assert.deepEqual(secondLedger, firstLedger, 'second migration run changed the ledger');
   assert.ok(permCount >= 39, '012 seed: expected >=39 permission points');
   assert.ok(rolePermCount >= 48, '012 seed: expected >=48 role-permission bindings');
-  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=22 v3_lifecycle=true governance009=true baseline010=true seed011=true permission012=true order013=true settings014=true legacy015=true rate016=true batchscope017=true ordervalidation018=true admincrud019=true softdelete020=true contractperms021=true idempotent=true');
+  console.log('MIGRATION_LEDGER_CONTRACT_OK migrations=25 v3_lifecycle=true governance009=true baseline010=true seed011=true permission012=true order013=true settings014=true legacy015=true rate016=true batchscope017=true ordervalidation018=true admincrud019=true softdelete020=true contractperms021=true provincebranch022=true contractimports023=true primarycontract024=true idempotent=true');
 } finally {
   rmSync(testRoot, { recursive: true, force: true });
   console.log(`MIGRATION_LEDGER_CONTRACT_CLEANUP_OK root=${testRoot}`);

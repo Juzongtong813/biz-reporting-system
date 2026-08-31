@@ -8,11 +8,13 @@ import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-
 import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.entity';
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
+import { CityAliasEntity } from '../main-data/city-alias.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
 import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { RbacModule } from '../rbac/rbac.module';
 import { BizContractsModule } from '../biz-contracts/biz-contracts.module';
 import { BizAggregatesModule } from '../biz-aggregates/biz-aggregates.module';
+import { BizDataDeletionModule } from '../biz-data-deletion/biz-data-deletion.module';
 import { BizOrderImportService } from './biz-order-import.service';
 import { BizOrdersController } from './biz-orders.controller';
 
@@ -27,12 +29,14 @@ import { BizOrdersController } from './biz-orders.controller';
       BizContractFeeRateEntity,
       ProvinceEntity,
       CityEntity,
+      CityAliasEntity,
       BizOperationLogEntity,
       PlatformUserEntity,
     ]),
     RbacModule,
     BizContractsModule,
     BizAggregatesModule,
+    BizDataDeletionModule,
   ],
   controllers: [BizOrdersController],
   providers: [BizOrderImportService],

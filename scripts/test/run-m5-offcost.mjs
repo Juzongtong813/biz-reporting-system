@@ -260,20 +260,27 @@ try {
   res = await api('POST', '/biz/costs', { token: cityToken, body: { ...costBody, businessMonth: '2099-01' } });
   assert.equal(res.status, 400, 'CST-003 future month rejected');
 
-  // ============ CST-004 成本审核授权（DEV-043） ============
-  await api('POST', `/biz/costs/${cost1.id}/submit`, { token: cityToken });
+  // ============ CST-004 提交即生效 + 管理员退回 ============
+  res = await api('POST', `/biz/costs/${cost1.id}/submit`, { token: cityToken });
+  assert.equal(res.status, 201, 'CST-004 city submit succeeds');
+  assert.equal(res.data.status, 'approved', 'CST-004 submit is effective immediately');
   res = await api('POST', `/biz/costs/${cost1.id}/approve`, { token: adminToken });
-  assert.equal(res.status, 403, 'CST-004 admin no cost.approve by default');
-  // super_admin 授权 admin（账号例外 allow operation.cost.approve）
-  await api('PUT', `/biz/admin/users/${(await api('GET', '/biz/admin/users', { token: superToken })).data.items.find((u) => u.username === 'm5_admin').id}/permission-overrides`, {
-    token: superToken, body: { overrides: [{ permissionCode: 'operation.cost.approve', effect: 'allow' }] },
-  });
-  // admin 重新登录（权限变更下次登录生效）
-  res = await api('POST', '/biz/auth/login', { body: { username: 'm5_admin', password: 'M5-secret-1' } });
-  adminToken = res.data.accessToken;
-  res = await api('POST', `/biz/costs/${cost1.id}/approve`, { token: adminToken });
-  assert.equal(res.status, 201, 'CST-004 authorized admin approves cost');
-  assert.equal(res.data.status, 'approved');
+  assert.equal(res.status, 400, 'CST-004 legacy approve cannot re-approve an effective cost');
+  res = await api('POST', `/biz/costs/${cost1.id}/reject`, { token: adminToken, body: { comment: '请补充成本说明' } });
+  assert.equal(res.status, 201, 'CST-004 admin can return an effective cost');
+  assert.equal(res.data.status, 'rejected');
+  res = await api('PATCH', `/biz/costs/${cost1.id}`, { token: cityToken, body: { amountFen: 810_000, description: '修改后成本' } });
+  assert.equal(res.status, 200, 'CST-004 city can edit a returned cost');
+  res = await api('POST', `/biz/costs/${cost1.id}/submit`, { token: cityToken });
+  assert.equal(res.status, 201);
+  assert.equal(res.data.status, 'approved', 'CST-004 resubmission is effective immediately');
+  res = await api('POST', '/biz/costs/monthly/return', { token: adminToken, body: { cityId: jinanId, businessMonth: '2026-06', comment: '整月补充说明' } });
+  assert.equal(res.status, 201, 'CST-004 admin can return the whole city month');
+  assert.ok(res.data.items.some((item) => item.id === cost1.id), 'CST-004 monthly return includes the cost entry');
+  res = await api('PATCH', `/biz/costs/${cost1.id}`, { token: cityToken, body: { description: '整月退回后修改' } });
+  assert.equal(res.status, 200, 'CST-004 returned monthly cost remains editable');
+  res = await api('POST', `/biz/costs/${cost1.id}/submit`, { token: cityToken });
+  assert.equal(res.status, 201);
 
   // ============ CST-005 驳回（原因必填） ============
   const cost2res = await api('POST', '/biz/costs', { token: cityToken, body: { ...costBody, amountFen: 5_000_00 } });

@@ -20,14 +20,12 @@ export default function BizPortal() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [modules, setModules] = useState<BizModuleItem[]>([]);
-  const [userName, setUserName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [me, data] = await Promise.all([bizMe(), bizPortalModules()]);
-        setUserName(me.username);
+        const [, data] = await Promise.all([bizMe(), bizPortalModules()]);
         const operation = data.level2.find((module) => module.code === 'operation');
         const level1 = operation && !data.level1.some((module) => module.code === operation.code)
           ? [...data.level1, { ...operation, level: 'level1', parentId: null }]
@@ -69,7 +67,9 @@ export default function BizPortal() {
         </div>
       </div>
       {modules.length === 0 ? (
-        <Empty description="当前账号无任何一级模块权限" />
+        <Empty description="当前账号无任何一级门户入口权限">
+          <Text type="secondary">请在“权限管理 → 模块权限”中先启用“一级门户入口”的“可进入/查看”，再按需配置二级门户和业务功能权限。</Text>
+        </Empty>
       ) : (
         <div className="v3-portal-grid">
           {modules.map((m) => (

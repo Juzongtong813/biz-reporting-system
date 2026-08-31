@@ -5,12 +5,12 @@ import { BizPermissionsGuard } from '../biz-auth/biz-permissions.guard';
 import { BizPermissions } from '../biz-auth/biz-permissions.decorator';
 import { BizAuthUser } from '../biz-auth/biz-auth-user.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
-import { BizCostService, CostEntryDto, MonthlyCostDto } from './biz-cost.service';
+import { BizCostService, CostEntryDto, MonthlyCostDto, MonthlyReturnDto } from './biz-cost.service';
 import { BizPermissionCode } from '@biz-reporting/shared-types';
 
 /**
- * 地市成本 API（新基线 M5；不关联合同）
- * 审核授权：operation.cost.approve —— 默认仅 super_admin；admin 经账号例外授权后可审（DEV-043）。
+ * 地市成本 API（不关联合同）
+ * 提交即生效；operation.cost.reject 权限用于管理员退回已生效记录。
  */
 @Controller('biz/costs')
 @Public()
@@ -20,8 +20,15 @@ export class BizCostController {
 
   @Get()
   @BizPermissions(BizPermissionCode.OPERATION_COST_READ)
-  async list(@BizAuthUser() auth: BizAuthContext, @Query('cityId') cityId?: string, @Query('status') status?: string, @Query('businessMonth') businessMonth?: string) {
-    return { items: await this.service.list(auth, { cityId, status, businessMonth }) };
+  async list(
+    @BizAuthUser() auth: BizAuthContext,
+    @Query('cityId') cityId?: string,
+    @Query('status') status?: string,
+    @Query('businessMonth') businessMonth?: string,
+    @Query('year') year?: string,
+    @Query('categoryCode') categoryCode?: string,
+  ) {
+    return { items: await this.service.list(auth, { cityId, status, businessMonth, year, categoryCode }) };
   }
 
   @Get('categories/list')
@@ -46,6 +53,12 @@ export class BizCostController {
   @BizPermissions(BizPermissionCode.OPERATION_COST_CREATE)
   async saveMonthly(@BizAuthUser() auth: BizAuthContext, @Body() dto: MonthlyCostDto) {
     return this.service.saveMonthly(auth, dto);
+  }
+
+  @Post('monthly/return')
+  @BizPermissions(BizPermissionCode.OPERATION_COST_REJECT)
+  async returnMonthly(@BizAuthUser() auth: BizAuthContext, @Body() dto: MonthlyReturnDto) {
+    return this.service.returnMonthly(auth, dto);
   }
 
   @Patch(':id')

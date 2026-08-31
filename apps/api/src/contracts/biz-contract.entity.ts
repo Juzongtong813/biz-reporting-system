@@ -16,6 +16,8 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryColumn, UpdateDateColum
 @Index('idx_biz_contracts_province', ['provinceId'])
 @Index('idx_biz_contracts_parent', ['parentContractId'])
 export class BizContractEntity {
+  /** 列表接口附加的展示字段，不落库。 */
+  provinceName?: string;
   /** 系统内部 UUID（对普通用户不可见） */
   @PrimaryColumn({ type: 'varchar', length: 36 })
   id: string;
@@ -36,6 +38,45 @@ export class BizContractEntity {
   /** 不含税合同金额（分，补充信息，可为空） */
   @Column({ name: 'tax_exclusive_amount_fen', type: 'bigint', nullable: true })
   taxExclusiveAmountFen: number | null;
+
+  @Column({ name: 'archive_contract_no', type: 'varchar', length: 100, nullable: true })
+  archiveContractNo: string | null;
+
+  @Column({ name: 'project_identity_code', type: 'varchar', length: 160, nullable: true })
+  projectIdentityCode: string | null;
+
+  @Column({ name: 'contract_category_1', type: 'varchar', length: 100, nullable: true })
+  contractCategory1: string | null;
+
+  @Column({ name: 'contract_category_2', type: 'varchar', length: 100, nullable: true })
+  contractCategory2: string | null;
+
+  @Column({ name: 'winning_project_name', type: 'varchar', length: 500, nullable: true })
+  winningProjectName: string | null;
+
+  @Column({ name: 'signed_date', type: 'date', nullable: true })
+  signedDate: string | null;
+
+  @Column({ name: 'tax_rate_raw', type: 'varchar', length: 255, nullable: true })
+  taxRateRaw: string | null;
+
+  @Column({ name: 'tax_rate_bp', type: 'int', nullable: true })
+  taxRateBp: number | null;
+
+  @Column({ name: 'tax_rate_bps_json', type: 'json', nullable: true })
+  taxRateBpsJson: number[] | null;
+
+  @Column({ name: 'source_import_record_id', type: 'varchar', length: 36, nullable: true })
+  sourceImportRecordId: string | null;
+
+  @Column({ name: 'source_sheet_id', type: 'varchar', length: 36, nullable: true })
+  sourceSheetId: string | null;
+
+  @Column({ name: 'source_row_id', type: 'varchar', length: 36, nullable: true })
+  sourceRowId: string | null;
+
+  @Column({ name: 'source_row_no', type: 'int', nullable: true })
+  sourceRowNo: number | null;
 
   /** 所属省份 UUID（合同只归属一个省份，只能分配到该省地市） */
   @Column({ name: 'province_id', type: 'varchar', length: 36 })

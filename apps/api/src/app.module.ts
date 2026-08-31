@@ -26,6 +26,8 @@ import { BizOrdersModule } from './biz-orders/biz-orders.module';
 import { BizCompletionsModule } from './biz-completions/biz-completions.module';
 import { BizCostsModule } from './biz-costs/biz-costs.module';
 import { BizAggregatesModule } from './biz-aggregates/biz-aggregates.module';
+import { BizCommunicationsModule } from './biz-communications/biz-communications.module';
+import { BizDataDeletionModule } from './biz-data-deletion/biz-data-deletion.module';
 import { validateRuntimeEnvironment } from './runtime.config';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -127,6 +129,8 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
     BizCompletionsModule,
     BizCostsModule,
     BizAggregatesModule,
+    BizCommunicationsModule,
+    BizDataDeletionModule,
   ],
   controllers: [AppController],
   providers: [

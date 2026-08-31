@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBizPermission } from '@/utils/biz-permission';
 import { Badge, Button, Card, Drawer, Form, Input, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd';
-import { InboxOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, InboxOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
-  bizAdminCities, bizAdminProvinces, bizContractList, bizOrderBatches, bizOrderBatchDetail, bizOrderBatchDelete, bizOrderUpload, bizOrderBatchVoid, bizOrderBatchRestore, bizOrderRows, bizOrderRowMaintain,
+  bizAdminCities, bizAdminProvinces, bizContractList, bizMe, bizOrderBatches, bizOrderBatchDetail, bizOrderBatchDelete, bizOrderUpload, bizOrderRows, bizOrderRowMaintain, bizOrderReviewExport,
 } from '@/api/biz.api';
 
 const { Title } = Typography;
@@ -56,6 +56,7 @@ export default function BizOrders() {
   const [cityOptions, setCityOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [contractOptions, setContractOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [editForm] = Form.useForm();
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   // 页面级权限保护：无上传权限的账号直接跳回经营管理，避免停留在无意义页面。
   // canUpload === null 时保持加载态，防止权限判定前闪现订单内容。
@@ -92,6 +93,11 @@ export default function BizOrders() {
     if (canUpload !== true) return;
     void loadRows();
   }, [loadRows, canUpload]);
+
+  useEffect(() => {
+    if (canUpload !== true) return;
+    void bizMe().then((me) => setIsSuperAdmin(me.roleCode === 'super_admin')).catch(() => setIsSuperAdmin(false));
+  }, [canUpload]);
 
   if (canUpload !== true) {
     return (
@@ -168,18 +174,49 @@ export default function BizOrders() {
     }
   };
 
-  const onDeleteFailed = (id: string) => {
+  const onDeleteBatch = (id: string) => {
     Modal.confirm({
-      title: '删除失败导入批次',
-      content: '仅删除批次记录和错误明细，不影响已入账订单。删除后可以重新上传同一文件。',
+      title: '删除上传记录',
+      content: '将永久删除该上传记录、本批订单行和错误明细。此操作不可恢复。',
       okText: '确认删除',
       okButtonProps: { danger: true },
       onOk: async () => {
         await bizOrderBatchDelete(id);
-        message.success('失败批次已删除');
+        message.success('上传记录已删除');
         await load();
+        await loadRows();
       },
     });
+  };
+
+  const downloadReview = async (id: string) => {
+    try {
+      const blob = await bizOrderReviewExport(id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `订单待维护-${id.slice(0, 8)}.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      const detailMsg = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detailMsg ?? '待维护订单下载失败');
+    }
+  };
+
+  const onCorrectionUpload = async (file: File, sourceBatchId: string) => {
+    setUploading(true);
+    try {
+      const result = await bizOrderUpload(file, `correction-${sourceBatchId}-${Date.now()}`, undefined, sourceBatchId);
+      message.success(`修正上传已提交：${result.batchId.slice(0, 8)}`);
+      void load();
+    } catch (error: unknown) {
+      const detailMsg = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detailMsg ?? '修正文件上传失败');
+    } finally {
+      setUploading(false);
+    }
+    return false;
   };
 
   const openMaintenance = async (id: string) => {
@@ -200,31 +237,6 @@ export default function BizOrders() {
       message.error('待维护数据加载失败');
     } finally {
       setPreviewLoading(false);
-    }
-  };
-
-  const onVoid = (id: string) => {
-    Modal.confirm({
-      title: '作废订单批次',
-      content: '作废后该批次订单退出统计（原始行保留）。仅 super_admin 可操作，必须填写原因。',
-      okText: '确认作废',
-      okButtonProps: { danger: true },
-      onOk: () => new Promise<void>((resolve, reject) => {
-        const reason = window.prompt('作废原因（必填）：');
-        if (!reason?.trim()) { message.warning('请填写作废原因'); reject(); return; }
-        bizOrderBatchVoid(id, reason).then(() => { message.success('已作废'); void load(); resolve(); }).catch((e) => { message.error('作废失败'); reject(e); });
-      }),
-    });
-  };
-
-  const onRestore = async (id: string) => {
-    try {
-      await bizOrderBatchRestore(id);
-      message.success('批次已恢复');
-      void load();
-    } catch (e: unknown) {
-      const detailMsg = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
-      message.error(detailMsg ?? '恢复失败');
     }
   };
 
@@ -296,13 +308,13 @@ export default function BizOrders() {
       title: '操作', key: 'action', width: 220,
       render: (_: unknown, row: Record<string, unknown>) => (
         <Space wrap>
-          {row.status === 'failed' && <Button size="small" danger onClick={() => onDeleteFailed(String(row.id))}>删除</Button>}
           <Button size="small" onClick={() => openDetail(String(row.id))}>详情</Button>
-          {row.status === 'imported' && String(row.failureReason ?? '').includes('待维护') && (
-            <Button size="small" type="primary" onClick={() => void openMaintenance(String(row.id))}>维护待处理</Button>
-          )}
-          {row.status === 'imported' && <Button size="small" danger onClick={() => onVoid(String(row.id))}>作废</Button>}
-          {row.status === 'voided' && <Button size="small" onClick={() => onRestore(String(row.id))}>恢复</Button>}
+          {row.status === 'imported' && String(row.failureReason ?? '').includes('待维护') && (<>
+            <Button size="small" type="primary" onClick={() => void openMaintenance(String(row.id))}>待维护</Button>
+            <Button size="small" icon={<DownloadOutlined />} onClick={() => void downloadReview(String(row.id))}>下载</Button>
+            <Upload beforeUpload={(file) => onCorrectionUpload(file, String(row.id))} accept=".xlsx" showUploadList={false} disabled={uploading}><Button size="small" icon={<UploadOutlined />}>上传修正</Button></Upload>
+          </>)}
+          {isSuperAdmin && <Button size="small" danger onClick={() => onDeleteBatch(String(row.id))}>删除</Button>}
         </Space>
       ),
     },
@@ -379,9 +391,12 @@ export default function BizOrders() {
             <p><b>状态：</b>{BATCH_STATUS[String(detail.batch.status)]?.label ?? detail.batch.status}（{String(detail.rowCount)} 行入库）</p>
             {detail.batch.failureReason ? <p><b>导入说明：</b>{String(detail.batch.failureReason)}</p> : null}
             {detail.batch.status === 'imported' && String(detail.batch.failureReason ?? '').includes('待维护') && (
-              <Button type="primary" onClick={() => { setDetailOpen(false); void openMaintenance(String(detail.batch.id)); }} style={{ marginBottom: 12 }}>
-                进入待维护
-              </Button>
+              <>
+                <Button type="primary" onClick={() => { setDetailOpen(false); void openMaintenance(String(detail.batch.id)); }} style={{ marginBottom: 12 }}>
+                  进入待维护
+                </Button>
+                <Space style={{ marginBottom: 12 }}><Button icon={<DownloadOutlined />} onClick={() => void downloadReview(String(detail.batch.id))}>下载待维护订单</Button><Upload beforeUpload={(file) => onCorrectionUpload(file, String(detail.batch.id))} accept=".xlsx" showUploadList={false} disabled={uploading}><Button icon={<UploadOutlined />}>上传修正文件</Button></Upload></Space>
+              </>
             )}
             {detail.errors.length > 0 && (
               <>

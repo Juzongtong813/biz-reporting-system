@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
 import { BizAuthGuard } from './biz-auth.guard';
 import { BizPermissionsGuard } from './biz-permissions.guard';
@@ -8,8 +8,9 @@ import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entit
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BizAuthUser } from './biz-auth-user.decorator';
-import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput } from './biz-admin.service';
+import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput, ProvinceInput, CityInput } from './biz-admin.service';
 import { BizPermissionCode, PlatformRole } from '@biz-reporting/shared-types';
+import { DataSource } from 'typeorm';
 
 /**
  * 账号与权限管理 API（新基线，仅 super_admin；基线 02 TABLE 3）
@@ -23,6 +24,7 @@ export class BizAdminController {
     private readonly adminService: BizAdminService,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ---- 用户 ----
@@ -144,7 +146,42 @@ export class BizAdminController {
       .skip((currentPage - 1) * currentPageSize)
       .take(currentPageSize)
       .getRawMany();
-    return { items, total, page: currentPage, pageSize: currentPageSize };
+    const targetIdsByType = new Map<string, string[]>();
+    for (const item of items as Array<{ targetType?: string; targetId?: string }>) {
+      const type = String(item.targetType ?? '');
+      const id = String(item.targetId ?? '');
+      if (!type || !id) continue;
+      targetIdsByType.set(type, [...(targetIdsByType.get(type) ?? []), id]);
+    }
+    const displayByKey = new Map<string, string>();
+    const loadDisplay = async (targetType: string, table: string, valueColumn: string, label: string) => {
+      const ids = [...new Set(targetIdsByType.get(targetType) ?? [])];
+      if (!ids.length) return;
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = await this.dataSource.query(`SELECT id, ${valueColumn} AS value FROM ${table} WHERE id IN (${placeholders})`, ids) as Array<{ id: string; value: unknown }>;
+      for (const row of rows) displayByKey.set(`${targetType}:${row.id}`, `${label}：${String(row.value ?? row.id)}`);
+    };
+    await Promise.all([
+      loadDisplay('contract', 'biz_contracts', 'contract_no', '合同'),
+      loadDisplay('order_row', 'biz_order_rows', 'col_03', '订单'),
+      loadDisplay('order_batch', 'biz_order_import_batches', 'filename', '订单批次'),
+      loadDisplay('user', 'biz_users', 'username', '账号'),
+      loadDisplay('city', 'biz_cities', 'name', '经营单位'),
+      loadDisplay('province', 'biz_provinces', 'name', '省份'),
+      loadDisplay('announcement', 'biz_announcements', 'title', '公告'),
+      loadDisplay('contract_import_record', 'biz_contract_import_records', 'filename', '合同上传记录'),
+    ]);
+    const costIds = [...new Set(targetIdsByType.get('cost_entry') ?? [])];
+    if (costIds.length) {
+      const placeholders = costIds.map(() => '?').join(',');
+      const rows = await this.dataSource.query(`SELECT e.id, c.name AS city_name, e.business_month, e.category_code FROM biz_cost_entries e LEFT JOIN biz_cities c ON c.id = e.city_id WHERE e.id IN (${placeholders})`, costIds) as Array<{ id: string; city_name?: string; business_month?: string; category_code?: string }>;
+      for (const row of rows) displayByKey.set(`cost_entry:${row.id}`, `成本：${row.city_name ?? '-'} ${row.business_month ?? '-'} ${row.category_code ?? '-'}`);
+    }
+    const enrichedItems = (items as Array<Record<string, unknown>>).map((item) => ({
+      ...item,
+      targetDisplay: displayByKey.get(`${String(item.targetType ?? '')}:${String(item.targetId ?? '')}`) ?? `${String(item.targetType ?? '对象')}：${String(item.targetId ?? '-')}`,
+    }));
+    return { items: enrichedItems, total, page: currentPage, pageSize: currentPageSize };
   }
 
   @Get('roles')
@@ -171,9 +208,33 @@ export class BizAdminController {
     return { items: await this.adminService.listProvinces() };
   }
 
+  @Post('provinces')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async createProvince(@BizAuthUser() auth: BizAuthContext, @Body() body: ProvinceInput) { return this.adminService.createProvince(auth.userId, body); }
+
+  @Patch('provinces/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async updateProvince(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() body: Partial<ProvinceInput>) { return this.adminService.updateProvince(auth.userId, id, body); }
+
+  @Delete('provinces/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async deleteProvince(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) { await this.adminService.deleteProvince(auth.userId, id); return { ok: true }; }
+
   @Get('cities')
   @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
   async cities(@Query('provinceId') provinceId?: string) {
     return { items: await this.adminService.listCities(provinceId) };
   }
+
+  @Post('cities')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async createCity(@BizAuthUser() auth: BizAuthContext, @Body() body: CityInput) { return this.adminService.createCity(auth.userId, body); }
+
+  @Patch('cities/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async updateCity(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Body() body: Partial<CityInput>) { return this.adminService.updateCity(auth.userId, id, body); }
+
+  @Delete('cities/:id')
+  @BizPermissions(BizPermissionCode.OPERATION_REGION_MANAGE)
+  async deleteCity(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) { await this.adminService.deleteCity(auth.userId, id); return { ok: true }; }
 }

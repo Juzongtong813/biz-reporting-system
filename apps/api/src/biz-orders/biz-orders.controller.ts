@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { Public } from '../common/decorators/public.decorator';
@@ -8,7 +8,9 @@ import { BizPermissions } from '../biz-auth/biz-permissions.decorator';
 import { BizAuthUser } from '../biz-auth/biz-auth-user.decorator';
 import { BizAuthContext } from '../rbac/rbac.service';
 import { BizOrderImportService } from './biz-order-import.service';
+import { BizDataDeletionService } from '../biz-data-deletion/biz-data-deletion.service';
 import { BizPermissionCode, ORDER_FILE_MAX_BYTES, SENSITIVE_ORDER_PERMISSION } from '@biz-reporting/shared-types';
+import type { Response } from 'express';
 
 interface MaintainOrderRowBody {
   provinceId?: string;
@@ -27,7 +29,10 @@ interface MaintainOrderRowBody {
 @Public()
 @UseGuards(BizAuthGuard, BizPermissionsGuard)
 export class BizOrdersController {
-  constructor(private readonly service: BizOrderImportService) {}
+  constructor(
+    private readonly service: BizOrderImportService,
+    private readonly deletionService: BizDataDeletionService,
+  ) {}
 
   @Post('upload')
   @UseInterceptors(FileInterceptor('file', {
@@ -40,10 +45,11 @@ export class BizOrdersController {
     @BizAuthUser() auth: BizAuthContext,
     @UploadedFile() file: Express.Multer.File,
     @Body('idempotencyKey') idempotencyKey?: string,
+    @Body('sourceBatchId') sourceBatchId?: string,
   ) {
     const key = (idempotencyKey ?? '').trim() || undefined;
     if (!key) throw new BadRequestException('缺少幂等键 idempotencyKey');
-    const batch = await this.service.upload(auth, file, key);
+    const batch = await this.service.upload(auth, file, key, sourceBatchId);
     return { batchId: batch.id, status: batch.status };
   }
 
@@ -59,11 +65,21 @@ export class BizOrdersController {
     return this.service.batchDetail(auth, id);
   }
 
+  @Get('batches/:id/review-export')
+  @BizPermissions(BizPermissionCode.OPERATION_ORDER_EXPORT)
+  async reviewExport(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string, @Res() response: Response) {
+    const sensitive = auth.isSuperAdmin || auth.permissionCodes.has(SENSITIVE_ORDER_PERMISSION);
+    const file = await this.service.exportReviewFile(auth, id, sensitive);
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`);
+    response.setHeader('Cache-Control', 'no-store');
+    response.send(file.buffer);
+  }
+
   @Delete('batches/:id')
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
-  async deleteFailedBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
-    await this.service.deleteFailedBatch(auth, id);
-    return { ok: true };
+  async deleteBatch(@BizAuthUser() auth: BizAuthContext, @Param('id') id: string) {
+    return this.deletionService.delete(auth, 'order-import-record', id);
   }
 
   @Post('batches/:id/void')

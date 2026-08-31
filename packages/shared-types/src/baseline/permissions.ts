@@ -73,6 +73,12 @@ export const BizPermissionCode = {
   OPERATION_MODULE_MANAGE: 'operation.module.manage',
   OPERATION_SETTINGS_READ: 'operation.settings.read',
   OPERATION_SETTINGS_MANAGE: 'operation.settings.manage',
+  OPERATION_REGION_MANAGE: 'operation.region.manage',
+  // 消息与公告
+  OPERATION_MESSAGE_READ: 'operation.message.read',
+  OPERATION_ANNOUNCEMENT_CREATE: 'operation.announcement.create',
+  OPERATION_ANNOUNCEMENT_PUBLISH: 'operation.announcement.publish',
+  OPERATION_ANNOUNCEMENT_MANAGE: 'operation.announcement.manage',
 } as const;
 export type BizPermissionCodeValue = (typeof BizPermissionCode)[keyof typeof BizPermissionCode];
 
@@ -115,6 +121,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly string[]
     BizPermissionCode.OPERATION_COST_VOID,
     BizPermissionCode.OPERATION_COST_EXPORT,
     BizPermissionCode.OPERATION_SETTINGS_READ,
+    BizPermissionCode.OPERATION_MESSAGE_READ,
+    BizPermissionCode.OPERATION_ANNOUNCEMENT_CREATE,
+    BizPermissionCode.OPERATION_ANNOUNCEMENT_PUBLISH,
+    BizPermissionCode.OPERATION_ANNOUNCEMENT_MANAGE,
   ],
   contract_manager: [
     BizPermissionCode.PORTAL_MAINTENANCE_ENTER,
@@ -145,6 +155,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly string[]
     BizPermissionCode.OPERATION_COST_REJECT,
     BizPermissionCode.OPERATION_COST_VOID,
     BizPermissionCode.OPERATION_COST_EXPORT,
+    BizPermissionCode.OPERATION_MESSAGE_READ,
   ],
   city_user: [
     BizPermissionCode.PORTAL_MAINTENANCE_ENTER,
@@ -163,6 +174,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly string[]
     BizPermissionCode.OPERATION_COST_CREATE,
     BizPermissionCode.OPERATION_COST_SUBMIT,
     BizPermissionCode.OPERATION_COST_EXPORT,
+    BizPermissionCode.OPERATION_MESSAGE_READ,
   ],
 };
 

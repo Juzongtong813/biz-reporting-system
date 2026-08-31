@@ -191,8 +191,9 @@ export default function BizAuditLogs() {
             { title: '地市', dataIndex: 'cityName' },
             { title: '动作', dataIndex: 'actionType', render: formatAction },
             { title: '对象', dataIndex: 'targetType' },
-            { title: '对象 ID', dataIndex: 'targetId', render: (value: string) => <Input size="small" readOnly value={value} style={{ width: 180 }} /> },
-            { title: '结果', dataIndex: 'resultStatus', render: (value: string) => <Tag color={value === 'success' ? 'green' : 'red'}>{value}</Tag> },
+            { title: '操作对象', dataIndex: 'targetDisplay', width: 260, render: (value: string) => <Text ellipsis={{ tooltip: value }}>{value}</Text> },
+            { title: '原始对象 ID', dataIndex: 'targetId', width: 190, render: (value: string) => <Input size="small" readOnly value={value} style={{ width: 180 }} /> },
+            { title: '结果', dataIndex: 'resultStatus', render: (value: string) => <Tag color={value === 'success' ? 'green' : 'red'}>{value === 'success' ? '成功' : value === 'failed' ? '失败' : value === 'rejected' ? '已拒绝' : value}</Tag> },
           ]}
         />
       </Card>

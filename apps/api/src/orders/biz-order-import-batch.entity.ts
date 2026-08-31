@@ -67,6 +67,14 @@ export class BizOrderImportBatchEntity {
   @Column({ name: 'data_scope_json', type: 'varchar', length: 500, nullable: true })
   dataScopeJson: string | null;
 
+  /** 修正批次来源；普通上传为空 */
+  @Column({ name: 'source_batch_id', type: 'varchar', length: 36, nullable: true })
+  sourceBatchId: string | null;
+
+  /** normal=普通上传；correction=失败订单修正上传 */
+  @Column({ name: 'batch_purpose', type: 'varchar', length: 16, default: 'normal' })
+  batchPurpose: 'normal' | 'correction';
+
   /** 作废人 UUID */
   @Column({ name: 'voided_by', type: 'varchar', length: 36, nullable: true })
   voidedBy: string | null;

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { Avatar, Button, Drawer, Dropdown, Form, Input, Layout, Menu, Modal, Space, Typography, message, type MenuProps } from 'antd';
 import {
   ApartmentOutlined, BarChartOutlined, FileTextOutlined, InboxOutlined, SettingOutlined,
-  KeyOutlined, TeamOutlined, UserOutlined, WalletOutlined, MenuOutlined,
+  BellOutlined, DeleteOutlined, HomeOutlined, KeyOutlined, TeamOutlined, UserOutlined, WalletOutlined, MenuOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { bizChangeOwnPassword, bizMe } from '@/api/biz.api';
+import { bizChangeOwnPassword, bizMe, bizMessageList, type BizSnapshotMetadata } from '@/api/biz.api';
+import BizSnapshotProvider, { useBizSnapshot } from '@/components/biz/BizSnapshotContext';
 import { clearBizToken } from '@/utils/biz-auth';
 import { clearBizPermissionCache } from '@/utils/biz-permission';
 
@@ -15,6 +16,55 @@ const { Text } = Typography;
 const ROLE_LABEL: Record<string, string> = {
   super_admin: '超级管理员', admin: '省级运营管理员', contract_manager: '合同管理员', city_user: '地市用户',
 };
+
+/** 顶部经营分析快照状态栏：单一"更新数据"入口 + 状态文案（不暴露技术术语/堆栈） */
+function fmtShort(value: string | null | undefined): string {
+  if (!value) return '';
+  // 仅日期（如数据所属日 currentAsOf，后端 date 类型）：直接按原值展示，不施加时区转换，避免 UTC→北京时间 +8 偏移误显示 08:00。
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (isDateOnly) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  // 时间戳（generatedAt / lastSuccessfulAt）：后端返回 UTC(ISO Z)，统一按北京时间(Asia/Shanghai)展示，不受浏览器时区影响。
+  const p = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce<Record<string, string>>((acc, x) => { acc[x.type] = x.value; return acc; }, {});
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+/** ready 状态的展示时间：优先生成时间，回退到最近成功时间 / 数据所属日（避免生成时间缺失时显示空白） */
+function metaUpdateTime(meta: BizSnapshotMetadata | null): string | null {
+  return meta?.generatedAt ?? meta?.lastSuccessfulAt ?? meta?.currentAsOf ?? null;
+}
+
+function SnapshotStatusBar() {
+  const { meta, building, requestUpdate } = useBizSnapshot();
+  const lastRunStatus = meta?.lastRun?.status;
+  const hasReady = !!meta?.snapshotId;
+  const updateTime = metaUpdateTime(meta);
+  let text: React.ReactNode;
+  if (building) {
+    text = <Text type="secondary">数据更新中，当前展示 {fmtShort(meta?.currentAsOf ?? meta?.lastSuccessfulAt ?? meta?.generatedAt)} 的数据</Text>;
+  } else if (lastRunStatus === 'failed') {
+    text = hasReady
+      ? <Text type="danger">更新失败，当前展示 {fmtShort(meta?.currentAsOf ?? meta?.lastSuccessfulAt)} 的数据</Text>
+      : <Text type="danger">最近更新失败，请重新更新数据</Text>;
+  } else if (hasReady) {
+    text = updateTime
+      ? <Text type="secondary">数据已于 {fmtShort(updateTime)} 更新</Text>
+      : <Text type="secondary">数据已更新</Text>;
+  } else {
+    text = <Text type="secondary">暂未生成统计数据</Text>;
+  }
+  return (
+    <Space size={8}>
+      <span>{text}</span>
+      <Button size="small" type="primary" onClick={() => void requestUpdate()} disabled={building}>
+        {building ? '更新中' : '更新数据'}
+      </Button>
+    </Space>
+  );
+}
 
 /** 按权限码过滤菜单（super_admin 通配） */
 type PermissionMenuItem = { key: string; label: string; icon?: React.ReactNode; permission?: string };
@@ -36,6 +86,7 @@ export default function BizLayout() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordForm] = Form.useForm<{ currentPassword: string; newPassword: string; confirmPassword: string }>();
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -46,6 +97,11 @@ export default function BizLayout() {
   useEffect(() => {
     bizMe().then(setMe).catch(() => { clearBizToken(); clearBizPermissionCache(); navigate('/biz/login'); });
   }, [navigate]);
+
+  useEffect(() => {
+    if (!me?.permissions?.includes('operation.message.read') && me?.roleCode !== 'super_admin') return;
+    void bizMessageList().then((result) => setUnreadCount(result.unreadCount)).catch(() => undefined);
+  }, [me]);
 
   const permissions = useCallback(() => new Set(me?.permissions ?? []), [me]);
   const isSuper = me?.roleCode === 'super_admin';
@@ -72,14 +128,23 @@ export default function BizLayout() {
   const systemItems = filterByPermission([
     { key: '/biz/settings', label: '系统设置', icon: <SettingOutlined />, permission: 'operation.settings.read' },
     { key: '/biz/admin', label: '权限管理', icon: <ApartmentOutlined />, permission: 'operation.user.manage' },
+    { key: '/biz/region-settings', label: '省市设置', icon: <ApartmentOutlined />, permission: 'operation.region.manage' },
     { key: '/biz/audit-logs', label: '审计日志', icon: <FileTextOutlined />, permission: 'operation.user.manage' },
+    ...(isSuper ? [{ key: '/biz/data-delete', label: '数据删除', icon: <DeleteOutlined /> }] : []),
+  ], permSet, isSuper);
+  const messageItems = filterByPermission([
+    { key: '/biz/messages', label: unreadCount > 0 ? `消息中心 (${unreadCount})` : '消息中心', icon: <BellOutlined />, permission: 'operation.message.read' },
   ], permSet, isSuper);
 
   const analysisItems = filterByPermission([
-    { key: '/biz/analysis', label: '经营分析', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis', label: '经营分析概览', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis/trend', label: '月度趋势', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis/cities', label: '经营单位对比', icon: <ApartmentOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis/overruns', label: '超额清单', icon: <WalletOutlined />, permission: 'operation.analysis.read' },
   ], permSet, isSuper);
   const contractItems = filterByPermission([
-    { key: '/biz/operation', label: '合同详情', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
+    { key: '/biz/contract-overview', label: '合同概览', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
+    { key: '/biz/operation', label: '合同上传', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
   ], permSet, isSuper);
   const costItems = filterByPermission([
     { key: '/biz/costs', label: '地市成本', icon: <WalletOutlined />, permission: 'operation.cost.read' },
@@ -90,37 +155,35 @@ export default function BizLayout() {
   ], permSet, isSuper);
 
   const businessItems: NonNullable<MenuProps['items']> = [
-    ...analysisItems,
+    ...(analysisItems.length > 0 ? [{ key: 'biz-analysis', label: '经营管理', icon: <BarChartOutlined />, children: analysisItems }] : []),
     ...(contractItems.length > 0 ? [{ key: 'biz-contract', label: '合同管理', icon: <FileTextOutlined />, children: contractItems }] : []),
     ...(costItems.length > 0 ? [{ key: 'biz-cost', label: '成本管理', icon: <WalletOutlined />, children: costItems }] : []),
     ...(completionItems.length > 0 ? [{ key: 'biz-completion', label: '完工管理', icon: <TeamOutlined />, children: completionItems }] : []),
   ];
   const menuItems: MenuProps['items'] = [
-    { key: 'group-ops', type: 'group', label: '经营管理' },
+    ...messageItems,
     ...businessItems,
-    ...(systemItems.length > 0 ? [
-      { key: 'group-sys', type: 'group' as const, label: '系统管理' },
-      ...systemItems,
-    ] : []),
+    ...systemItems,
   ];
-  // 移动端不使用多级折叠菜单：抽屉空间有限，折叠状态容易让用户误以为导航丢失。
-  // 将所有可访问入口平铺展示，保证合同、成本、订单、完工及系统菜单始终可见。
+  // 移动端与桌面端保持同一层级，避免两种导航结构产生不同入口。
   const mobileMenuItems: MenuProps['items'] = [
-    { key: 'mobile-group-ops', type: 'group', label: '经营管理' },
-    ...analysisItems,
-    ...contractItems,
-    ...costItems,
-    ...completionItems,
-    ...(systemItems.length > 0 ? [
-      { key: 'mobile-group-sys', type: 'group' as const, label: '系统管理' },
-      ...systemItems,
-    ] : []),
+    ...messageItems,
+    ...businessItems,
+    ...systemItems,
   ];
 
-  const selectedKey = ['/biz/analysis', '/biz/operation', '/biz/costs', '/biz/orders', '/biz/offline-completions']
-    .find((key) => location.pathname.startsWith(key)) ?? '/biz/operation';
-  const activeGroupKey = location.pathname.startsWith('/biz/operation')
-    ? 'biz-contract'
+  // 叶子路由必须优先于父路由匹配；此前 /biz/analysis/trend 会被 /biz/analysis 抢占，
+  // 其他未列出的路由还会错误回退为“合同上传”。
+  const navigationPaths = [
+    '/biz/analysis/overruns', '/biz/analysis/cities', '/biz/analysis/trend', '/biz/analysis',
+    '/biz/contract-overview', '/biz/operation', '/biz/offline-completions', '/biz/orders',
+    '/biz/costs', '/biz/messages', '/biz/settings', '/biz/admin', '/biz/region-settings', '/biz/audit-logs', '/biz/data-delete',
+  ];
+  const selectedKey = navigationPaths.find((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
+  const activeGroupKey = location.pathname.startsWith('/biz/analysis')
+    ? 'biz-analysis'
+    : location.pathname.startsWith('/biz/operation') || location.pathname.startsWith('/biz/contract-overview')
+      ? 'biz-contract'
     : location.pathname.startsWith('/biz/costs')
       ? 'biz-cost'
       : location.pathname.startsWith('/biz/orders') || location.pathname.startsWith('/biz/offline-completions')
@@ -149,7 +212,8 @@ export default function BizLayout() {
   if (isModulePortal) return <Outlet />;
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <BizSnapshotProvider>
+      <Layout style={{ minHeight: '100vh' }}>
       {!isMobile && (
         <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={200} style={{ position: 'sticky', top: 0, height: '100vh' }}>
           <div className="biz-sider-brand">
@@ -164,7 +228,9 @@ export default function BizLayout() {
           <Space>
             {isMobile && <Button type="text" icon={<MenuOutlined />} onClick={() => setMobileOpen(true)} />}
             {isMobile && <Text strong>经营数据中台</Text>}
+            <Button type="text" icon={<HomeOutlined />} onClick={() => navigate('/biz/portal')}>门户首页</Button>
           </Space>
+          <SnapshotStatusBar />
           <Dropdown
             menu={{ items: [
               { key: 'password', icon: <KeyOutlined />, label: '修改密码', onClick: () => setPasswordOpen(true) },
@@ -216,6 +282,7 @@ export default function BizLayout() {
           </Form.Item>
         </Form>
       </Modal>
-    </Layout>
+      </Layout>
+    </BizSnapshotProvider>
   );
 }
