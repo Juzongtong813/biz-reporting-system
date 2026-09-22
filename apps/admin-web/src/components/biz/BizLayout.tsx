@@ -137,14 +137,15 @@ export default function BizLayout() {
   ], permSet, isSuper);
 
   const analysisItems = filterByPermission([
-    { key: '/biz/analysis', label: '经营分析概览', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis', label: '经营概览', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
     { key: '/biz/analysis/trend', label: '月度趋势', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
-    { key: '/biz/analysis/cities', label: '经营单位对比', icon: <ApartmentOutlined />, permission: 'operation.analysis.read' },
+    { key: '/biz/analysis/cities', label: '地市对比', icon: <ApartmentOutlined />, permission: 'operation.analysis.read' },
     { key: '/biz/analysis/overruns', label: '超额清单', icon: <WalletOutlined />, permission: 'operation.analysis.read' },
   ], permSet, isSuper);
   const contractItems = filterByPermission([
     { key: '/biz/contract-overview', label: '合同概览', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
     { key: '/biz/operation', label: '合同上传', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
+    { key: '/biz/fee-rates', label: '管理费率', icon: <WalletOutlined />, permission: 'operation.contract.read' },
   ], permSet, isSuper);
   const costItems = filterByPermission([
     { key: '/biz/costs', label: '地市成本', icon: <WalletOutlined />, permission: 'operation.cost.read' },
@@ -176,13 +177,14 @@ export default function BizLayout() {
   // 其他未列出的路由还会错误回退为“合同上传”。
   const navigationPaths = [
     '/biz/analysis/overruns', '/biz/analysis/cities', '/biz/analysis/trend', '/biz/analysis',
-    '/biz/contract-overview', '/biz/operation', '/biz/offline-completions', '/biz/orders',
+    '/biz/contract-overview', '/biz/fee-rates', '/biz/operation', '/biz/offline-completions', '/biz/orders',
     '/biz/costs', '/biz/messages', '/biz/settings', '/biz/admin', '/biz/region-settings', '/biz/audit-logs', '/biz/data-delete',
   ];
   const selectedKey = navigationPaths.find((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
   const activeGroupKey = location.pathname.startsWith('/biz/analysis')
     ? 'biz-analysis'
     : location.pathname.startsWith('/biz/operation') || location.pathname.startsWith('/biz/contract-overview')
+      || location.pathname.startsWith('/biz/fee-rates')
       ? 'biz-contract'
     : location.pathname.startsWith('/biz/costs')
       ? 'biz-cost'

@@ -10,6 +10,8 @@ import { PermissionEntity } from '../rbac/permission.entity';
 import { RolePermissionEntity } from '../rbac/role-permission.entity';
 import { UserPermissionOverrideEntity } from '../rbac/user-permission-override.entity';
 import { UserDataScopeEntity } from '../rbac/user-data-scope.entity';
+import { UserRoleEntity } from '../rbac/user-role.entity';
+import { UserScopeGrantEntity } from '../rbac/user-scope-grant.entity';
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
@@ -36,6 +38,8 @@ import { BizAdminController } from './biz-admin.controller';
       RolePermissionEntity,
       UserPermissionOverrideEntity,
       UserDataScopeEntity,
+      UserRoleEntity,
+      UserScopeGrantEntity,
       ProvinceEntity,
       CityEntity,
       BizOperationLogEntity,

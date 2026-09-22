@@ -8,7 +8,7 @@ import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entit
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { BizAuthUser } from './biz-auth-user.decorator';
-import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput, ProvinceInput, CityInput } from './biz-admin.service';
+import { BizAdminService, CreateUserDto, PermissionOverrideInput, DataScopeInput, ProvinceInput, CityInput, ScopeGrantInput } from './biz-admin.service';
 import { BizPermissionCode, PlatformRole } from '@biz-reporting/shared-types';
 import { DataSource } from 'typeorm';
 
@@ -94,6 +94,23 @@ export class BizAdminController {
     @Body() body: { scopes: DataScopeInput[] },
   ) {
     await this.adminService.setDataScopes(auth.userId, userId, body.scopes ?? []);
+    return { ok: true };
+  }
+
+  @Get('users/:id/access')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async getUserAccess(@Param('id') userId: string) {
+    return this.adminService.getUserAccess(userId);
+  }
+
+  @Put('users/:id/access')
+  @BizPermissions(BizPermissionCode.OPERATION_USER_MANAGE)
+  async setUserAccess(
+    @BizAuthUser() auth: BizAuthContext,
+    @Param('id') userId: string,
+    @Body() body: { roles?: string[]; grants?: ScopeGrantInput[] },
+  ) {
+    await this.adminService.setUserAccess(auth.userId, userId, body.roles ?? [], body.grants ?? []);
     return { ok: true };
   }
 

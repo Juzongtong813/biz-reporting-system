@@ -11,6 +11,8 @@ import { PermissionEntity } from '../rbac/permission.entity';
 import { RolePermissionEntity } from '../rbac/role-permission.entity';
 import { UserPermissionOverrideEntity } from '../rbac/user-permission-override.entity';
 import { UserDataScopeEntity } from '../rbac/user-data-scope.entity';
+import { UserRoleEntity } from '../rbac/user-role.entity';
+import { UserScopeGrantEntity, UserScopeGrantType } from '../rbac/user-scope-grant.entity';
 import { ProvinceEntity } from '../main-data/province.entity';
 import { CityEntity } from '../main-data/city.entity';
 import { BizOperationLogEntity } from '../operation-logs/biz-operation-log.entity';
@@ -33,6 +35,7 @@ export interface DataScopeInput {
   provinceId: string | null;
   cityId?: string | null;
 }
+export interface ScopeGrantInput { scopeType: UserScopeGrantType; targetId?: string | null; effect?: 'allow' | 'deny'; }
 
 export interface ProvinceInput { code: string; name: string; }
 export interface CityInput { provinceId: string; code: string; name: string; unitType?: 'city' | 'province_branch'; }
@@ -59,6 +62,10 @@ export class BizAdminService {
     private readonly overrideRepo: Repository<UserPermissionOverrideEntity>,
     @InjectRepository(UserDataScopeEntity)
     private readonly dataScopeRepo: Repository<UserDataScopeEntity>,
+    @InjectRepository(UserRoleEntity)
+    private readonly userRoleRepo: Repository<UserRoleEntity>,
+    @InjectRepository(UserScopeGrantEntity)
+    private readonly scopeGrantRepo: Repository<UserScopeGrantEntity>,
     @InjectRepository(ProvinceEntity)
     private readonly provinceRepo: Repository<ProvinceEntity>,
     @InjectRepository(CityEntity)
@@ -104,6 +111,12 @@ export class BizAdminService {
       sensitiveOrderScope: dto.sensitiveOrderScope ?? 'masked',
       mustChangePassword: true,
     });
+    await this.userRoleRepo.save({ id: randomUUID(), userId: user.id, roleCode: dto.roleCode, isPrimary: true });
+    if (dto.roleCode === PlatformRole.CITY_USER && dto.cityId) {
+      await this.scopeGrantRepo.save({ id: randomUUID(), userId: user.id, scopeType: 'city', targetId: dto.cityId, effect: 'allow' });
+    } else if (dto.roleCode === PlatformRole.ADMIN) {
+      await this.scopeGrantRepo.save({ id: randomUUID(), userId: user.id, scopeType: 'all', targetId: null, effect: 'allow' });
+    }
     await this.recordOp(operatorId, 'user.create', 'user', user.id);
     return user;
   }
@@ -174,6 +187,7 @@ export class BizAdminService {
     if (!user) throw new NotFoundException('账号不存在');
     if (user.roleCode === PlatformRole.SUPER_ADMIN) throw new BadRequestException('不允许调整 super_admin 数据范围');
     await this.dataScopeRepo.delete({ userId });
+    await this.scopeGrantRepo.delete({ userId });
     for (const input of inputs) {
       await this.dataScopeRepo.save({
         id: randomUUID(),
@@ -182,8 +196,35 @@ export class BizAdminService {
         cityId: input.cityId ?? null,
         scopeType: input.provinceId === null && input.cityId === null ? 'all' : (input.cityId ? 'city' : 'province'),
       });
+      await this.scopeGrantRepo.save({ id: randomUUID(), userId, scopeType: input.provinceId === null && input.cityId === null ? 'all' : (input.cityId ? 'city' : 'province'), targetId: input.cityId ?? input.provinceId ?? null, effect: 'allow' });
     }
+    user.authVersion += 1;
+    await this.userRepo.save(user);
     await this.recordOp(operatorId, 'user.data_scopes', 'user', userId);
+  }
+
+  async getUserAccess(userId: string): Promise<{ roles: UserRoleEntity[]; grants: UserScopeGrantEntity[] }> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('账号不存在');
+    return { roles: await this.userRoleRepo.findBy({ userId }), grants: await this.scopeGrantRepo.findBy({ userId }) };
+  }
+
+  async setUserAccess(operatorId: string, userId: string, roles: string[], grants: ScopeGrantInput[]): Promise<void> {
+    const user = await this.userRepo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('账号不存在');
+    const normalizedRoles = [...new Set((roles ?? []).map((role) => String(role).trim()).filter((role) => PLATFORM_ROLES.includes(role as PlatformRole)))];
+    if (!normalizedRoles.length || normalizedRoles.includes(PlatformRole.SUPER_ADMIN) && user.roleCode !== PlatformRole.SUPER_ADMIN) throw new BadRequestException('角色配置无效');
+    if (normalizedRoles.includes(PlatformRole.SUPER_ADMIN) && user.id !== userId) throw new BadRequestException('不允许配置 super_admin');
+    const normalizedGrants = (grants ?? []).filter((grant) => grant.scopeType && (grant.scopeType === 'all' || grant.targetId));
+    await this.userRoleRepo.delete({ userId });
+    await this.scopeGrantRepo.delete({ userId });
+    await this.userRoleRepo.save(normalizedRoles.map((roleCode, index) => ({ id: randomUUID(), userId, roleCode, isPrimary: index === 0 })));
+    await this.scopeGrantRepo.save(normalizedGrants.map((grant) => ({ id: randomUUID(), userId, scopeType: grant.scopeType, targetId: grant.scopeType === 'all' ? null : grant.targetId ?? null, effect: grant.effect ?? 'allow' })));
+    user.roleCode = normalizedRoles[0];
+    user.cityId = normalizedGrants.find((grant) => grant.scopeType === 'city' && (grant.effect ?? 'allow') === 'allow')?.targetId ?? null;
+    user.authVersion += 1;
+    await this.userRepo.save(user);
+    await this.recordOp(operatorId, 'user.access.update', 'user', userId);
   }
 
   // ================= 字典 =================

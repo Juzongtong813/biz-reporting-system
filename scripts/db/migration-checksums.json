@@ -25,5 +25,8 @@
   "023_biz_contract_import_records": "05c2eaa845250f44e76d950afd963d6a17b2c873c6a22b99d20f7ee850bcc017",
   "024_normalize_primary_contract_numbers": "785bc60f210106afa2e115a30a15c7b15f8332ae9dffc54e6403b2b819f97272",
   "025_biz_messages_announcements": "b731fb2303f7e431356fbd96d1a207e6b4e473648b55b76c6ff4fcfaf3dbc21f",
-  "026_biz_region_permissions": "5a7b1ac8bf3454236b2976ae7a1ec929cd028487c84828b24365757f88ba029f"
+  "026_biz_region_permissions": "5a7b1ac8bf3454236b2976ae7a1ec929cd028487c84828b24365757f88ba029f",
+  "027_snapshot_auto_update_settings": "47831c99125ead4b0d0ca445badfb6855d83244df68b0c11a97d7980176b73c1",
+  "028_biz_fee_rate_import_tasks": "147e588f8baa09b9f8a420aa91779f8d2b51147b37deb7563634580bd3a4f74f",
+  "029_biz_account_scope_v2": "ae7b9ab315c76a337487f7a30593038f7e0346acd1650b190e5ba99fb8a74a59"
 }

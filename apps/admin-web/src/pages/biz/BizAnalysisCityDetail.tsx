@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Button, Card, Descriptions, Drawer, message, Select, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import { ArrowLeftOutlined, HomeOutlined, ReloadOutlined } from '@ant-design/icons';
-import { ALLOCATION_STATUS_TEXT, bizAnalysisCityDetail, bizAnalysisCityDetailSnapshot, bizAnalysisYears, bizContractDetail, CONTRACT_STATUS_COLOR, CONTRACT_STATUS_TEXT, type BizContractDetail } from '@/api/biz.api';
+import { ALLOCATION_STATUS_TEXT, bizAnalysisCityDetail, bizAnalysisCityDetailSnapshot, bizAnalysisYears, bizContractDetail, CONTRACT_STATUS_COLOR, CONTRACT_STATUS_TEXT, effectiveContractStatus, type BizContractDetail } from '@/api/biz.api';
 
 /** 预警类型中文（与 BizContracts 视图保持一致） */
 const ALERT_LABEL: Record<string, string> = {
@@ -75,7 +75,7 @@ export default function BizAnalysisCityDetail() {
       setSnapshot(snap);
     } catch (e) {
       const status = (e as { response?: { status?: number } })?.response?.status;
-      setError(status === 403 ? '当前账号无权查看该经营单位数据' : status === 404 ? '经营单位不存在' : '经营单位详情加载失败，请稍后重试');
+      setError(status === 403 ? '当前账号无权查看该地市数据' : status === 404 ? '地市不存在' : '地市详情加载失败，请稍后重试');
       setSnapshot(null);
       setData(null);
       setLoading(false);
@@ -120,9 +120,9 @@ export default function BizAnalysisCityDetail() {
     { title: '合同编号', dataIndex: 'contractNo', key: 'contractNo', width: 200, fixed: 'left' as const, render: (value: string, row: Record<string, unknown>) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openContractDetail(String(row.id))}>{value}</Button> },
     { title: '合同名称', dataIndex: 'contractName', key: 'contractName', ellipsis: true },
     { title: '省份', dataIndex: 'provinceName', key: 'provinceName', width: 100 },
-    { title: '经营单位', dataIndex: 'cityName', key: 'cityName', width: 110 },
+    { title: '地市', dataIndex: 'cityName', key: 'cityName', width: 110 },
     { title: '含税合同额（元）', dataIndex: 'taxInclusiveAmountFen', key: 'taxInclusiveAmountFen', width: 140, align: 'right' as const, render: (v: number) => fenToYuan(v) },
-    { title: '合同状态', dataIndex: 'status', key: 'status', width: 90, render: (value: string) => <Tag color={CONTRACT_STATUS_COLOR[value] ?? 'default'}>{CONTRACT_STATUS_TEXT[value] ?? value}</Tag> },
+    { title: '合同状态', dataIndex: 'status', key: 'status', width: 90, render: (_value: string, row: Record<string, unknown>) => { const eff = effectiveContractStatus(row); return <Tag color={CONTRACT_STATUS_COLOR[eff.status] ?? 'default'}>{CONTRACT_STATUS_TEXT[eff.status] ?? eff.status}</Tag>; } },
     { title: '签订日期', dataIndex: 'signedDate', key: 'signedDate', width: 110, render: (v: string | null) => formatDate(v) },
     { title: '合同到期日期', dataIndex: 'endDate', key: 'endDate', width: 110, render: (v: string | null) => formatDate(v) },
     { title: '累计完工（元）', dataIndex: 'cumulativeCompletionFen', key: 'cumulativeCompletionFen', width: 130, align: 'right' as const, render: (v: number) => fenToYuan(v) },
@@ -215,11 +215,11 @@ export default function BizAnalysisCityDetail() {
       <div className="v3-page-head">
         <div className="v3-page-titles">
           <Title level={4} style={{ margin: 0 }}>
-            {city ? `${city.provinceName} · ${city.name}${city.unitType === 'province_branch' ? '（省级直属）' : '（普通地市）'}` : '经营单位详情'}
+            {city ? `${city.provinceName} · ${city.name}${city.unitType === 'province_branch' ? '（省级直属）' : '（普通地市）'}` : '地市详情'}
           </Title>
         </div>
         <Space className="v3-page-head-actions" wrap>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/biz/analysis/cities')}>返回经营单位对比</Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/biz/analysis/cities')}>返回地市对比</Button>
           <Button icon={<HomeOutlined />} onClick={() => navigate('/biz/portal')}>返回门户首页</Button>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>刷新</Button>
         </Space>
@@ -241,7 +241,7 @@ export default function BizAnalysisCityDetail() {
           options={COST_CATEGORY_OPTIONS} onChange={setCategoryCodes}
         />
       </div>
-      <div className="v3-note">当前筛选条件：{filterSummary}。经营单位与省份固定为当前经营单位，不可再选其他地市。{snapshotReady ? `页面头部汇总指标与合同明细读取经营分析快照（基准日 ${snapshot?.asOf ?? '-'}）。` : '尚未生成经营分析快照，头部汇总指标与合同明细回退实时数据。'}订单完工/线下完工/成本原始明细按筛选范围实时聚合。</div>
+      <div className="v3-note">当前筛选条件：{filterSummary}。地市与省份固定为当前地市，不可再选其他地市。{snapshotReady ? `页面头部汇总指标与合同明细读取经营分析快照（基准日 ${snapshot?.asOf ?? '-'}）。` : '尚未生成经营分析快照，头部汇总指标与合同明细回退实时数据。'}订单完工/线下完工/成本原始明细按筛选范围实时聚合。</div>
 
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} action={<Button size="small" onClick={() => void load()}>重试</Button>} />}
 
@@ -266,7 +266,7 @@ export default function BizAnalysisCityDetail() {
                   children: (
                     <Descriptions size="small" column={3} bordered>
                       <Descriptions.Item label="省份">{city?.provinceName ?? '-'}</Descriptions.Item>
-                      <Descriptions.Item label="经营单位">{city?.name ?? '-'}</Descriptions.Item>
+                      <Descriptions.Item label="地市">{city?.name ?? '-'}</Descriptions.Item>
                       <Descriptions.Item label="单位类型">{city?.unitType === 'province_branch' ? '省级直属' : '普通地市'}</Descriptions.Item>
                       <Descriptions.Item label="合同数">{summary?.contractCount ?? 0}</Descriptions.Item>
                       <Descriptions.Item label="合同额（元）">{fenToYuan(summary?.contractAmountFen ?? 0)}</Descriptions.Item>
@@ -337,18 +337,18 @@ export default function BizAnalysisCityDetail() {
             <Descriptions bordered size="small" column={2}>
               <Descriptions.Item label="合同编号">{drawerDetail.contract.contractNo}</Descriptions.Item>
               <Descriptions.Item label="合同名称">{drawerDetail.contract.contractName}</Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={CONTRACT_STATUS_COLOR[drawerDetail.contract.status] ?? 'default'}>{CONTRACT_STATUS_TEXT[drawerDetail.contract.status] ?? drawerDetail.contract.status}</Tag></Descriptions.Item>
+              <Descriptions.Item label="状态"><Tag color={CONTRACT_STATUS_COLOR[effectiveContractStatus(drawerDetail.contract).status] ?? 'default'}>{CONTRACT_STATUS_TEXT[effectiveContractStatus(drawerDetail.contract).status] ?? effectiveContractStatus(drawerDetail.contract).status}</Tag></Descriptions.Item>
               <Descriptions.Item label="含税合同额（元）">{fenToYuan(drawerDetail.contract.taxInclusiveAmountFen)}</Descriptions.Item>
               <Descriptions.Item label="签订日期">{drawerDetail.contract.signedDate ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="合同期限">{drawerDetail.contract.startDate ?? '-'} 至 {drawerDetail.contract.endDate ?? '-'}</Descriptions.Item>
             </Descriptions>
-            <Alert style={{ marginTop: 16 }} type="info" message={`经营单位分配 ${drawerDetail.allocations.filter((a) => a.status === 'active').length} 条，累计完工 ${fenToYuan(drawerDetail.progress.totalCompletionFen)} 元`} />
-            <Card title="经营单位分配（仅生效中）" size="small" style={{ marginTop: 16 }}>
+            <Alert style={{ marginTop: 16 }} type="info" message={`地市分配 ${drawerDetail.allocations.filter((a) => a.status === 'active').length} 条，累计完工 ${fenToYuan(drawerDetail.progress.totalCompletionFen)} 元`} />
+            <Card title="地市分配（仅生效中）" size="small" style={{ marginTop: 16 }}>
               <Table
                 size="small" rowKey={(row) => String(row.cityId)} pagination={false}
                 dataSource={drawerDetail.allocations.filter((a) => a.status === 'active')}
                 columns={[
-                  { title: '经营单位', dataIndex: 'cityName', key: 'cityName' },
+                  { title: '地市', dataIndex: 'cityName', key: 'cityName' },
                   { title: '分配额度（元）', dataIndex: 'quotaFen', key: 'quotaFen', render: (v: number) => fenToYuan(v) },
                   { title: '累计完工（元）', dataIndex: 'completionFen', key: 'completionFen', render: (v: number) => fenToYuan(v) },
                   { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => <Tag>{ALLOCATION_STATUS_TEXT[v] ?? v}</Tag> },
@@ -360,7 +360,7 @@ export default function BizAnalysisCityDetail() {
                 size="small" rowKey={(row) => `${row.cityId}-${row.effectiveMonth}`} pagination={{ pageSize: 8 }}
                 dataSource={drawerDetail.feeRates}
                 columns={[
-                  { title: '经营单位', dataIndex: 'cityId', key: 'cityId', render: (cityId: string) => drawerDetail.allocations.find((a) => a.cityId === cityId)?.cityName ?? cityId },
+                  { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (cityId: string) => drawerDetail.allocations.find((a) => a.cityId === cityId)?.cityName ?? cityId },
                   { title: '生效月份', dataIndex: 'effectiveMonth', key: 'effectiveMonth' },
                   { title: '管理费率', dataIndex: 'rateBp', key: 'rateBp', render: (value: number) => `${(value / 100).toFixed(2)}%` },
                   { title: '说明', dataIndex: 'changeReason', key: 'changeReason', render: (value: string | null) => value ?? '-' },

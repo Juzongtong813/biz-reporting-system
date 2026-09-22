@@ -275,15 +275,25 @@ try {
   detail = await waitBatch(res.data.batchId);
   assert.equal(detail.batch.importedRows, 1, `ORD-005B province alias must import: ${detail.batch.failureReason ?? ''}`);
 
-  // ============ ORD-005C 严格性：缺管理费率保留为待维护，不能按 0% 进入统计 ============
+  // ============ ORD-005C 缺管理费率按 0% 入账；同批次异常行不阻断正常行 ============
   const qingdao = await api('GET', '/biz/admin/cities', { token: superToken });
   const qingdaoId = qingdao.data.items.find((city) => city.code === '370200').id;
   await api('POST', `/biz/contracts/${contractId}/allocations`, { token: superToken, body: { cityId: qingdaoId, quotaFen: 100_000_00 } });
-  const noRateOrder = buildXlsxBuffer([makeRow('PO-005C', 'HT-ORD-001', '青岛市', '山东省', 1000, '2026-01-21 09:00:00')]);
+  const noRateOrder = buildXlsxBuffer([
+    makeRow('PO-005C', 'HT-ORD-001', '青岛市', '山东省', 1000, '2026-01-21 09:00:00'),
+    makeRow('PO-005C-review', 'MISSING-CONTRACT', '青岛市', '山东省', 500, '2026-01-21 09:00:00'),
+  ]);
   res = await uploadFile(superToken, noRateOrder, randomUUID(), 'no-rate-orders.xlsx');
   detail = await waitBatch(res.data.batchId);
-  assert.equal(detail.batch.importedRows, 0, 'ORD-005C missing fee rate must not import as valid');
-  assert.ok(detail.errors.some((item) => item.errorType === 'rate'), 'ORD-005C missing fee rate reported');
+  assert.equal(detail.batch.importedRows, 1, 'ORD-005C missing fee rate imports as valid');
+  assert.equal(detail.rowCount, 2, 'ORD-005C both raw rows preserved');
+  assert.ok(detail.errors.some((item) => item.errorType === 'contract'));
+  assert.ok(!detail.errors.some((item) => item.errorType === 'rate'));
+  rows = await api('GET', `/biz/orders/rows?batchId=${detail.batch.id}`, { token: superToken });
+  const zeroRateRow = rows.data.items.find((row) => row.validationStatus === 'valid');
+  assert.equal(Number(zeroRateRow.feeRateSnapshotBp), 0);
+  assert.equal(Number(zeroRateRow.grossProfitFen), 0);
+  assert.equal(Number(zeroRateRow.completionAmountFen), 100_000);
 
   // ============ ORD-006 幂等：相同 idempotencyKey 返回原批次 ============
   const sameKey = randomUUID();

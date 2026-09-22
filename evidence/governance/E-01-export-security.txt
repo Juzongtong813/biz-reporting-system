@@ -1,0 +1,12 @@
+task_id: E-01
+batch: PG-20260802
+self_declared_status: PASS
+internal_gate: PASS
+commit: d32ff7c7ed43
+manifest_digest: 6f3f0c4475b9377d
+command: corepack pnpm --filter @biz-reporting/api exec node --test test/export-access.integration.mjs
+exit_code: 0
+result: 5 download authorization, audit, cache-control and public-object scan tests passed.
+
+
+

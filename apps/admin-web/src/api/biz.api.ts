@@ -6,6 +6,7 @@
  */
 import axios from 'axios';
 import { getBizToken } from '@/utils/biz-auth';
+import { computeEffectiveContractStatus } from '@biz-reporting/shared-types';
 
 const request = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/api' });
 
@@ -156,6 +157,10 @@ export interface BizContractItem {
   startDate?: string | null;
   endDate?: string | null;
   status: string;
+  /** 有效展示状态：active(执行中，未到期)/expired(已到期)/completed/voided/draft/cancelled；由服务端按判断基准日计算 */
+  effectiveStatus?: string | null;
+  /** 判断基准日 'YYYY-MM-DD'（快照页=快照 asOf；实时页=服务端当日）；旧接口可能缺失 */
+  statusAsOf?: string | null;
   tags?: string[] | null;
   amountLocked?: boolean;
   parentContractId?: string | null;
@@ -166,7 +171,7 @@ export interface BizContractDetail {
   contract: {
     id: string; contractNo: string; contractName: string; taxInclusiveAmountFen: number;
     taxExclusiveAmountFen: number | null; provinceId: string; startDate: string | null; endDate: string | null;
-    status: string; tags: string[]; amountLocked: boolean; voidSummaryChoice: string | null;
+    status: string; effectiveStatus?: string | null; statusAsOf?: string | null; tags: string[]; amountLocked: boolean; voidSummaryChoice: string | null;
     parentContractId: string | null; versionNo: number; createdAt: string;
     archiveContractNo?: string | null; projectIdentityCode?: string | null; contractCategory1?: string | null; contractCategory2?: string | null;
     winningProjectName?: string | null; signedDate?: string | null; taxRateRaw?: string | null; taxRateBp?: number | null;
@@ -558,7 +563,10 @@ export interface BizContractLedgerItem {
   contractName: string | null;
   taxInclusiveAmountFen: number;
   provinceId: string | null;
+  provinceName?: string | null;
   status: string | null;
+  effectiveStatus?: string | null;
+  statusAsOf?: string | null;
   signedDate: string | null;
   startDate: string | null;
   endDate: string | null;
@@ -586,14 +594,33 @@ export function bizContractLedger(params?: {
 
 // ================= 枚举中文映射（统一：状态枚举 → 中文） =================
 
-/** 合同状态中文：active 执行中 / draft 待生效 / completed 已完成 / voided 已作废 / cancelled 已取消 */
+/** 合同状态中文：active 执行中 / draft 待生效 / completed 已完成 / voided 已作废 / cancelled 已取消 / expired 已到期 */
 export const CONTRACT_STATUS_TEXT: Record<string, string> = {
-  draft: '待生效', active: '执行中', completed: '已完成', voided: '已作废', cancelled: '已取消',
+  draft: '待生效', active: '执行中', expired: '已到期', completed: '已完成', voided: '已作废', cancelled: '已取消',
 };
 /** 合同状态 Tag 颜色（Ant Design Badge/Tag status 取值） */
 export const CONTRACT_STATUS_COLOR: Record<string, string> = {
-  draft: 'default', active: 'blue', completed: 'green', voided: 'red', cancelled: 'default',
+  draft: 'default', active: 'blue', expired: 'red', completed: 'green', voided: 'red', cancelled: 'default',
 };
+
+/**
+ * 取一条记录的"有效展示状态"与其判断基准日（前端展示层统一入口）。
+ * 优先用服务端下发的 effectiveStatus（唯一权威）；旧接口未下发时，
+ * 仅在服务端同时给了 statusAsOf 时才本地回退计算；否则不基于客户端时钟推导到期，
+ * 原样返回主状态，避免客户端时区覆盖快照 asOf。
+ * 入参兼容具名合同类型（BizContractItem / BizContractLedgerItem / detail.contract）与通用 Record 行。
+ */
+export function effectiveContractStatus<T extends object>(rec: T): { status: string; statusAsOf: string | null } {
+  const raw = (rec as { status?: string | null; endDate?: string | null; effectiveStatus?: string | null; statusAsOf?: string | null });
+  const effective = raw.effectiveStatus;
+  if (effective) return { status: effective, statusAsOf: raw.statusAsOf ?? null };
+  if (raw.statusAsOf) {
+    const computed = computeEffectiveContractStatus(raw.status, raw.endDate, raw.statusAsOf);
+    return { status: computed ?? raw.status ?? '', statusAsOf: raw.statusAsOf };
+  }
+  // 旧数据且无 asOf：不臆断到期，直接返回主状态
+  return { status: raw.status ?? '', statusAsOf: null };
+}
 /** 合同地市分配状态中文：active 生效中 / cancelled 已取消 */
 export const ALLOCATION_STATUS_TEXT: Record<string, string> = {
   active: '生效中', cancelled: '已取消',
@@ -645,13 +672,14 @@ export interface BizDashboardResult {
 }
 
 /** 统一 dashboard：优先读取 ready 快照并按当前用户数据范围过滤；无 ready 时回退实时聚合（status='live'） */
-export function bizSnapshotDashboard(params?: { year?: string; months?: string[]; provinceIds?: string[]; cityIds?: string[] }): Promise<BizDashboardResult> {
+/** signal 用于取消已过期的 dashboard 请求（切换筛选时避免旧响应覆盖新结果） */
+export function bizSnapshotDashboard(params?: { year?: string; months?: string[]; provinceIds?: string[]; cityIds?: string[]; signal?: AbortSignal }): Promise<BizDashboardResult> {
   const query: Record<string, string> = {};
   if (params?.year) query.year = params.year;
   if (params?.months?.length) query.months = params.months.join(',');
   if (params?.provinceIds?.length) query.provinceIds = params.provinceIds.join(',');
   if (params?.cityIds?.length) query.cityIds = params.cityIds.join(',');
-  return request.get('/biz/analysis/dashboard', { params: query }).then((r) => r.data);
+  return request.get('/biz/analysis/dashboard', { params: query, signal: params?.signal }).then((r) => r.data);
 }
 
 /** 手动触发快照生成（幂等）：同一 asOf 已在构建中则直接返回已有 runId */
@@ -741,4 +769,212 @@ export function bizAnnouncementPublish(id: string): Promise<Record<string, unkno
 
 export function bizAnnouncementWithdraw(id: string): Promise<Record<string, unknown>> {
   return request.post(`/biz/announcements/${id}/withdraw`).then((r) => r.data);
+}
+
+// ================= 管理费率批量维护（合同管理 → 管理费率） =================
+
+export type BizFeeRateMaintenanceStatus = 'pending' | 'maintained' | 'partial' | 'import_pending' | 'import_error';
+
+export const FEE_RATE_MAINTENANCE_STATUS_TEXT: Record<string, string> = {
+  pending: '待填写',
+  maintained: '已维护',
+  partial: '部分月份缺失',
+  import_pending: '已导入待确认',
+  import_error: '导入错误',
+};
+
+export interface BizFeeRateMaintenanceItem {
+  contractId: string;
+  contractNo: string;
+  contractName: string;
+  provinceId: string;
+  provinceName: string;
+  cityId: string;
+  cityName: string;
+  firstOrderMonth: string;
+  lastOrderMonth: string;
+  /** 缺失为 null，页面需显示"缺失"，不允许当成 0% */
+  currentRateBp: number | null;
+  missingMonths: string[];
+  missingMonthCount: number;
+  missingMonthsText: string;
+  orderCount: number;
+  orderAmountFen: number;
+  status: BizFeeRateMaintenanceStatus;
+  statusText: string;
+  suggestedEffectiveMonth: string;
+}
+
+export interface BizFeeRateMaintenanceQuery {
+  keyword?: string;
+  provinceId?: string;
+  cityId?: string;
+  monthFrom?: string;
+  monthTo?: string;
+  status?: string;
+  onlyMissing?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
+export function bizFeeRateMaintenance(params: BizFeeRateMaintenanceQuery): Promise<{ items: BizFeeRateMaintenanceItem[]; total: number }> {
+  const query: Record<string, string> = {};
+  if (params.keyword) query.keyword = params.keyword;
+  if (params.provinceId) query.provinceId = params.provinceId;
+  if (params.cityId) query.cityId = params.cityId;
+  if (params.monthFrom) query.monthFrom = params.monthFrom;
+  if (params.monthTo) query.monthTo = params.monthTo;
+  if (params.status) query.status = params.status;
+  if (params.onlyMissing) query.onlyMissing = 'true';
+  query.page = String(params.page ?? 1);
+  query.pageSize = String(params.pageSize ?? 20);
+  return request.get('/biz/fee-rates/maintenance', { params: query }).then((r) => r.data);
+}
+
+export async function bizFeeRateMaintenanceExport(params: BizFeeRateMaintenanceQuery): Promise<Blob> {
+  const query: Record<string, string> = {};
+  if (params.keyword) query.keyword = params.keyword;
+  if (params.provinceId) query.provinceId = params.provinceId;
+  if (params.cityId) query.cityId = params.cityId;
+  if (params.monthFrom) query.monthFrom = params.monthFrom;
+  if (params.monthTo) query.monthTo = params.monthTo;
+  if (params.status) query.status = params.status;
+  if (params.onlyMissing) query.onlyMissing = 'true';
+  const response = await request.get('/biz/fee-rates/maintenance/export', { params: query, responseType: 'blob' });
+  return response.data as Blob;
+}
+
+export type BizFeeRateRowOutcome = 'new' | 'overwrite' | 'skip' | 'error';
+
+export interface BizFeeRateImportPreviewRow {
+  rowNo: number;
+  contractId: string | null;
+  contractNo: string;
+  contractName: string;
+  cityId: string | null;
+  cityName: string;
+  effectiveMonth: string | null;
+  rateBp: number | null;
+  changeReason: string | null;
+  outcome: BizFeeRateRowOutcome;
+  message: string | null;
+  prevRateBp: number | null;
+}
+
+export interface BizFeeRateImportIssue {
+  rowNo: number;
+  contractNo: string;
+  cityName: string;
+  month: string;
+  message: string;
+}
+
+export interface BizFeeRateImportPreview {
+  taskId: string;
+  fileName: string;
+  fileHash: string;
+  totalRows: number;
+  newCount: number;
+  overwriteCount: number;
+  errorCount: number;
+  skipCount: number;
+  affectedOrderCount: number;
+  affectedAmountFen: number;
+  rows: BizFeeRateImportPreviewRow[];
+  errors: BizFeeRateImportIssue[];
+  warnings: BizFeeRateImportIssue[];
+}
+
+export async function bizFeeRateImportPreview(file: File): Promise<BizFeeRateImportPreview> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await request.post('/biz/fee-rates/import/preview', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  return response.data as BizFeeRateImportPreview;
+}
+
+export interface BizFeeRateImportConfirmResult {
+  taskId: string;
+  status: string;
+  savedCount: number;
+  recalcOrderCount: number;
+  successCount: number;
+  skipCount: number;
+  failedCount: number;
+  affectedOrderCount: number;
+  affectedAmountFen: number;
+  failureReasons: string[];
+}
+
+export function bizFeeRateImportConfirm(taskId: string): Promise<BizFeeRateImportConfirmResult> {
+  return request.post('/biz/fee-rates/import/confirm', { taskId }).then((r) => r.data);
+}
+
+export interface BizFeeRateImportTask {
+  id: string;
+  operatorUserId: string;
+  fileName: string;
+  fileHash: string;
+  status: string;
+  totalRows: number;
+  newCount: number;
+  overwriteCount: number;
+  errorCount: number;
+  skipCount: number;
+  affectedOrderCount: number;
+  affectedAmountFen: number;
+  recalculated: boolean;
+  errorSummary: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+  finishedAt: string | null;
+}
+
+export const FEE_RATE_IMPORT_STATUS_TEXT: Record<string, string> = {
+  queued: '排队中',
+  processing: '处理中',
+  completed: '已完成',
+  partial_failed: '部分失败',
+  failed: '失败',
+};
+
+export function bizFeeRateImportTask(taskId: string): Promise<BizFeeRateImportTask> {
+  return request.get(`/biz/fee-rates/import/${taskId}`).then((r) => r.data);
+}
+
+export interface BizFeeRateImportTaskRow {
+  id: string;
+  taskId: string;
+  rowNo: number;
+  contractId: string | null;
+  cityId: string | null;
+  effectiveMonth: string | null;
+  rateBp: number | null;
+  prevRateBp: number | null;
+  changeReason: string | null;
+  outcome: BizFeeRateRowOutcome;
+  message: string | null;
+}
+
+export function bizFeeRateImportTaskErrors(taskId: string): Promise<{ items: BizFeeRateImportTaskRow[] }> {
+  return request.get(`/biz/fee-rates/import/${taskId}/errors`).then((r) => r.data);
+}
+
+export interface BizFeeRateBatchResult {
+  savedCount: number;
+  newCount: number;
+  overwriteCount: number;
+  skipCount: number;
+  failedCount: number;
+  recalcOrderCount: number;
+  affectedOrderCount: number;
+  affectedAmountFen: number;
+  failureReasons: string[];
+}
+
+export function bizFeeRateCopy(dto: { sourceMonth: string; targetMonth: string; contractIds: string[]; cityIds?: string[]; overwrite?: boolean }): Promise<BizFeeRateBatchResult> {
+  return request.post('/biz/fee-rates/copy', dto).then((r) => r.data);
+}
+
+export function bizFeeRateBulkApply(dto: { contractIds: string[]; cityIds: string[]; effectiveMonth: string; rateBp: number; changeReason?: string; overwrite?: boolean }): Promise<BizFeeRateBatchResult> {
+  return request.post('/biz/fee-rates/bulk-apply', dto).then((r) => r.data);
 }

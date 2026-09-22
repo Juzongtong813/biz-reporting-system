@@ -29,6 +29,7 @@ import {
   zeroBucket,
 } from './snapshot-calc';
 import { SNAPSHOT_DDL } from './snapshot-schema';
+import { computeEffectiveContractStatus } from '@biz-reporting/shared-types';
 
 export interface DashboardQuery {
   snapshot?: 'latest';
@@ -207,9 +208,16 @@ export class BizSnapshotService implements OnModuleInit {
    * 导致前端误显示"暂未生成统计数据"（尽管另一行确为 ready）。这里优先按 ready 过滤，回退任意最新行。
    */
   private async getEffectiveRegistry(): Promise<BizSnapshotRegistryEntity | null> {
-    const ready = await this.registryRepo.findOne({ where: { status: 'ready' }, order: { lastSuccessfulAt: 'DESC' } });
-    if (ready && ready.currentSnapshotId) return ready;
-    return this.registryRepo.createQueryBuilder('registry').orderBy('registry.lastSuccessfulAt', 'DESC').limit(1).getOne();
+    try {
+      const ready = await this.registryRepo.findOne({ where: { status: 'ready' }, order: { lastSuccessfulAt: 'DESC' } });
+      if (ready && ready.currentSnapshotId) return ready;
+      return this.registryRepo.createQueryBuilder('registry').orderBy('registry.lastSuccessfulAt', 'DESC').limit(1).getOne();
+    } catch (err) {
+      // 快照表初始化失败时，读接口必须继续使用实时回退，不能把合同概览/分析页变成 500。
+      // 生产 MySQL 正常建表时不会进入此分支；本地 SQLite 或发布期间短暂缺表时保持可用。
+      this.logger.warn(`[BizSnapshot] 注册表不可用，使用实时回退: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
   }
 
   async snapshotMetadata(): Promise<{
@@ -753,19 +761,25 @@ export class BizSnapshotService implements OnModuleInit {
       trend: { items: trend },
       byCity: { items: byCity },
       contractAlerts: {
-        items: scopedAlerts.map((a) => ({
-          contractId: a.contractId,
-          contractNo: a.contractNo,
-          contractName: a.contractName,
-          alertType: a.alertType,
-          endDate: a.endDate,
-          status: a.status,
-          contractAmountFen: a.contractAmountFen,
-          completionFen: a.completionFen,
-          completionProgressPct: a.completionProgressPct,
-          provinceId: a.provinceId,
-          cityId: a.cityId,
-        })),
+        items: scopedAlerts.map((a) => {
+          const asOf = registry!.currentAsOf;
+          return {
+            contractId: a.contractId,
+            contractNo: a.contractNo,
+            contractName: a.contractName,
+            alertType: a.alertType,
+            endDate: a.endDate,
+            status: a.status,
+            // 有效展示状态：以快照 asOf 为判断基准日，主状态字段不改写
+            effectiveStatus: computeEffectiveContractStatus(a.status, a.endDate, asOf),
+            statusAsOf: asOf,
+            contractAmountFen: a.contractAmountFen,
+            completionFen: a.completionFen,
+            completionProgressPct: a.completionProgressPct,
+            provinceId: a.provinceId,
+            cityId: a.cityId,
+          };
+        }),
       },
       overruns: {
         items: scopedOverruns.map((o) => ({
@@ -791,15 +805,20 @@ export class BizSnapshotService implements OnModuleInit {
     };
   }
 
+  /** 无 ready 快照时的实时回退：多线程筛选（多月 / 多省 / 多地市）也必须做交集过滤。
+   *  原实现只在"恰好选中 1 个"时传参，多选会被整体忽略，导致筛选看似无效。 */
   private async liveFallback(auth: BizAuthContext, q: DashboardQuery) {
     const year = q.year;
     const month = q.months && q.months.length === 1 ? q.months[0] : undefined;
+    const months = q.months && q.months.length ? q.months : undefined;
     const provinceId = q.provinceIds && q.provinceIds.length === 1 ? q.provinceIds[0] : undefined;
+    const provinceIds = q.provinceIds && q.provinceIds.length ? q.provinceIds : undefined;
     const cityId = q.cityIds && q.cityIds.length === 1 ? q.cityIds[0] : undefined;
+    const cityIds = q.cityIds && q.cityIds.length ? q.cityIds : undefined;
     const [overview, trend, byCity, contractAlerts, overruns] = await Promise.all([
-      this.agg.overview(auth, year, month, cityId, provinceId),
-      this.agg.trend(auth, 12, cityId, year, provinceId),
-      this.agg.byCity(auth, year, month, provinceId),
+      this.agg.overview(auth, year, month, cityId, provinceId, cityIds, provinceIds, months),
+      this.agg.trend(auth, 12, cityId, year, provinceId, cityIds, provinceIds, months),
+      this.agg.byCity(auth, year, month, provinceId, cityIds, provinceIds, months),
       this.agg.analysisAlerts(auth, cityId, provinceId),
       this.agg.overrunList(auth, year, month, cityId, provinceId),
     ]);
@@ -882,6 +901,7 @@ export class BizSnapshotService implements OnModuleInit {
     let contractCount = 0;
     let contractAmountFen = 0;
     const contractOut: Array<Record<string, unknown>> = [];
+    const snapAsOf = registry.currentAsOf; // 快照判断基准日：快照页一律用快照 asOf，不用客户端当日
     for (const s of contractSnaps) {
       const c = contractById.get(s.contractId);
       if (!c) continue;
@@ -900,6 +920,9 @@ export class BizSnapshotService implements OnModuleInit {
         unitType: city.unitType ?? 'city',
         taxInclusiveAmountFen: Number(c.taxInclusiveAmountFen) || 0,
         status: c.status,
+        // 有效展示状态：以快照 asOf 判断到期（status 主状态字段不改写）
+        effectiveStatus: computeEffectiveContractStatus(c.status, c.endDate, snapAsOf),
+        statusAsOf: snapAsOf,
         signedDate: c.signedDate ?? null,
         endDate: c.endDate ?? null,
         quotaFen: quota,
@@ -952,6 +975,7 @@ export class BizSnapshotService implements OnModuleInit {
     const hasReady = !!registry && registry.status === 'ready' && !!registry.currentSnapshotId;
     if (!hasReady) return { items: [] };
     const rows = await this.alertRepo.find({ where: { snapshotId: registry.currentSnapshotId!, contractId } });
+    const asOf = registry.currentAsOf;
     // #3 防御：快照中可能残留历史 none/normal 行，绝不向预警接口返回（与 dashboard 保持一致）
     return {
       items: rows
@@ -963,6 +987,9 @@ export class BizSnapshotService implements OnModuleInit {
           completionFen: a.completionFen,
           completionProgressPct: a.completionProgressPct,
           status: a.status,
+          // 有效展示状态：以快照 asOf 判断到期
+          effectiveStatus: computeEffectiveContractStatus(a.status, a.endDate, asOf),
+          statusAsOf: asOf,
         })),
     };
   }
@@ -972,6 +999,7 @@ export class BizSnapshotService implements OnModuleInit {
    * 与经营分析快照同一 ready 快照（built 与切换在同一事务）；无 ready 快照时实时回退 status='live'，不出现空白页。
    *
    * 范围过滤：
+   *  - 合同范围（合同管理员）：可查看全部合同台账，不开放经营分析指标
    *  - 省范围：直接按 ledger.provinceId IN (...)
    *  - 市范围（含筛选参数 cityId）：经 biz_contract_city_allocations 反查 contractId 后 IN 过滤
    *    （合同台账仅存 provinceId，不存 cityId，故必须反查）
@@ -997,9 +1025,6 @@ export class BizSnapshotService implements OnModuleInit {
     snapshotMetadata: SnapshotMetadata;
   }> {
     const scope = auth.dataScope;
-    if (scope.scopeType === 'contract') {
-      throw new ForbiddenException('当前账号无经营分析数据范围');
-    }
 
     const registry = await this.getEffectiveRegistry();
     const hasReady = !!registry && registry.status === 'ready' && !!registry.currentSnapshotId;
@@ -1033,7 +1058,11 @@ export class BizSnapshotService implements OnModuleInit {
       qb.andWhere('l.provinceId = :pid', { pid: params.provinceId });
     }
     if (params.status) {
-      qb.andWhere('l.status = :st', { st: params.status });
+      // 状态筛选采用"有效展示状态"口径：active=执行中(未到期)、expired=已到期(active且已过期)、
+      // completed/voided/draft 等按主状态直筛。不改写数据库 status，靠 end_date 与快照 asOf 推导。
+      const st = (params.status || '').trim().toLowerCase();
+      const asOf = registry!.currentAsOf;
+      this.applyEffectiveStatusFilter(qb, 'l', st, asOf);
     }
     if (params.startDate) {
       qb.andWhere('(l.signedDate >= :sd OR l.startDate >= :sd OR l.endDate >= :sd)', { sd: params.startDate });
@@ -1048,22 +1077,29 @@ export class BizSnapshotService implements OnModuleInit {
       .skip((page - 1) * pageSize)
       .take(pageSize)
       .getManyAndCount();
+    const provinceNames = await this.provinceNameMap();
 
-    const items = rows.map((r) => ({
-      id: r.id,
-      contractId: r.contractId,
-      contractNo: r.contractNo,
-      contractName: r.contractName,
-      taxInclusiveAmountFen: r.taxInclusiveAmountFen,
-      provinceId: r.provinceId,
-      status: r.status,
-      signedDate: r.signedDate,
-      startDate: r.startDate,
-      endDate: r.endDate,
-      sourceUploadRecordId: r.sourceUploadRecordId,
-      cumulativeCompletionFen: r.cumulativeCompletionFen,
-      completionProgressPct: r.completionProgressPct,
-    }));
+    const items = rows.map((r) => {
+      const asOf = registry!.currentAsOf; // 快照台账：一律以快照 asOf 判断到期
+      return {
+        id: r.id,
+        contractId: r.contractId,
+        contractNo: r.contractNo,
+        contractName: r.contractName,
+        taxInclusiveAmountFen: r.taxInclusiveAmountFen,
+        provinceId: r.provinceId,
+        provinceName: r.provinceId ? (provinceNames.get(r.provinceId) ?? null) : null,
+        status: r.status,
+        effectiveStatus: computeEffectiveContractStatus(r.status, r.endDate, asOf),
+        statusAsOf: asOf,
+        signedDate: r.signedDate,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        sourceUploadRecordId: r.sourceUploadRecordId,
+        cumulativeCompletionFen: r.cumulativeCompletionFen,
+        completionProgressPct: r.completionProgressPct,
+      };
+    });
 
     return {
       items,
@@ -1117,7 +1153,10 @@ export class BizSnapshotService implements OnModuleInit {
       qb.andWhere('c.provinceId = :pid', { pid: params.provinceId });
     }
     if (params.status) {
-      qb.andWhere('c.status = :st', { st: params.status });
+      // 实时回退：以服务端当日为判断基准日的"有效展示状态"筛选
+      const st = (params.status || '').trim().toLowerCase();
+      const liveAsOf = new Date().toISOString().slice(0, 10);
+      this.applyEffectiveStatusFilter(qb, 'c', st, liveAsOf);
     }
     if (params.startDate) {
       qb.andWhere('(c.signedDate >= :sd OR c.startDate >= :sd OR c.endDate >= :sd)', { sd: params.startDate });
@@ -1131,6 +1170,9 @@ export class BizSnapshotService implements OnModuleInit {
       .addOrderBy('c.id', 'ASC')
       .getMany();
     const completion = await this.globalCompletionByContract();
+    const provinceNames = await this.provinceNameMap();
+    // 实时回退（无 ready 快照）：以服务端当日为判断基准日（YYYY-MM-DD，避免客户端时区偏差）
+    const liveAsOf = new Date().toISOString().slice(0, 10);
 
     const mapped = contracts.map((c) => {
       const amount = Number(c.taxInclusiveAmountFen) || 0;
@@ -1143,7 +1185,10 @@ export class BizSnapshotService implements OnModuleInit {
         contractName: c.contractName,
         taxInclusiveAmountFen: amount,
         provinceId: c.provinceId,
+        provinceName: c.provinceId ? (provinceNames.get(c.provinceId) ?? null) : null,
         status: c.status,
+        effectiveStatus: computeEffectiveContractStatus(c.status, c.endDate, liveAsOf),
+        statusAsOf: liveAsOf,
         signedDate: c.signedDate ?? null,
         startDate: c.startDate ?? null,
         endDate: c.endDate ?? null,
@@ -1156,6 +1201,11 @@ export class BizSnapshotService implements OnModuleInit {
     const total = mapped.length;
     const items = mapped.slice((page - 1) * pageSize, page * pageSize);
     return { items, total, page, pageSize, snapshotMetadata: this.liveMeta() };
+  }
+
+  private async provinceNameMap(): Promise<Map<string, string>> {
+    const provinces = await this.provinceRepo.find({ select: { id: true, name: true } });
+    return new Map(provinces.map((p) => [String(p.id), String(p.name)]));
   }
 
   /** 计算"当前用户范围 + cityId 筛选"下可见的合同 id 集合；无市范围约束返回 null。 */
@@ -1174,6 +1224,38 @@ export class BizSnapshotService implements OnModuleInit {
   private async contractIdsByCity(cityId: string): Promise<Set<string>> {
     const rows = await this.allocRepo.find({ where: { cityId } });
     return new Set(rows.map((a) => a.contractId));
+  }
+
+  /**
+   * 把"有效展示状态"筛选翻译为 SQL 条件（主状态 + 到期推导），不改写数据库 status。
+   *  - active 执行中：主状态 active 且（end_date 为空 或 end_date >= asOf，到期当天仍算执行中）
+   *  - expired 已到期：主状态 active 且 end_date 非空 且 end_date < asOf
+   *  - completed/voided/draft/cancelled/其它：主状态直筛（含数据库里已标 expired 的兼容主状态）
+   * @param col 表别名（如 'l' / 'c'）
+   */
+  private applyEffectiveStatusFilter<T extends import('typeorm').ObjectLiteral>(
+    qb: import('typeorm').SelectQueryBuilder<T>,
+    col: string,
+    status: string,
+    asOf: string | null | undefined,
+  ): void {
+    if (status === 'expired') {
+      // 已到期 = active 主状态且已过到期日（快照口径用快照 asOf；asOf 为空则按当日推导）
+      const ref = asOf ?? new Date().toISOString().slice(0, 10);
+      qb.andWhere(`${col}.status = 'active' AND ${col}.end_date IS NOT NULL AND ${col}.end_date < :asOfExp`, { asOfExp: ref });
+      return;
+    }
+    if (status === 'active') {
+      // 执行中 = active 主状态 且 未到期（end_date 为空 或 到期日 >= asOf）
+      if (asOf) {
+        qb.andWhere(`${col}.status = 'active' AND (${col}.end_date IS NULL OR ${col}.end_date >= :asOfAct)`, { asOfAct: asOf });
+      } else {
+        qb.andWhere(`${col}.status = 'active'`);
+      }
+      return;
+    }
+    // completed / voided / draft / cancelled / 其它：按主状态直筛
+    qb.andWhere(`${col}.status = :st`, { st: status });
   }
 
   private readyMeta(snapId: string, registry: BizSnapshotRegistryEntity): SnapshotMetadata {
@@ -1239,19 +1321,40 @@ function buildOverview(
   };
 }
 
+/**
+ * 趋势：按 YYYY-MM 聚合求和。
+ *
+ * 修复说明（月度趋势"选年度后没有折线"的根因）：
+ * scopedMetrics 中同一个 YYYY-MM 通常存在多行（不同地市 / 省份各一行），
+ * 原实现逐行 map，会把同一个月输出成多个数据点；前端以 month 为 key 建 Map 时
+ * 后者覆盖前者，最终只保留最后一行地市的金额，趋势严重失真甚至全为 0，
+ * 表现为"选择年度后折线不显示"。
+ * 因此必须先按 periodKey 汇总求和，保证每个 YYYY-MM 只有一个数据点。
+ */
 function buildTrend(scopedMetrics: BizSnapshotMetricEntity[], q: DashboardQuery) {
-  return scopedMetrics
-    .filter((m) => m.periodType === 'month')
-    .filter((m) => !q.year || m.periodKey.startsWith(q.year))
-    .filter((m) => !q.months?.length || q.months.includes(m.periodKey))
-    .sort((a, b) => a.periodKey.localeCompare(b.periodKey))
-    .map((m) => ({
-      month: m.periodKey,
-      orderCompletionFen: fenValue(m.orderCompletionFen),
-      offlineCompletionFen: fenValue(m.offlineCompletionFen),
-      grossProfitFen: fenValue(m.grossProfitFen),
-      costFen: fenValue(m.costFen),
-      netProfitFen: fenValue(m.netProfitFen),
+  const buckets = new Map<string, ReturnType<typeof zeroBucket>>();
+  for (const m of scopedMetrics) {
+    if (m.periodType !== 'month') continue;
+    if (q.year && !m.periodKey.startsWith(q.year)) continue;
+    if (q.months?.length && !q.months.includes(m.periodKey)) continue;
+    const bucket = buckets.get(m.periodKey) ?? zeroBucket();
+    const completion = metricCompletion(m);
+    bucket.orderCompletionFen += completion.order;
+    bucket.offlineCompletionFen += completion.offline;
+    bucket.grossProfitFen += fenValue(m.grossProfitFen);
+    bucket.costFen += fenValue(m.costFen);
+    bucket.netProfitFen += fenValue(m.netProfitFen);
+    buckets.set(m.periodKey, bucket);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([month, bucket]) => ({
+      month,
+      orderCompletionFen: bucket.orderCompletionFen,
+      offlineCompletionFen: bucket.offlineCompletionFen,
+      grossProfitFen: bucket.grossProfitFen,
+      costFen: bucket.costFen,
+      netProfitFen: bucket.netProfitFen,
     }));
 }
 

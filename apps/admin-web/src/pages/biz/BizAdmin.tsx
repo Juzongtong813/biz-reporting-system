@@ -22,9 +22,9 @@ const MODULE_LABEL: Record<string, string> = {
   portal: '一级门户入口', maintenance: '二级门户入口', announcement: '公告发布', message: '消息中心',
 };
 const MODULE_DESCRIPTION: Record<string, string> = {
-  portal: '登录后是否能看到工程管理/维护管理入口', maintenance: '进入维护管理后是否能看到经营管理、资产管理、人员管理入口', home: '门户首页和经营入口', analysis: '经营分析概览、趋势、单位对比和超额清单', contract: '合同查看、上传、分配和费率维护', order: '订单上传、待维护、作废和导出',
+  portal: '登录后是否能看到工程管理/维护管理入口', maintenance: '进入维护管理后是否能看到经营管理、资产管理、人员管理入口', home: '门户首页和经营入口', analysis: '经营概览、趋势、地市对比和超额清单', contract: '合同查看、上传、分配和费率维护', order: '订单上传、待维护、作废和导出',
   completion: '线下完工填报、提交和审核', cost: '地市成本填报、退回和导出', user: '账号创建、停用、密码和数据范围', settings: '系统参数和预警设置',
-  module: '业务模块入口配置', role: '角色与账号权限配置', region: '省份与经营单位字典的新增、修改和删除',
+  module: '业务模块入口配置', role: '角色与账号权限配置', region: '省份与地市字典的新增、修改和删除',
   announcement: '公告草稿、发布、撤回和范围管理', message: '流程消息、公告查看和已读处理',
 };
 const PORTAL_GROUPS = new Set(['portal', 'maintenance']);

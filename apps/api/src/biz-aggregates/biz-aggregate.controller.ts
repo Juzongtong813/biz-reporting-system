@@ -126,7 +126,7 @@ export class BizAggregateController {
 
   /** 合同概览（快照口径，一合同一行）：服务端分页 + 关键词/省份/地市/状态/日期筛选；无 ready 快照时实时回退 status='live' */
   @Get('analysis/contracts')
-  @BizPermissions(BizPermissionCode.OPERATION_ANALYSIS_READ)
+  @BizPermissions(BizPermissionCode.OPERATION_CONTRACT_READ)
   async contracts(
     @BizAuthUser() auth: BizAuthContext,
     @Query('page') page?: string,

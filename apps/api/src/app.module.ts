@@ -22,6 +22,7 @@ import { Ws6Module } from './ws6/ws6.module';
 import { FactsModule } from './facts/facts.module';
 import { BizAuthModule } from './biz-auth/biz-auth.module';
 import { BizContractsModule } from './biz-contracts/biz-contracts.module';
+import { BizFeeRatesModule } from './biz-fee-rates/biz-fee-rates.module';
 import { BizOrdersModule } from './biz-orders/biz-orders.module';
 import { BizCompletionsModule } from './biz-completions/biz-completions.module';
 import { BizCostsModule } from './biz-costs/biz-costs.module';
@@ -125,6 +126,7 @@ import { HttpLoggingInterceptor } from './common/http/http-logging.interceptor';
     FactsModule,
     BizAuthModule,
     BizContractsModule,
+    BizFeeRatesModule,
     BizOrdersModule,
     BizCompletionsModule,
     BizCostsModule,

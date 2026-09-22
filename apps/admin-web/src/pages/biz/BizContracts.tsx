@@ -664,12 +664,12 @@ export default function BizContracts() {
       </Drawer>
 
       <Drawer title={maintenanceTarget ? `维护台账行 ${maintenanceTarget.sourceRowNo}` : '维护台账行'} open={maintenanceOpen} onClose={() => setMaintenanceOpen(false)} width={520}>
-        <Alert type="info" showIcon message="原始台账内容保持不变；保存后创建一份执行中合同，并按所选经营单位平均分配额度。" style={{ marginBottom: 16 }} />
+        <Alert type="info" showIcon message="原始台账内容保持不变；保存后创建一份执行中合同，并按所选地市平均分配额度。" style={{ marginBottom: 16 }} />
         <Form form={maintenanceForm} layout="vertical" onFinish={(values) => void onMaintainPending(values)}>
           <Form.Item name="contractNo" label="合同编号" rules={[{ required: true, message: '请输入合同编号' }]}><Input /></Form.Item>
           <Form.Item name="contractName" label="合同名称" rules={[{ required: true, message: '请输入合同名称' }]}><Input /></Form.Item>
           <Form.Item name="provinceId" label="省份" rules={[{ required: true, message: '请选择省份' }]}><Select options={provinces.map((province) => ({ value: province.id, label: province.name }))} onChange={() => maintenanceForm.setFieldValue('cityIds', [])} /></Form.Item>
-          <Form.Item shouldUpdate noStyle>{() => <Form.Item name="cityIds" label="经营单位" rules={[{ required: true, message: '请选择至少一个经营单位' }]}><Select mode="multiple" maxTagCount="responsive" placeholder="可多选，保存后自动平均分配额度" options={cities.filter((city) => city.provinceId === maintenanceForm.getFieldValue('provinceId')).map((city) => ({ value: city.id, label: `${city.name}${city.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} /></Form.Item>}</Form.Item>
+          <Form.Item shouldUpdate noStyle>{() => <Form.Item name="cityIds" label="地市" rules={[{ required: true, message: '请选择至少一个地市' }]}><Select mode="multiple" maxTagCount="responsive" placeholder="可多选，保存后自动平均分配额度" options={cities.filter((city) => city.provinceId === maintenanceForm.getFieldValue('provinceId')).map((city) => ({ value: city.id, label: `${city.name}${city.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} /></Form.Item>}</Form.Item>
           <Form.Item name="taxInclusiveAmountYuan" label="含税合同金额（元）" rules={[{ required: true, message: '请输入正数金额' }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="signedDate" label="签订日期"><Input type="date" /></Form.Item>
           <Form.Item name="endDate" label="合同到期日期"><Input type="date" /></Form.Item>
@@ -749,13 +749,13 @@ export default function BizContracts() {
                 ),
               },
               {
-                key: 'alloc', label: '经营单位分配与额度',
+                key: 'alloc', label: '地市分配与额度',
                 children: (
                   <div>
-                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 10 }}>系统已根据台账中的地市文本自动列出可识别经营单位；额度默认为 0，请管理员逐项填写后再生效。</Typography.Text>
+                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 10 }}>系统已根据台账中的地市文本自动列出可识别地市；额度默认为 0，请管理员逐项填写后再生效。</Typography.Text>
                     <Form form={allocForm} layout="inline" style={{ marginBottom: 12 }}>
                       <Form.Item name="cityId" rules={[{ required: true }]}>
-                        <Select placeholder="选择经营单位" style={{ width: 180 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
+                        <Select placeholder="选择地市" style={{ width: 180 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
                       </Form.Item>
                       <Form.Item name="quotaFen" rules={[{ required: true }]}>
                         <InputNumber placeholder="固定额度（元）" min={0} precision={2} style={{ width: 160 }} />
@@ -765,7 +765,7 @@ export default function BizContracts() {
                     <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey="cityId" pagination={false} dataSource={detail.allocations}
                       columns={[
-                        { title: '经营单位', dataIndex: 'cityName', key: 'cityName' },
+                        { title: '地市', dataIndex: 'cityName', key: 'cityName' },
                         { title: '固定额度（元）', dataIndex: 'quotaFen', key: 'quotaFen', render: (v: number) => fenToYuan(Number(v)) },
                         { title: '累计完工（元）', dataIndex: 'completionFen', key: 'completionFen', render: (v: number) => fenToYuan(Number(v)) },
                         { title: '地市进度', dataIndex: 'progress', key: 'progress', render: (v: number) => <Progress percent={Math.round(v)} size="small" /> },
@@ -788,7 +788,7 @@ export default function BizContracts() {
                   <div>
                     <Form form={rateForm} layout="inline" style={{ marginBottom: 12 }}>
                       <Form.Item name="cityId" rules={[{ required: true }]}>
-                        <Select placeholder="经营单位" style={{ width: 160 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
+                        <Select placeholder="地市" style={{ width: 160 }} options={cities.map((c) => ({ value: c.id, label: `${c.name}${c.unitType === 'province_branch' ? '（省级直属）' : ''}` }))} />
                       </Form.Item>
                       <Form.Item name="effectiveMonth" rules={[{ required: true }]}><Input placeholder="生效月份 YYYY-MM" style={{ width: 140 }} /></Form.Item>
                         <Form.Item name="rateBp" rules={[{ required: true }]}><InputNumber placeholder="费率（%）" min={0.01} max={100} precision={2} style={{ width: 110 }} /></Form.Item>
@@ -798,7 +798,7 @@ export default function BizContracts() {
                     <Table scroll={{ x: "max-content" }} 
                       size="small" rowKey={(r) => `${r.cityId}-${r.effectiveMonth}`} pagination={false} dataSource={detail.feeRates}
                       columns={[
-                        { title: '经营单位', dataIndex: 'cityId', key: 'cityId', render: (v: string) => { const unit = cities.find((c) => c.id === v); return unit ? `${unit.name}${unit.unitType === 'province_branch' ? '（省级直属）' : ''}` : v; } },
+                        { title: '地市', dataIndex: 'cityId', key: 'cityId', render: (v: string) => { const unit = cities.find((c) => c.id === v); return unit ? `${unit.name}${unit.unitType === 'province_branch' ? '（省级直属）' : ''}` : v; } },
                         { title: '生效月份', dataIndex: 'effectiveMonth', key: 'effectiveMonth' },
                         { title: '费率', dataIndex: 'rateBp', key: 'rateBp', render: (v: number) => `${(Number(v) / 100).toFixed(2)}%` },
                         { title: '变更原因', dataIndex: 'changeReason', key: 'changeReason' },

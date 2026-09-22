@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, Not, In, IsNull } from 'typeorm';
 import { createHash, randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
-import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole } from '@biz-reporting/shared-types';
+import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole, computeEffectiveContractStatus } from '@biz-reporting/shared-types';
 import { BizContractEntity } from '../contracts/biz-contract.entity';
 import { BizContractCityAllocationEntity } from '../contracts/biz-contract-city-allocation.entity';
 import { BizContractFeeRateEntity } from '../contracts/biz-contract-fee-rate.entity';
@@ -432,6 +432,9 @@ export class BizContractsService {
       }
     }
 
+    // 有效展示状态：实时合同详情以服务端当日判断到期（主状态字段不改写）
+    const detailAsOf = new Date().toISOString().slice(0, 10);
+
     return {
       contract: {
         id: contract.id,
@@ -443,6 +446,8 @@ export class BizContractsService {
         startDate: contract.startDate,
         endDate: contract.endDate,
         status: contract.status,
+        effectiveStatus: computeEffectiveContractStatus(contract.status, contract.endDate, detailAsOf),
+        statusAsOf: detailAsOf,
         tags: contract.tags ?? [],
         amountLocked: contract.amountLocked,
         voidSummaryChoice: contract.voidSummaryChoice,
@@ -1537,7 +1542,15 @@ export class BizContractsService {
     return saved;
   }
 
-  private async repriceOrdersForRates(contractId: string, cityIds: string[], fromMonth: string): Promise<void> {
+  /**
+   * 费率变更后重算订单利润快照（改为 public：费率批量维护模块复用同一逻辑，避免两套重算口径）
+   * 只重算 受影响合同 + 受影响地市 + 生效月份之后 的有效订单；已作废订单不参与；
+   * 待维护（needs_review）订单不参与，不改写为有效；费率缺失仍按 0 基点保持缺失语义；
+   * 不修改订单原始导入金额与 34 列原始字段，只更新 feeRateSnapshotBp / grossProfitFen。
+   * @returns 实际重算的订单行数
+   */
+  async repriceOrdersForRates(contractId: string, cityIds: string[], fromMonth: string): Promise<number> {
+    if (cityIds.length === 0) return 0;
     const allRates = await this.feeRateRepo.find({ where: { contractId, cityId: In(cityIds) }, order: { effectiveMonth: 'ASC' } });
     const ratesByCity = new Map<string, BizContractFeeRateEntity[]>();
     for (const rate of allRates) ratesByCity.set(rate.cityId, [...(ratesByCity.get(rate.cityId) ?? []), rate]);
@@ -1559,6 +1572,7 @@ export class BizContractsService {
       });
     }
     void this.aggregates.recalcInternal({ contractId }).catch(() => {});
+    return rows.length;
   }
 
   /** 生效费率快照：≤ 业务月份的最大生效月份费率（订单/完工入账时调用；历史完工不回溯） */

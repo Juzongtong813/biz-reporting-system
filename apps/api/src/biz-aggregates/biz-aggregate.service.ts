@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { PlatformRole } from '@biz-reporting/shared-types';
+import { computeEffectiveContractStatus } from '@biz-reporting/shared-types';
 import { BizMonthlyAggregateEntity } from '../aggregates/biz-monthly-aggregate.entity';
 import { BizAggregateFailureEntity } from '../aggregates/biz-aggregate-failure.entity';
 import { BizOrderRowEntity } from '../orders/biz-order-row.entity';
@@ -430,11 +431,16 @@ export class BizAggregateService {
     return { ids: new Set(visible.map((c) => c.id)), amountFen };
   }
 
-  async overview(auth: BizAuthContext, year?: string, month?: string, cityId?: string, provinceId?: string) {
+  /** 概览：经营金额按年度 / 多月 / 多省 / 多地市交集过滤（权限过滤始终生效）
+   *  注：contractInventory 仍按单选口径计算合同库存（保持既有合同数/合同额分摊口径不变） */
+  async overview(auth: BizAuthContext, year?: string, month?: string, cityId?: string, provinceId?: string, cityIds?: string[], provinceIds?: string[], months?: string[]) {
     const qb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(qb, auth, 'a', provinceId);
+    if (provinceIds?.length) qb.andWhere('a.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...ovProvinceIds))', { ovProvinceIds: provinceIds });
     if (cityId) qb.andWhere('a.cityId = :overviewCityId', { overviewCityId: cityId });
-    if (month) qb.andWhere('a.businessMonth = :month', { month });
+    if (cityIds?.length) qb.andWhere('a.cityId IN (:...ovCityIds)', { ovCityIds: cityIds });
+    if (months?.length) qb.andWhere('a.businessMonth IN (:...ovMonths)', { ovMonths: months });
+    else if (month) qb.andWhere('a.businessMonth = :month', { month });
     else if (year) qb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const rows = await qb.getMany();
     const total = (field: string) => rows.reduce((s, r) => s + Number(r[field as keyof BizMonthlyAggregateEntity] ?? 0), 0);
@@ -453,11 +459,15 @@ export class BizAggregateService {
     };
   }
 
-  async trend(auth: BizAuthContext, limit = 12, cityId?: string, year?: string, provinceId?: string) {
+  /** 趋势：按年度 / 多月 / 多省 / 多地市做交集过滤（省份走 biz_cities 子查询，聚合表无 province_id 列） */
+  async trend(auth: BizAuthContext, limit = 12, cityId?: string, year?: string, provinceId?: string, cityIds?: string[], provinceIds?: string[], months?: string[]) {
     const trendQb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(trendQb, auth, 'a', provinceId);
+    if (provinceIds?.length) trendQb.andWhere('a.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...trendProvinceIds))', { trendProvinceIds: provinceIds });
     if (cityId) trendQb.andWhere('a.cityId = :trendCityId', { trendCityId: cityId });
-    if (year) trendQb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
+    if (cityIds?.length) trendQb.andWhere('a.cityId IN (:...trendCityIds)', { trendCityIds: cityIds });
+    if (months?.length) trendQb.andWhere('a.businessMonth IN (:...trendMonths)', { trendMonths: months });
+    else if (year) trendQb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const rows = await trendQb
       .select('a.businessMonth', 'month')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
@@ -472,9 +482,14 @@ export class BizAggregateService {
     return rows.reverse();
   }
 
-  async byCity(auth: BizAuthContext, year?: string, month?: string, provinceId?: string) {
+  /** 地市对比：按年度 / 多月 / 多省 / 多地市做交集过滤（权限过滤始终生效，不因筛选放宽） */
+  async byCity(auth: BizAuthContext, year?: string, month?: string, provinceId?: string, cityIds?: string[], provinceIds?: string[], months?: string[]) {
     // 1) 合同+分配表出发：地市库存（含只有分配、无经营数据的地市）
-    const contracts = (await this.contractRepo.find({ where: { deletedAt: IsNull() }, select: { id: true, provinceId: true, taxInclusiveAmountFen: true } })).filter((contract) => !provinceId || contract.provinceId === provinceId);
+    const contracts = (await this.contractRepo.find({ where: { deletedAt: IsNull() }, select: { id: true, provinceId: true, taxInclusiveAmountFen: true } })).filter((contract) => {
+      if (provinceId && contract.provinceId !== provinceId) return false;
+      if (provinceIds?.length && !provinceIds.includes(contract.provinceId)) return false;
+      return true;
+    });
     const allocs = await this.allocRepo.find({ where: { status: 'active' } });
     const citiesByContract = new Map<string, Set<string>>();
     for (const a of allocs) {
@@ -486,6 +501,8 @@ export class BizAggregateService {
     const amountByContract = new Map(contracts.map((c) => [c.id, Number(c.taxInclusiveAmountFen) || 0]));
     const cityInventory = new Map<string, { contractCount: number; contractAmountFen: number; contractIds: Set<string> }>();
     for (const a of allocs) {
+      // 多选地市：只保留选中地市的分配行（合同额分摊口径仍基于全量 allocs，与单选保持一致）
+      if (cityIds?.length && !cityIds.includes(a.cityId)) continue;
       const contract = contracts.find((c) => c.id === a.contractId);
       // P0：分配地市也必须在可见范围内——共享合同的其他地市分配不得泄露（济南管理员只看到济南行）
       if (!contract || !this.isContractVisible(auth, contract, a.cityId, citiesByContract)) continue;
@@ -504,6 +521,8 @@ export class BizAggregateService {
     // 2) 经营金额：汇总表按范围+month 聚合（左连接语义：无 agg 行地市补 0）
     const qb = this.aggRepo.createQueryBuilder('a');
     this.applyAggScope(qb, auth, 'a', provinceId);
+    if (provinceIds?.length) qb.andWhere('a.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...byCityProvinceIds))', { byCityProvinceIds: provinceIds });
+    if (cityIds?.length) qb.andWhere('a.cityId IN (:...byCityCityIds)', { byCityCityIds: cityIds });
     qb
       .select('a.cityId', 'cityId')
       .addSelect('SUM(a.orderCompletionFen)', 'orderCompletionFen')
@@ -512,7 +531,8 @@ export class BizAggregateService {
       .addSelect('SUM(a.costFen)', 'costFen')
       .addSelect('SUM(a.netProfitFen)', 'netProfitFen')
       .groupBy('a.cityId');
-    if (month) qb.andWhere('a.businessMonth = :month', { month });
+    if (months?.length) qb.andWhere('a.businessMonth IN (:...byCityMonths)', { byCityMonths: months });
+    else if (month) qb.andWhere('a.businessMonth = :month', { month });
     else if (year) qb.andWhere('a.businessMonth LIKE :yearPattern', { yearPattern: `${year}-%` });
     const aggRows = await qb.getRawMany();
     const aggByCity = new Map(aggRows.map((r) => [String(r.cityId), r]));
@@ -604,12 +624,15 @@ export class BizAggregateService {
       const amount = Number(c.taxInclusiveAmountFen) || 0;
       const completion = completionByContract.get(c.id) ?? 0;
       const progress = amount > 0 ? (completion / amount) * 100 : 0;
-      if (progress >= 90 && progress < 100) alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'nearly_full', endDate: c.endDate, status: c.status });
-      if (progress >= 100) alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'overfull', endDate: c.endDate, status: c.status });
+      // 有效展示状态：实时预警以服务端当日判断到期（主状态不改写）
+      const effStatus = computeEffectiveContractStatus(c.status, c.endDate, today);
+      const alertBase = { contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, endDate: c.endDate, status: c.status, effectiveStatus: effStatus, statusAsOf: today };
+      if (progress >= 90 && progress < 100) alerts.push({ ...alertBase, alertType: 'nearly_full' });
+      if (progress >= 100) alerts.push({ ...alertBase, alertType: 'overfull' });
       if (c.endDate) {
         const end = new Date(c.endDate);
         if (end.getTime() - now.getTime() <= thresholdMs && end.getTime() >= new Date(today).getTime()) {
-          alerts.push({ contractId: c.id, contractNo: c.contractNo, contractName: c.contractName, alertType: 'expiring', endDate: c.endDate, status: c.status });
+          alerts.push({ ...alertBase, alertType: 'expiring' });
         }
       }
     }
@@ -798,6 +821,8 @@ export class BizAggregateService {
 
     const provinceNames = new Map((await this.dataSource.getRepository(ProvinceEntity).find({ select: { id: true, name: true } })).map((p) => [String(p.id), String(p.name)]));
     const contractsOut: Array<Record<string, unknown>> = [];
+    // 实时口径（分析单位详情，非快照）：以服务端当日为"是否到期"判断基准日（YYYY-MM-DD 字符串比较，规避时区）
+    const realtimeAsOf = new Date().toISOString().slice(0, 10);
     for (const c of contracts) {
       if (!this.isContractVisible(auth, c, cityId, citiesByContract)) continue;
       const cumulative = completionByContract.get(c.id) ?? 0;
@@ -813,6 +838,9 @@ export class BizAggregateService {
         unitType: city.unitType ?? 'city',
         taxInclusiveAmountFen: Number(c.taxInclusiveAmountFen) || 0,
         status: c.status,
+        // 有效展示状态：以服务端当日判断到期（主状态字段不改写）
+        effectiveStatus: computeEffectiveContractStatus(c.status, c.endDate, realtimeAsOf),
+        statusAsOf: realtimeAsOf,
         signedDate: c.signedDate ?? null,
         endDate: c.endDate ?? null,
         quotaFen: quota,
@@ -942,7 +970,7 @@ export class BizAggregateService {
 
   async updateSetting(auth: BizAuthContext, key: string, value: string): Promise<void> {
     let setting = await this.settingRepo.findOneBy({ settingKey: key });
-    if (!setting) setting = this.settingRepo.create({ settingKey: key });
+    if (!setting) setting = this.settingRepo.create({ id: randomUUID(), settingKey: key });
     setting.settingValue = String(value).slice(0, 255);
     setting.updatedBy = auth.userId;
     await this.settingRepo.save(setting);

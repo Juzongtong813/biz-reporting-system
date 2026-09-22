@@ -387,6 +387,33 @@ async function applyMigration(migration) {
     }
     return;
   }
+  if (migration.version === '029_biz_account_scope_v2' && dialect === 'sqlite') {
+    await adapter.exec(toSqlite(migration.sql));
+    const users = await adapter.rows('SELECT id, role_code, city_id FROM biz_users');
+    for (const user of users) {
+      const role = String(user.role_code);
+      if (!await adapter.scalar('SELECT COUNT(*) FROM biz_user_roles WHERE user_id = ? AND role_code = ?', [user.id, role])) {
+        await adapter.exec(`INSERT INTO biz_user_roles (id, user_id, role_code, is_primary) VALUES (${quoteSqlLiteral(randomUuidSqlite())}, ${quoteSqlLiteral(user.id)}, ${quoteSqlLiteral(role)}, 1)`);
+      }
+      if (role === 'super_admin' && !await adapter.scalar("SELECT COUNT(*) FROM biz_user_scope_grants WHERE user_id = ? AND scope_type = 'all' AND effect = 'allow'", [user.id])) {
+        await adapter.exec(`INSERT INTO biz_user_scope_grants (id, user_id, scope_type, target_id, effect) VALUES (${quoteSqlLiteral(randomUuidSqlite())}, ${quoteSqlLiteral(user.id)}, 'all', NULL, 'allow')`);
+      }
+      if (role === 'city_user' && user.city_id && !await adapter.scalar("SELECT COUNT(*) FROM biz_user_scope_grants WHERE user_id = ? AND scope_type = 'city' AND target_id = ? AND effect = 'allow'", [user.id, user.city_id])) {
+        await adapter.exec(`INSERT INTO biz_user_scope_grants (id, user_id, scope_type, target_id, effect) VALUES (${quoteSqlLiteral(randomUuidSqlite())}, ${quoteSqlLiteral(user.id)}, 'city', ${quoteSqlLiteral(user.city_id)}, 'allow')`);
+      }
+      if (role === 'admin') {
+        const scopes = await adapter.rows('SELECT province_id, city_id FROM biz_user_data_scopes WHERE user_id = ?', [user.id]);
+        for (const scope of scopes) {
+          const scopeType = scope.city_id ? 'city' : scope.province_id ? 'province' : 'all';
+          const target = scope.city_id || scope.province_id || null;
+          const exists = await adapter.scalar('SELECT COUNT(*) FROM biz_user_scope_grants WHERE user_id = ? AND scope_type = ? AND ((target_id = ?) OR (target_id IS NULL AND ? IS NULL)) AND effect = \'allow\'', [user.id, scopeType, target, target]);
+          if (!exists) await adapter.exec(`INSERT INTO biz_user_scope_grants (id, user_id, scope_type, target_id, effect) VALUES (${quoteSqlLiteral(randomUuidSqlite())}, ${quoteSqlLiteral(user.id)}, ${quoteSqlLiteral(scopeType)}, ${target == null ? 'NULL' : quoteSqlLiteral(target)}, 'allow')`);
+        }
+        if (!await adapter.scalar('SELECT COUNT(*) FROM biz_user_scope_grants WHERE user_id = ?', [user.id])) await adapter.exec(`INSERT INTO biz_user_scope_grants (id, user_id, scope_type, target_id, effect) VALUES (${quoteSqlLiteral(randomUuidSqlite())}, ${quoteSqlLiteral(user.id)}, 'all', NULL, 'allow')`);
+      }
+    }
+    return;
+  }
   await adapter.exec(dialect === 'sqlite' ? toSqlite(migration.sql) : migration.sql);
 }
 
@@ -624,6 +651,29 @@ async function inspectState(version) {
     const permOk = await adapter.scalar("SELECT COUNT(*) FROM biz_permissions WHERE code = 'operation.region.manage'").then((count) => count >= 1);
     const roleOk = await adapter.scalar("SELECT COUNT(*) FROM biz_role_permissions WHERE permission_code = 'operation.region.manage'").then((count) => count >= 1);
     return permOk && roleOk ? 'satisfied' : 'empty';
+  }
+  if (version === '027_snapshot_auto_update_settings') {
+    if (!await adapter.tableExists('biz_system_settings')) return 'empty';
+    return adapter.scalar("SELECT COUNT(*) FROM biz_system_settings WHERE setting_key IN ('snapshot_auto_update_enabled','snapshot_auto_update_time')")
+      .then((count) => count === 2 ? 'satisfied' : 'empty');
+  }
+  if (version === '028_biz_fee_rate_import_tasks') {
+    return allOrNothing([
+      adapter.tableExists('biz_fee_rate_import_tasks'),
+      adapter.tableExists('biz_fee_rate_import_task_rows'),
+      adapter.indexExists('biz_fee_rate_import_tasks', 'idx_biz_fee_rate_task_operator'),
+      adapter.indexExists('biz_fee_rate_import_tasks', 'idx_biz_fee_rate_task_created'),
+      adapter.indexExists('biz_fee_rate_import_task_rows', 'idx_biz_fee_rate_row_task'),
+      adapter.indexExists('biz_fee_rate_import_task_rows', 'idx_biz_fee_rate_row_combo'),
+    ]);
+  }
+  if (version === '029_biz_account_scope_v2') {
+    return allOrNothing([
+      adapter.tableExists('biz_user_roles'),
+      adapter.tableExists('biz_user_scope_grants'),
+      adapter.indexExists('biz_user_roles', 'uk_biz_user_role'),
+      adapter.indexExists('biz_user_scope_grants', 'uk_biz_user_scope_grant'),
+    ]);
   }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }

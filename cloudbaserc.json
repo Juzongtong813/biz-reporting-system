@@ -1,6 +1,6 @@
 {
-  "envId": "zy-data-d2g9g1ghr47ac6254",
+  "envId": "zy-pro-d1g5fqh7u4cfce3ab",
   "cloudrun": {
-    "name": "biz-reporting-api-prod"
+    "name": "biz-reporting-api"
   }
 }

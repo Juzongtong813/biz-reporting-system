@@ -12,6 +12,7 @@ export * from './common/metric-source';
 
 export type { City } from './contract/city';
 export type { Contract, ContractCityAllocation } from './contract/contract';
+export * from './contract/contract-status';
 export type { AnnualReportPackage } from './package/annual-package';
 export type { ReportContractMonthlyRow, ReportCostMonthlyRow, ReportMaintenanceMonthlyRow } from './reporting/monthly-rows';
 export type { User, UserBrief } from './user/user';

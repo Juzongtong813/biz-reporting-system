@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..');
-const expectedEnvId = 'zy-data-d2g9g1ghr47ac6254';
+const expectedEnvId = 'zy-data-d0garirza83768686';
 const serviceName = 'biz-reporting-api-prod';
 const envId = process.env.TCB_ENV_ID || '';
 

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import {
-  bizAdminCities, bizAdminProvinces, bizAnalysisYears, bizCostCategories, bizCostList, bizCostReturnMonthly, bizCostSaveMonthly, bizMe,
+  bizCostCategories, bizCostList, bizCostReturnMonthly, bizCostSaveMonthly, bizMe,
 } from '@/api/biz.api';
+import { useBizAnalysisOptions } from '@/components/biz/BizAnalysisOptionsContext';
 
 const { Title, Text } = Typography;
 const MONTHS = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'));
@@ -24,18 +25,41 @@ function fenToYuan(value: unknown): string { return (Number(value ?? 0) / 100).t
 function errorText(error: unknown): string { const detail = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message; return Array.isArray(detail) ? detail.join('；') : (detail ?? '操作失败'); }
 function statusTag(status: unknown) { const config = STATUS[String(status ?? '')]; return config ? <Tag color={config.color}>{config.label}</Tag> : null; }
 
+/** 成本类别：模块级缓存，整个应用生命周期内只请求一次（与年度 / 省份 / 地市共享缓存思路一致） */
+let categoriesCache: Array<{ code: string; name: string }> | null = null;
+let categoriesInflight: Promise<Array<{ code: string; name: string }>> | null = null;
+function loadCostCategories(): Promise<Array<{ code: string; name: string }>> {
+  if (!categoriesInflight) {
+    categoriesInflight = bizCostCategories()
+      .then((result) => {
+        const list = result.items.filter((item) => item.status === 'active').map((item) => ({ code: item.code, name: item.name }));
+        categoriesCache = list;
+        return list;
+      })
+      .catch((error: unknown) => {
+        categoriesInflight = null; // 失败时清空，允许后续重试
+        throw error;
+      });
+  }
+  return categoriesInflight;
+}
+
 export default function BizCosts() {
   const navigate = useNavigate();
   const location = useLocation();
+  // 年度 / 省份 / 地市复用全局共享缓存（概览、趋势、地市对比、超额共用），本页不再单独请求
+  const { years: optionYears, provinces, cities } = useBizAnalysisOptions();
   const [items, setItems] = useState<CostItem[]>([]);
-  const [categories, setCategories] = useState<Array<{ code: string; name: string }>>([]);
-  const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
-  const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
+  const [categories, setCategories] = useState<Array<{ code: string; name: string }>>(categoriesCache ?? []);
   const [roleCode, setRoleCode] = useState('');
   const [permissions, setPermissions] = useState<string[]>([]);
   const [boundCityId, setBoundCityId] = useState<string | null>(null);
   const [filterYear, setFilterYear] = useState(currentYear);
-  const [years, setYears] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  /** 汇总请求序列号：仅接受最新一次结果，避免旧响应覆盖新响应 */
+  const itemsSeqRef = useRef(0);
+  // 成本年度需包含当前年（即使当年暂无订单数据）
+  const years = useMemo(() => [...new Set([currentYear(), ...optionYears])].sort((a, b) => b.localeCompare(a)), [optionYears]);
   const [filterMonths, setFilterMonths] = useState<string[]>([]);
   const [filterProvinces, setFilterProvinces] = useState<string[]>([]);
   const [filterCities, setFilterCities] = useState<string[]>([]);
@@ -55,11 +79,21 @@ export default function BizCosts() {
 
   const loadItems = useCallback(async () => {
     if (!roleCode) return;
+    const seq = ++itemsSeqRef.current;
     setLoading(true);
     try {
       const result = await bizCostList({ year: filterYear, ...(isCityUser && boundCityId ? { cityId: boundCityId } : {}) });
+      if (seq !== itemsSeqRef.current) return; // 已过期响应，直接丢弃，避免旧结果覆盖新筛选
       setItems(result.items.filter((item) => (!filterMonths.length || filterMonths.includes(String(item.businessMonth).slice(5, 7))) && (!filterCities.length || filterCities.includes(String(item.cityId))) && (!filterCategories.length || filterCategories.includes(String(item.categoryCode))) && (!filterProvinces.length || filterProvinces.includes(String(cities.find((city) => city.id === String(item.cityId))?.provinceId ?? '')))));
-    } catch (error) { message.error(errorText(error)); } finally { setLoading(false); }
+      setError(null);
+    } catch (error) {
+      if (seq !== itemsSeqRef.current) return;
+      const text = errorText(error);
+      message.error(text);
+      setError(text);
+    } finally {
+      if (seq === itemsSeqRef.current) setLoading(false);
+    }
   }, [boundCityId, filterCategories, filterCities, filterMonths, filterProvinces, filterYear, isCityUser, roleCode, cities]);
 
   const loadEditRows = useCallback(async () => {
@@ -75,20 +109,25 @@ export default function BizCosts() {
     } catch (error) { message.error(errorText(error)); setEditRows([]); } finally { setEditLoading(false); }
   }, [categories, editCity, editMonth]);
 
+  // 账号信息与成本类别并行加载；年度 / 省份 / 地市来自共享缓存，本页不再重复请求
   useEffect(() => {
-    void (async () => {
-      try {
-        const me = await bizMe(); const yearResult = await bizAnalysisYears(); setYears([...new Set([currentYear(), ...(yearResult.items ?? [])])].sort().reverse()); setRoleCode(me.roleCode); setPermissions(me.permissions); setBoundCityId(me.cityId);
+    let active = true;
+    void Promise.all([bizMe(), loadCostCategories()])
+      .then(([me, list]) => {
+        if (!active) return;
+        setRoleCode(me.roleCode);
+        setPermissions(me.permissions);
+        setBoundCityId(me.cityId);
+        setCategories(list);
         if (me.roleCode === 'city_user') setEditCity(me.cityId ?? undefined);
-        else {
-          const [provinceResult, cityResult] = await Promise.all([bizAdminProvinces(), bizAdminCities()]);
-          setProvinces(provinceResult.items.map((item) => ({ id: String(item.id), name: String(item.name) })));
-          setCities(cityResult.items.map((item) => ({ id: String(item.id), name: String(item.name), provinceId: String(item.provinceId) })));
-        }
-        const categoryResult = await bizCostCategories();
-        setCategories(categoryResult.items.filter((item) => item.status === 'active').map((item) => ({ code: item.code, name: item.name })));
-      } catch (error) { message.error(errorText(error)); }
-    })();
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        const text = errorText(err);
+        message.error(text);
+        setError(text);
+      });
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     const cityFromLink = new URLSearchParams(location.search).get('cityId');
@@ -182,6 +221,7 @@ export default function BizCosts() {
       {!isCityUser && <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选地市" value={filterCities} onChange={setFilterCities} options={availableCities.map((city) => ({ value: city.id, label: city.name }))} style={{ width: 260 }} />}
       <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选成本类别" value={filterCategories} onChange={setFilterCategories} options={(categories.length ? categories : FALLBACK_CATEGORIES.map(([code, name]) => ({ code, name }))).map((category) => ({ value: category.code, label: category.name }))} style={{ width: 220 }} />
     </Space></Card>
+    {error && <Alert style={{ marginBottom: 16 }} type="error" showIcon message={error} />}
     <Card size="small" title={`${filterYear} 年地市成本汇总`} loading={loading}><Table size="small" bordered scroll={{ x: 'max-content' }} rowKey="key" dataSource={citySummaries} pagination={{ pageSize: 50 }} locale={{ emptyText: '暂无已生效成本' }} columns={[{ title: '省份', dataIndex: 'provinceName', fixed: 'left' }, { title: '地市', dataIndex: 'cityName', fixed: 'left', render: (value: string, row: CitySummaryRow) => <Button type="link" size="small" onClick={() => { setFilterCities([row.cityId]); setEditCity(row.cityId); }}>{value}</Button> }, ...[['reimbursement', '报销'], ['rent', '房租'], ['labor', '人工成本'], ['utilities', '水电费'], ['fuel', '油补'], ['entertainment', '招待费']].map(([code, title]) => ({ title, key: code, render: (_: unknown, row: CitySummaryRow) => fenToYuan(row.amounts[code] ?? 0) }))]} /></Card>
     <Card size="small" title={`${filterYear} 年成本明细`} loading={loading} style={{ marginTop: 16 }}><Table size="small" bordered scroll={{ x: 900 }} rowKey="key" columns={columns} dataSource={matrixRows} pagination={{ pageSize: 50 }} locale={{ emptyText: '暂无成本数据' }} /></Card>
     <Card size="small" title="成本填报" style={{ marginTop: 16 }} extra={<Space wrap>{!isCityUser && <><Select allowClear placeholder="选择省份" value={editProvince} onChange={(value) => { setEditProvince(value); setEditCity(undefined); }} options={provinces.map((province) => ({ value: province.id, label: province.name }))} style={{ width: 150 }} /><Select allowClear placeholder="选择地市" value={editCity} onChange={setEditCity} options={cities.filter((city) => !editProvince || city.provinceId === editProvince).map((city) => ({ value: city.id, label: city.name }))} style={{ width: 150 }} /></>}<Input type="month" value={editMonth} onChange={(event) => setEditMonth(event.target.value)} style={{ width: 150 }} /></Space>}>

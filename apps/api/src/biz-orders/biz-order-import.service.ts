@@ -351,11 +351,10 @@ export class BizOrderImportService {
       if (!Number.isFinite(amount)) { p.error = { type: 'amount', field: '含税总金额', message: `金额「${amountRaw}」不是有效数值` }; pending.push(p); return; }
       p.completionAmountFen = Math.round(amount * 100);
 
-      // 费率快照：≤ 业务月份的最大生效费率
+      // 费率快照：≤ 业务月份的最大生效费率；缺失费率按 0 计入，不阻断该行及同批次其他正常行。
       const rates = feeRatesByContractCity.get(`${contract.id}|${cityId}`) ?? [];
       const effective = rates.filter((r) => r.effectiveMonth <= p.businessMonth!).sort((a, b) => b.effectiveMonth.localeCompare(a.effectiveMonth))[0];
-      if (!effective) { p.error = { type: 'rate', field: '管理费率', message: `合同「${contractNo}」地市在 ${p.businessMonth} 无生效费率` }; pending.push(p); return; }
-      p.feeRateSnapshotBp = effective.rateBp;
+      p.feeRateSnapshotBp = effective?.rateBp ?? 0;
       p.grossProfitFen = Math.round((p.completionAmountFen * p.feeRateSnapshotBp) / 10000);
 
       pending.push(p);
@@ -848,11 +847,9 @@ export class BizOrderImportService {
     let rateBp: number | null = input.feeRateSnapshotBp ?? null;
     if (rateBp == null) {
       const effective = await this.contracts.getEffectiveRate(contractId, cityId, businessMonth);
-      rateBp = effective?.rateBp ?? null;
+      rateBp = effective?.rateBp ?? 0;
     }
-    if (rateBp == null) {
-      errors.push({ type: 'rate', field: '管理费率', message: `合同“${contract.contractNo}”在 ${businessMonth} 没有有效管理费率` });
-    } else if (!Number.isInteger(rateBp) || rateBp < 0 || rateBp > 10000) {
+    if (!Number.isInteger(rateBp) || rateBp < 0 || rateBp > 10000) {
       errors.push({ type: 'rate', field: '管理费率', message: '管理费率必须在 0% 到 100% 之间' });
       rateBp = null;
     }

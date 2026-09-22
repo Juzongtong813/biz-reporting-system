@@ -3,6 +3,7 @@ import { Button, Result, Spin } from 'antd';
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import AuthGuard from '@/components/AuthGuard';
 import BizLayout from '@/components/biz/BizLayout';
+import { BizAnalysisOptionsProvider } from '@/components/biz/BizAnalysisOptionsContext';
 import AdminLayout from '@/components/AdminLayout';
 import { getMe } from '@/api/auth.api';
 import { clearToken } from '@/utils/auth';
@@ -32,6 +33,7 @@ const BizAdmin = lazy(() => import('@/pages/biz/BizAdmin'));
 const BizAuditLogs = lazy(() => import('@/pages/biz/BizAuditLogs'));
 const BizContracts = lazy(() => import('@/pages/biz/BizContracts'));
 const BizContractOverview = lazy(() => import('@/pages/biz/BizContractOverview'));
+const BizFeeRateMaintenance = lazy(() => import('@/pages/biz/BizFeeRateMaintenance'));
 const BizOrders = lazy(() => import('@/pages/biz/BizOrders'));
 const BizOfflineCompletions = lazy(() => import('@/pages/biz/BizOfflineCompletions'));
 const BizCosts = lazy(() => import('@/pages/biz/BizCosts'));
@@ -132,13 +134,15 @@ export default function App() {
     {/* 默认入口：新基线（biz_）两级门户 */}
     <Route path="/" element={<Navigate to="/biz/login" replace />} />
     <Route path="/biz/login" element={<Suspense fallback={<PageLoading />}><BizLogin /></Suspense>} />
-    <Route path="/biz" element={<BizLayout />}>
+    {/* 共享筛选选项（年度 / 省份 / 地市）提升到 /biz 布局层，供概览、趋势、地市对比、超额、成本复用 */}
+    <Route path="/biz" element={<BizAnalysisOptionsProvider><BizLayout /></BizAnalysisOptionsProvider>}>
       <Route index element={<Navigate to="/biz/portal" replace />} />
       <Route path="portal" element={<Suspense fallback={<PageLoading />}><BizPortal /></Suspense>} />
       <Route path="maintenance" element={<Suspense fallback={<PageLoading />}><BizMaintenancePortal /></Suspense>} />
       <Route path="placeholder/:code" element={<Suspense fallback={<PageLoading />}><BizPlaceholder /></Suspense>} />
       <Route path="operation" element={<Suspense fallback={<PageLoading />}><BizContracts /></Suspense>} />
       <Route path="contract-overview" element={<Suspense fallback={<PageLoading />}><BizContractOverview /></Suspense>} />
+      <Route path="fee-rates" element={<Suspense fallback={<PageLoading />}><BizFeeRateMaintenance /></Suspense>} />
       <Route path="orders" element={<Suspense fallback={<PageLoading />}><BizOrders /></Suspense>} />
       <Route path="offline-completions" element={<Suspense fallback={<PageLoading />}><BizOfflineCompletions /></Suspense>} />
       <Route path="costs" element={<Suspense fallback={<PageLoading />}><BizCosts /></Suspense>} />
