@@ -387,8 +387,21 @@ async function applyMigration(migration) {
     }
     return;
   }
-  if (migration.version === '029_biz_account_scope_v2' && dialect === 'sqlite') {
+  if (migration.version === '028_biz_fee_rate_import_tasks' && dialect === 'sqlite') {
     await adapter.exec(toSqlite(migration.sql));
+    await adapter.exec(`CREATE INDEX IF NOT EXISTS idx_biz_fee_rate_task_operator ON biz_fee_rate_import_tasks (operator_user_id);
+      CREATE INDEX IF NOT EXISTS idx_biz_fee_rate_task_created ON biz_fee_rate_import_tasks (created_at);
+      CREATE INDEX IF NOT EXISTS idx_biz_fee_rate_row_task ON biz_fee_rate_import_task_rows (task_id);
+      CREATE INDEX IF NOT EXISTS idx_biz_fee_rate_row_combo ON biz_fee_rate_import_task_rows (contract_id, city_id);`);
+    return;
+  }
+  if (migration.version === '029_biz_account_scope_v2' && dialect === 'sqlite') {
+    await adapter.exec(toSqlite(migration.sql.split(/\n\s*INSERT INTO/i)[0]));
+    await adapter.exec(`CREATE INDEX IF NOT EXISTS idx_biz_user_role_user ON biz_user_roles (user_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uk_biz_user_role ON biz_user_roles (user_id, role_code);
+      CREATE INDEX IF NOT EXISTS idx_biz_user_scope_grant_user ON biz_user_scope_grants (user_id);
+      CREATE INDEX IF NOT EXISTS idx_biz_user_scope_grant_target ON biz_user_scope_grants (scope_type, target_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uk_biz_user_scope_grant ON biz_user_scope_grants (user_id, scope_type, target_id, effect);`);
     const users = await adapter.rows('SELECT id, role_code, city_id FROM biz_users');
     for (const user of users) {
       const role = String(user.role_code);
@@ -673,6 +686,7 @@ async function inspectState(version) {
       adapter.tableExists('biz_user_scope_grants'),
       adapter.indexExists('biz_user_roles', 'uk_biz_user_role'),
       adapter.indexExists('biz_user_scope_grants', 'uk_biz_user_scope_grant'),
+      adapter.indexExists('biz_user_scope_grants', 'idx_biz_user_scope_grant_target'),
     ]);
   }
   fail(`STATE_CHECK_MISSING version=${version}`);

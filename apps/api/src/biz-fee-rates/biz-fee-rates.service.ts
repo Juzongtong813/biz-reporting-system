@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { Brackets, DataSource, In, Repository } from 'typeorm';
 import { createHash, randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
 import { ContractStatus } from '@biz-reporting/shared-types';
@@ -271,13 +271,14 @@ export class BizFeeRatesService {
   ): Promise<BizContractEntity[]> {
     const scope = auth.dataScope;
     const effectiveProvinceId = filter.provinceId;
-    if (effectiveProvinceId && scope.scopeType === 'province' && scope.provinceIds.length > 0
+    if (effectiveProvinceId && scope.provinceIds.length > 0
       && !scope.provinceIds.includes(effectiveProvinceId)) {
       throw new ForbiddenException('数据范围不足');
     }
-    if (effectiveProvinceId && scope.scopeType === 'city' && scope.cityId) {
-      const city = await this.cityRepo.findOneBy({ id: scope.cityId });
-      if (city && city.provinceId !== effectiveProvinceId) throw new ForbiddenException('数据范围不足');
+    const scopedCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+    if (effectiveProvinceId && scopedCityIds.length) {
+      const cities = await this.cityRepo.findBy({ id: In(scopedCityIds) });
+      if (cities.length > 0 && cities.every((item) => item.provinceId !== effectiveProvinceId)) throw new ForbiddenException('数据范围不足');
     }
 
     const query = this.contractRepo.createQueryBuilder('c');
@@ -290,18 +291,33 @@ export class BizFeeRatesService {
       query.andWhere('(c.contractNo LIKE :keyword OR c.contractName LIKE :keyword)', { keyword: `%${keyword}%` });
     }
 
-    const scopeCityId = scope.scopeType === 'city' ? scope.cityId : null;
     const filterCityId = filter.cityId ?? null;
-    if (scopeCityId || filterCityId) {
-      const cityId = scopeCityId ?? filterCityId;
+    const queryScopeParts: string[] = [];
+    const queryScopeParams: Record<string, unknown> = {};
+    if (scope.allowAll || scope.scopeType === 'all') {
+      // unrestricted
+    } else {
+      if (scope.contractIds?.length) {
+        queryScopeParts.push('c.id IN (:...scopeContractIds)');
+        queryScopeParams.scopeContractIds = scope.contractIds;
+      }
+      if (scope.provinceIds.length) {
+        queryScopeParts.push('c.provinceId IN (:...scopeProvinceIds)');
+        queryScopeParams.scopeProvinceIds = scope.provinceIds;
+      }
+    }
+    if (scopedCityIds.length || filterCityId) {
+      const cityIds = filterCityId ? [filterCityId] : scopedCityIds;
       query
-        .innerJoin(BizContractCityAllocationEntity, 'a', 'a.contract_id = c.id AND a.city_id = :cityId AND a.status = :allocActive', {
-          cityId: cityId ?? '', allocActive: 'active',
+        .innerJoin(BizContractCityAllocationEntity, 'a', 'a.contract_id = c.id AND a.city_id IN (:...filterCityIds) AND a.status = :allocActive', {
+          filterCityIds: cityIds, allocActive: 'active',
         })
         .distinct(true);
+      if (scopedCityIds.length) queryScopeParts.push('a.city_id IN (:...scopeCityIds)');
     }
-    if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
-      query.andWhere('c.provinceId IN (:...provinceIds)', { provinceIds: scope.provinceIds });
+    if (!(scope.allowAll || scope.scopeType === 'all')) {
+      if (queryScopeParts.length === 0) query.andWhere('1 = 0');
+      else query.andWhere(new Brackets((where) => where.where(queryScopeParts.join(' OR '), queryScopeParams)));
     }
     return query.orderBy('c.contractNo', 'ASC').getMany();
   }

@@ -6,7 +6,8 @@ import { PlusOutlined } from '@ant-design/icons';
 import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
-  bizAdminGetUserPermissions, bizAdminSetOverrides, bizAdminRoles, bizAdminPermissions, bizAdminCities,
+  bizAdminGetUserPermissions, bizAdminSetOverrides, bizAdminRoles, bizAdminPermissions, bizAdminCities, bizAdminProvinces,
+  bizAdminGetUserAccess, bizAdminSetUserAccess,
 } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -52,6 +53,7 @@ export default function BizAdmin() {
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
   const [roles, setRoles] = useState<Array<{ code: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string }>>([]);
+  const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -66,15 +68,22 @@ export default function BizAdmin() {
   const [resetForm] = Form.useForm<{ password: string }>();
   const [createRole, setCreateRole] = useState<string>('admin');
   const [permissionRows, setPermissionRows] = useState<Array<Record<string, unknown>>>([]);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeUserId, setScopeUserId] = useState<string | null>(null);
+  const [scopeType, setScopeType] = useState<'all' | 'province' | 'city' | 'contract'>('all');
+  const [scopeTargets, setScopeTargets] = useState<string[]>([]);
+  const [scopeSaving, setScopeSaving] = useState(false);
+  const [contractScopeText, setContractScopeText] = useState('');
   const permissionGroups = buildPermissionGroups(permissionRows);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, r, c] = await Promise.all([bizAdminListUsers(), bizAdminRoles(), bizAdminCities()]);
+      const [u, r, c, p] = await Promise.all([bizAdminListUsers(), bizAdminRoles(), bizAdminCities(), bizAdminProvinces()]);
       setUsers(u.items);
       setRoles(r.items.map((x) => ({ code: String(x.code), name: String(x.name) })));
       setCities(c.items.map((x) => ({ id: String(x.id), name: String(x.name), provinceId: String(x.provinceId) })));
+      setProvinces(p.items.map((x) => ({ id: String(x.id), name: String(x.name) })));
     } finally {
       setLoading(false);
     }
@@ -151,6 +160,33 @@ export default function BizAdmin() {
     setPermOpen(true);
   };
 
+  const onViewScope = async (id: string) => {
+    const access = await bizAdminGetUserAccess(id);
+    const grant = access.grants.find((item) => item.effect !== 'deny') ?? access.grants[0];
+    setScopeUserId(id);
+    setScopeType(grant?.scopeType ?? 'all');
+    setScopeTargets(access.grants.filter((item) => item.scopeType === grant?.scopeType && item.targetId).map((item) => String(item.targetId)));
+    setContractScopeText(access.grants.filter((item) => item.scopeType === 'contract' && item.targetId).map((item) => String(item.targetId)).join('\n'));
+    setScopeOpen(true);
+  };
+
+  const onSaveScope = async () => {
+    if (!scopeUserId) return;
+    setScopeSaving(true);
+    try {
+      const ids = scopeType === 'contract'
+        ? contractScopeText.split(/[\s,，\n]+/).map((item) => item.trim()).filter(Boolean)
+        : scopeTargets;
+      const grants = scopeType === 'all' ? [{ scopeType: 'all' as const, targetId: null }] : ids.map((targetId) => ({ scopeType, targetId }));
+      await bizAdminSetUserAccess(scopeUserId, [String(users.find((row) => String(row.id) === scopeUserId)?.roleCode ?? 'admin')], grants);
+      message.success('数据范围已保存，下次请求生效');
+      setScopeOpen(false);
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+      message.error(detail ?? '数据范围保存失败');
+    } finally { setScopeSaving(false); }
+  };
+
   const onSavePermissions = async () => {
     if (!permDetail) return;
     setPermSaving(true);
@@ -199,6 +235,7 @@ export default function BizAdmin() {
       render: (_: unknown, row: Record<string, unknown>) => (
         <Space wrap>
           <Button size="small" onClick={() => onViewPerm(String(row.id))}>权限</Button>
+          <Button size="small" onClick={() => { void onViewScope(String(row.id)); }}>范围</Button>
           <Button size="small" danger={row.status === 'enabled'} onClick={() => onToggle(String(row.id), String(row.status))}>
             {row.status === 'enabled' ? '停用' : '启用'}
           </Button>
@@ -288,6 +325,16 @@ export default function BizAdmin() {
             />
           </div>
         )}
+      </Drawer>
+
+      <Drawer title="数据范围" open={scopeOpen} onClose={() => setScopeOpen(false)} width={520} extra={<Button type="primary" loading={scopeSaving} onClick={() => { void onSaveScope(); }}>保存范围</Button>}>
+        <Alert type="info" showIcon message="范围是授权并集，请只选择该账号实际负责的对象" style={{ marginBottom: 16 }} />
+        <Form layout="vertical">
+          <Form.Item label="范围类型"><Select value={scopeType} onChange={(value) => { setScopeType(value); setScopeTargets([]); }} options={[{ value: 'all', label: '全部省份和地市' }, { value: 'province', label: '指定省份' }, { value: 'city', label: '指定地市' }, { value: 'contract', label: '指定合同' }]} /></Form.Item>
+          {scopeType === 'province' && <Form.Item label="省份"><Select mode="multiple" value={scopeTargets} onChange={setScopeTargets} options={provinces.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>}
+          {scopeType === 'city' && <Form.Item label="经营单位"><Select mode="multiple" value={scopeTargets} onChange={setScopeTargets} options={cities.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>}
+          {scopeType === 'contract' && <Form.Item label="合同 ID" extra="每行一个合同 ID"><Input.TextArea rows={8} value={contractScopeText} onChange={(event) => setContractScopeText(event.target.value)} placeholder="请输入合同 ID" /></Form.Item>}
+        </Form>
       </Drawer>
     </div>
   );

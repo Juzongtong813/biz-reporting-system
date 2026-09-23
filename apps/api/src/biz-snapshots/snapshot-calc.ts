@@ -8,9 +8,15 @@
 
 /** 数据范围（与 RbacService.ResolvedDataScope 结构一致，仅取过滤所需字段） */
 export interface ScopeLike {
-  scopeType: 'all' | 'province' | 'city' | 'contract';
+  scopeType: 'all' | 'province' | 'city' | 'contract' | 'mixed' | 'none';
   provinceIds: string[];
   cityId: string | null;
+  cityIds?: string[];
+  contractIds?: string[];
+  allowAll?: boolean;
+  deniedProvinceIds?: string[];
+  deniedCityIds?: string[];
+  deniedContractIds?: string[];
 }
 
 /** 合同快照行（用于分摊合同额、统计合同数） */
@@ -75,14 +81,13 @@ export function lastNMonths(asOf: string, n: number): string[] {
  * 注意：只按 auth.dataScope 过滤，绝不信任请求参数。
  */
 export function scopeMatch(scope: ScopeLike, provinceId: string | null, cityId: string | null): boolean {
-  if (scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
-  if (scope.scopeType === 'province') {
-    if (scope.provinceIds.length === 0) return true; // admin 全部省份
-    return !!provinceId && scope.provinceIds.includes(provinceId);
-  }
-  if (scope.scopeType === 'city') {
-    return !!cityId && cityId === scope.cityId;
-  }
+  const deniedProvinceIds = scope.deniedProvinceIds ?? [];
+  const deniedCityIds = scope.deniedCityIds ?? [];
+  if (provinceId && deniedProvinceIds.includes(provinceId)) return false;
+  if (cityId && deniedCityIds.includes(cityId)) return false;
+  if (scope.allowAll || scope.scopeType === 'all') return true;
+  if (scope.scopeType === 'province' && scope.provinceIds.length > 0) return !!provinceId && scope.provinceIds.includes(provinceId);
+  if (scope.scopeType === 'city') return !!cityId && (scope.cityIds?.includes(cityId) ?? cityId === scope.cityId);
   return false;
 }
 

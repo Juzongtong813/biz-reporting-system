@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Not, In, IsNull } from 'typeorm';
+import { Brackets, DataSource, Repository, Not, In, IsNull } from 'typeorm';
 import { createHash, randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
 import { ContractStatus, ContractTag, VoidSummaryChoice, PlatformRole, computeEffectiveContractStatus } from '@biz-reporting/shared-types';
@@ -185,18 +185,19 @@ export class BizContractsService {
     return contract;
   }
 
-  /** 合同可见性：all/contract 放行；city 需已分配绑定地市；province 需合同省份在范围内 */
+  /** 合同可见性统一按范围授权；合同范围只允许显式授权的合同。 */
   private async assertContractVisible(auth: BizAuthContext, contract: BizContractEntity): Promise<void> {
     const scope = auth.dataScope;
-    if (scope.scopeType === 'all' || scope.scopeType === 'contract') return;
-    if (scope.scopeType === 'city') {
-      const alloc = await this.allocationRepo.findOneBy({ contractId: contract.id, cityId: scope.cityId ?? '', status: 'active' });
-      if (!alloc) throw new ForbiddenException('数据范围不足');
-      return;
+    if (auth.isSuperAdmin || scope.allowAll || scope.scopeType === 'all') return;
+    if (scope.contractIds?.includes(contract.id)) return;
+    if (scope.deniedContractIds?.includes(contract.id)) throw new ForbiddenException('数据范围不足');
+    if (scope.provinceIds.length > 0 && scope.provinceIds.includes(contract.provinceId) && !scope.deniedProvinceIds?.includes(contract.provinceId)) return;
+    const cityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+    if (cityIds.length > 0) {
+      const count = await this.allocationRepo.count({ where: { contractId: contract.id, cityId: In(cityIds), status: 'active' } });
+      if (count > 0) return;
     }
-    if (scope.scopeType === 'province' && scope.provinceIds.length > 0 && !scope.provinceIds.includes(contract.provinceId)) {
-      throw new ForbiddenException('数据范围不足');
-    }
+    throw new ForbiddenException('数据范围不足');
   }
 
   // ================= 列表与详情 =================
@@ -216,21 +217,28 @@ export class BizContractsService {
       query.andWhere('(c.contractNo LIKE :keyword OR c.contractName LIKE :keyword)', { keyword: `%${keyword}%` });
     }
 
-    if (auth.roleCode === PlatformRole.CITY_USER) {
-      // 地市用户：只返回分配给本地市的合同
+    const scope = auth.dataScope;
+    const scopeParts: string[] = [];
+    const scopeParams: Record<string, unknown> = {};
+    if (!(scope.allowAll || scope.scopeType === 'all')) {
+      if (scope.contractIds?.length) { scopeParts.push('c.id IN (:...scopeContractIds)'); scopeParams.scopeContractIds = scope.contractIds; }
+      if (scope.provinceIds.length) { scopeParts.push('c.provinceId IN (:...scopeProvinceIds)'); scopeParams.scopeProvinceIds = scope.provinceIds; }
+    }
+    if (scope.cityIds?.length || scope.cityId) {
+      const scopedCityIds = scope.cityIds?.length ? scope.cityIds : [scope.cityId!];
       query
-        .innerJoin(BizContractCityAllocationEntity, 'a', 'a.contract_id = c.id AND a.city_id = :cityId AND a.status = :allocActive', {
-          cityId: auth.dataScope.cityId ?? '', allocActive: 'active',
+        .innerJoin(BizContractCityAllocationEntity, 'a', 'a.contract_id = c.id AND a.city_id IN (:...scopeCityIds) AND a.status = :allocActive', {
+          scopeCityIds: scopedCityIds, allocActive: 'active',
         })
         .distinct(true);
-    } else if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
-      query.andWhere('c.provinceId IN (:...provinceIds)', { provinceIds: auth.dataScope.provinceIds });
-    } else if (auth.dataScope.scopeType === 'city') {
-      query
-        .innerJoin(BizContractCityAllocationEntity, 'a', 'a.contract_id = c.id AND a.city_id = :cityId AND a.status = :allocActive', {
-          cityId: auth.dataScope.cityId ?? '', allocActive: 'active',
-        })
-        .distinct(true);
+      scopeParts.push('a.city_id IN (:...scopeCityIds)');
+    }
+    if (!(scope.allowAll || scope.scopeType === 'all')) {
+      if (scopeParts.length === 0) {
+        query.andWhere('1 = 0');
+      } else {
+        query.andWhere(new Brackets((where) => where.where(scopeParts.join(' OR '), { ...scopeParams, scopeCityIds: scope.cityIds?.length ? scope.cityIds : [scope.cityId] })));
+      }
     }
     // contract_manager（scopeType='contract'）与 super_admin（all）不加过滤
     const contracts = await query.orderBy('c.createdAt', 'DESC').getMany();
@@ -1137,6 +1145,7 @@ export class BizContractsService {
   /** 编辑：草稿可改合同额；生效后合同额永久锁定（amountLocked=true 时拒绝金额修改） */
   async update(auth: BizAuthContext, id: string, dto: UpdateContractDto): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废，不可编辑');
     if (dto.taxInclusiveAmountFen !== undefined && contract.amountLocked) {
       throw new BadRequestException('合同生效后合同额永久锁定，不可修改（录错请作废重建）'); // CON-003
@@ -1178,6 +1187,7 @@ export class BizContractsService {
   /** 生效：draft → active；合同额锁定；versionNo++ */
   async activate(auth: BizAuthContext, id: string): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     if (contract.status !== ContractStatus.DRAFT) throw new BadRequestException('仅草稿合同可生效');
     await this.assertCompleteness(contract);
     contract.status = ContractStatus.ACTIVE;
@@ -1197,6 +1207,7 @@ export class BizContractsService {
     for (const id of uniqueIds) {
       const contract = await this.contractRepo.findOneBy({ id });
       if (!contract) { failed.push({ id, reason: '合同不存在' }); continue; }
+      try { await this.assertContractVisible(auth, contract); } catch { failed.push({ id, contractNo: contract.contractNo, reason: '数据范围不足' }); continue; }
       if (contract.status !== ContractStatus.DRAFT) { failed.push({ id, contractNo: contract.contractNo, reason: '仅草稿合同可生效' }); continue; }
       const issues = await this.completenessIssues(contract);
       if (issues.length) { failed.push({ id, contractNo: contract.contractNo, reason: `合同资料不完整，缺少：${issues.join('、')}` }); continue; }
@@ -1215,6 +1226,7 @@ export class BizContractsService {
   /** 确认完成：active → completed（进度必须 ≥100%，管理员确认） */
   async complete(auth: BizAuthContext, id: string): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     if (contract.status !== ContractStatus.ACTIVE) throw new BadRequestException('仅执行中的合同可确认完成');
     const detail = await this.detail(auth, id);
     if (detail.progress.progress < 100) throw new BadRequestException('合同进度未达 100%，不可确认完成');
@@ -1229,6 +1241,7 @@ export class BizContractsService {
   /** 作废：active/completed → voided；必填汇总口径与原因 */
   async voidContract(auth: BizAuthContext, id: string, dto: VoidContractDto): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     if (![ContractStatus.ACTIVE, ContractStatus.COMPLETED].includes(contract.status as ContractStatus)) {
       throw new BadRequestException('仅执行中或已完成的合同可作废');
     }
@@ -1252,6 +1265,7 @@ export class BizContractsService {
       throw new ForbiddenException('当前账号无恢复合同权限');
     }
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     const before = `status=${contract.status};deleted=${contract.deletedAt ? 'Y' : 'N'}`;
     if (contract.deletedAt) {
       contract.deletedAt = null;
@@ -1277,6 +1291,7 @@ export class BizContractsService {
       throw new ForbiddenException('当前账号无删除合同权限');
     }
     const contract = await this.getContractOrFail(id);
+    await this.assertContractVisible(auth, contract);
     if (contract.deletedAt) throw new BadRequestException('合同已处于删除状态');
     const before = `contractNo=${contract.contractNo};status=${contract.status}`;
     contract.deletedAt = new Date();
@@ -1479,6 +1494,7 @@ export class BizContractsService {
 
   async upsertFeeRates(auth: BizAuthContext, contractId: string, dto: BulkFeeRateDto): Promise<BizContractFeeRateEntity[]> {
     const contract = await this.getContractOrFail(contractId);
+    await this.assertContractVisible(auth, contract);
     if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废');
     if (!/^\d{4}-\d{2}$/.test(dto.effectiveMonth)) throw new BadRequestException('生效月份格式应为 YYYY-MM');
     if (!Number.isInteger(dto.rateBp) || dto.rateBp < 0 || dto.rateBp > 10000) {
@@ -1515,6 +1531,7 @@ export class BizContractsService {
     if (!/^\d{4}-\d{2}$/.test(dto.sourceMonth) || !/^\d{4}-\d{2}$/.test(dto.targetMonth)) throw new BadRequestException('费率月份格式应为 YYYY-MM');
     if (dto.sourceMonth === dto.targetMonth) throw new BadRequestException('复制来源月份和目标月份不能相同');
     const contract = await this.getContractOrFail(contractId);
+    await this.assertContractVisible(auth, contract);
     if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废');
     const sourceRates = await this.feeRateRepo.findBy({ contractId, effectiveMonth: dto.sourceMonth });
     const requested = dto.cityIds?.length ? new Set(dto.cityIds) : null;

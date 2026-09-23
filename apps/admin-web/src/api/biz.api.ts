@@ -92,6 +92,13 @@ export function bizAdminSetOverrides(id: string, overrides: Array<{ permissionCo
 export function bizAdminSetDataScopes(id: string, scopes: Array<{ provinceId: string | null; cityId?: string | null }>): Promise<{ ok: boolean }> {
   return request.put(`/biz/admin/users/${id}/data-scopes`, { scopes }).then((r) => r.data);
 }
+export type BizScopeGrant = { scopeType: 'all' | 'province' | 'city' | 'contract'; targetId?: string | null; effect?: 'allow' | 'deny' };
+export function bizAdminGetUserAccess(id: string): Promise<{ roles: Array<{ roleCode: string; isPrimary: boolean }>; grants: BizScopeGrant[] }> {
+  return request.get(`/biz/admin/users/${id}/access`).then((r) => r.data);
+}
+export function bizAdminSetUserAccess(id: string, roles: string[], grants: BizScopeGrant[]): Promise<{ ok: boolean }> {
+  return request.put(`/biz/admin/users/${id}/access`, { roles, grants }).then((r) => r.data);
+}
 
 export function bizAdminRoles(): Promise<{ items: Array<{ id: string; code: string; name: string }> }> {
   return request.get('/biz/admin/roles').then((r) => r.data);

@@ -18,8 +18,8 @@ export const SUPER_ADMIN_ALL = '*';
 
 /** 解析后的用户数据范围 */
 export interface ResolvedDataScope {
-  /** all=全部省份/地市（super_admin）；province=按省；city=单地市；contract=仅合同域（contract_manager） */
-  scopeType: 'all' | 'province' | 'city' | 'contract';
+  /** all=全部；province/city/contract=单一对象类型；mixed=多种范围并集；none=无范围。 */
+  scopeType: 'all' | 'province' | 'city' | 'contract' | 'mixed' | 'none';
   /** scopeType=province 时允许的省份 UUID 列表；空=全部省份 */
   provinceIds: string[];
   /** scopeType=city 时绑定的地市 UUID */
@@ -27,6 +27,9 @@ export interface ResolvedDataScope {
   cityIds?: string[];
   contractIds?: string[];
   allowAll?: boolean;
+  deniedProvinceIds?: string[];
+  deniedCityIds?: string[];
+  deniedContractIds?: string[];
 }
 
 /** 权限上下文（挂在 request.bizAuth 上，供守卫与服务使用） */
@@ -126,10 +129,7 @@ export class RbacService {
   private async resolveDataScope(userId: string, isSuperAdmin: boolean): Promise<ResolvedDataScope> {
     const resolved = isSuperAdmin
       ? { allowAll: true, provinceIds: [], cityIds: [], contractIds: [], deniedProvinceIds: [], deniedCityIds: [], deniedContractIds: [], scopeType: 'all' as const, cityId: null }
-      : await this.accessScope.resolve(userId).then((scope) => ({
-        ...scope,
-        scopeType: (scope.scopeType === 'mixed' || scope.scopeType === 'none' ? 'contract' : scope.scopeType) as ResolvedDataScope['scopeType'],
-      }));
+      : await this.accessScope.resolve(userId);
     return resolved;
   }
 

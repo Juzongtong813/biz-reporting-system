@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, IsNull } from 'typeorm';
+import { DataSource, Repository, In, IsNull } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { PlatformRole, PLATFORM_ROLES } from '@biz-reporting/shared-types';
@@ -72,6 +72,7 @@ export class BizAdminService {
     private readonly cityRepo: Repository<CityEntity>,
     @InjectRepository(BizOperationLogEntity)
     private readonly opLogRepo: Repository<BizOperationLogEntity>,
+    private readonly dataSource: DataSource,
   ) {}
 
   private async recordOp(operatorUserId: string, actionType: string, targetType: string, targetId: string): Promise<void> {
@@ -213,17 +214,36 @@ export class BizAdminService {
     const user = await this.userRepo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('账号不存在');
     const normalizedRoles = [...new Set((roles ?? []).map((role) => String(role).trim()).filter((role) => PLATFORM_ROLES.includes(role as PlatformRole)))];
-    if (!normalizedRoles.length || normalizedRoles.includes(PlatformRole.SUPER_ADMIN) && user.roleCode !== PlatformRole.SUPER_ADMIN) throw new BadRequestException('角色配置无效');
-    if (normalizedRoles.includes(PlatformRole.SUPER_ADMIN) && user.id !== userId) throw new BadRequestException('不允许配置 super_admin');
-    const normalizedGrants = (grants ?? []).filter((grant) => grant.scopeType && (grant.scopeType === 'all' || grant.targetId));
-    await this.userRoleRepo.delete({ userId });
-    await this.scopeGrantRepo.delete({ userId });
-    await this.userRoleRepo.save(normalizedRoles.map((roleCode, index) => ({ id: randomUUID(), userId, roleCode, isPrimary: index === 0 })));
-    await this.scopeGrantRepo.save(normalizedGrants.map((grant) => ({ id: randomUUID(), userId, scopeType: grant.scopeType, targetId: grant.scopeType === 'all' ? null : grant.targetId ?? null, effect: grant.effect ?? 'allow' })));
-    user.roleCode = normalizedRoles[0];
-    user.cityId = normalizedGrants.find((grant) => grant.scopeType === 'city' && (grant.effect ?? 'allow') === 'allow')?.targetId ?? null;
-    user.authVersion += 1;
-    await this.userRepo.save(user);
+    if (!normalizedRoles.length || normalizedRoles.includes(PlatformRole.SUPER_ADMIN)) throw new BadRequestException('角色配置无效，super_admin 只能保留系统内置账号');
+    const roleRows = await this.roleRepo.findBy({ code: In(normalizedRoles) });
+    if (roleRows.length !== normalizedRoles.length) throw new BadRequestException('存在不存在的角色');
+    const normalizedGrants = (grants ?? []).map((grant) => ({
+      scopeType: grant.scopeType,
+      targetId: grant.scopeType === 'all' ? null : String(grant.targetId ?? '').trim() || null,
+      effect: grant.effect ?? 'allow',
+    }));
+    if (normalizedGrants.some((grant) => !['all', 'province', 'city', 'contract'].includes(grant.scopeType) || grant.scopeType !== 'all' && !grant.targetId)) {
+      throw new BadRequestException('数据范围配置不完整');
+    }
+    const provinceIds = normalizedGrants.filter((grant) => grant.scopeType === 'province' && grant.targetId).map((grant) => grant.targetId as string);
+    const cityIds = normalizedGrants.filter((grant) => grant.scopeType === 'city' && grant.targetId).map((grant) => grant.targetId as string);
+    const contractIds = normalizedGrants.filter((grant) => grant.scopeType === 'contract' && grant.targetId).map((grant) => grant.targetId as string);
+    if (provinceIds.length && (await this.provinceRepo.countBy({ id: In(provinceIds) })) !== new Set(provinceIds).size) throw new BadRequestException('存在不存在的省份范围');
+    if (cityIds.length && (await this.cityRepo.countBy({ id: In(cityIds) })) !== new Set(cityIds).size) throw new BadRequestException('存在不存在的地市范围');
+    if (contractIds.length) {
+      const rows = await this.dataSource.query('SELECT id FROM biz_contracts WHERE id IN (?)', [contractIds]) as Array<{ id: string }>;
+      if (rows.length !== new Set(contractIds).size) throw new BadRequestException('存在不存在的合同范围');
+    }
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(UserRoleEntity, { userId });
+      await manager.delete(UserScopeGrantEntity, { userId });
+      await manager.save(UserRoleEntity, normalizedRoles.map((roleCode, index) => ({ id: randomUUID(), userId, roleCode, isPrimary: index === 0 })));
+      await manager.save(UserScopeGrantEntity, normalizedGrants.map((grant) => ({ id: randomUUID(), userId, scopeType: grant.scopeType, targetId: grant.targetId, effect: grant.effect })));
+      user.roleCode = normalizedRoles[0];
+      user.cityId = normalizedGrants.find((grant) => grant.scopeType === 'city' && grant.effect === 'allow')?.targetId ?? null;
+      user.authVersion += 1;
+      await manager.save(PlatformUserEntity, user);
+    });
     await this.recordOp(operatorId, 'user.access.update', 'user', userId);
   }
 
