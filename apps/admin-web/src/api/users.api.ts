@@ -7,7 +7,6 @@
 import type {
   CreateManagedUserRequest,
   CreateManagedUserResponse,
-  CreateWechatInvitationResponse,
   ResetManagedUserPasswordResponse,
   UpdateManagedUserRoleRequest,
   UserListItem,
@@ -56,8 +55,4 @@ export function rebindUserCity(
 
 export function resetUserPassword(userId: number): Promise<ResetManagedUserPasswordResponse> {
   return request.post(`${BASE}/${userId}/reset-password`);
-}
-
-export function createWechatInvitation(userId: number): Promise<CreateWechatInvitationResponse> {
-  return request.post(`${BASE}/${userId}/wechat-invitations`);
 }

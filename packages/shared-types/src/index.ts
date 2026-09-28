@@ -23,8 +23,6 @@ export type { BaseEntity, PaginationParams, PaginatedResponse, ApiResponse, ApiE
 export type {
   AdminLoginRequest,
   CityPasswordLoginRequest,
-  WechatLoginRequest,
-  WechatBindRequest,
   ChangeOwnPasswordRequest,
   ChangeOwnPasswordResponse,
   LoginResponse,
@@ -39,7 +37,6 @@ export type {
   CreateManagedUserResponse,
   UpdateManagedUserRoleRequest,
   ResetManagedUserPasswordResponse,
-  CreateWechatInvitationResponse,
   ExportAuditRequest,
 } from './user/user.dto';
 export type { CreateContractRequest, UpdateContractRequest, CreateAllocationRequest, UpdateAllocationRequest } from './contract/contract.dto';

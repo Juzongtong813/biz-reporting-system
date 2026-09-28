@@ -56,12 +56,6 @@ export interface ResetManagedUserPasswordResponse {
   temporaryPassword: string;
 }
 
-export interface CreateWechatInvitationResponse {
-  userId: number;
-  invitationToken: string;
-  expiresAt: string;
-}
-
 export interface ExportAuditRequest {
   pageName: string;
   scopeLabel: string;

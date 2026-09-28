@@ -5,7 +5,7 @@ import { DataSource } from 'typeorm';
 import { AuthLoginRateLimitEntity } from './auth-login-rate-limit.entity';
 import { AuthSecurityEventEntity } from './auth-security-event.entity';
 
-export type LoginRouteKey = 'admin_login' | 'city_login' | 'wechat_login' | 'wechat_bind' | 'biz_login';
+export type LoginRouteKey = 'admin_login' | 'city_login' | 'biz_login';
 export type LoginOutcome = 'success' | 'failed' | 'blocked';
 
 export interface LoginSecurityContext {

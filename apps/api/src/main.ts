@@ -37,7 +37,7 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('经营单元上报系统 API')
-      .setDescription('WeChat Mini Program + Admin Console 后端接口文档')
+      .setDescription('Admin Console 后端接口文档')
       .setVersion('1.0')
       .addBearerAuth()
       .build();

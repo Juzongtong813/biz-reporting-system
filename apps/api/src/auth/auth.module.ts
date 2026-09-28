@@ -10,7 +10,6 @@ import { AuthLoginRateLimitEntity } from './auth-login-rate-limit.entity';
 import { AuthSecurityEventEntity } from './auth-security-event.entity';
 import { AuthService } from './auth.service';
 import { LoginSecurityService } from './login-security.service';
-import { WechatService } from './wechat.service';
 import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { requireJwtAudience, requireJwtIssuer, requireJwtSecret } from './jwt.config';
@@ -40,7 +39,7 @@ import { requireJwtAudience, requireJwtIssuer, requireJwtSecret } from './jwt.co
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, WechatService, JwtStrategy, LoginSecurityService],
-  exports: [AuthService, WechatService, LoginSecurityService, JwtModule, PassportModule],
+  providers: [AuthService, JwtStrategy, LoginSecurityService],
+  exports: [AuthService, LoginSecurityService, JwtModule, PassportModule],
 })
 export class AuthModule {}

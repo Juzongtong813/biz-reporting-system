@@ -5,8 +5,6 @@ import { AuthService } from './auth.service';
 import {
   AdminLoginRequest,
   CityPasswordLoginRequest,
-  WechatLoginRequest,
-  WechatBindRequest,
 } from './auth.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -59,32 +57,6 @@ export class AuthController {
     @Request() req: AuthRequest,
   ): Promise<LoginResponseDto> {
     return this.authService.cityLogin(dto, this.toSecurityContext(req));
-  }
-
-  @Post('wechat/bind')
-  @Public()
-  @Throttle(LOGIN_THROTTLE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '使用 root_admin 签发的一次性邀请绑定微信身份' })
-  async bindWechat(
-    @Body() dto: WechatBindRequest,
-    @Request() req: AuthRequest,
-  ): Promise<{ success: true }> {
-    return this.authService.bindWechat(dto, this.toSecurityContext(req));
-  }
-
-  @Post('wechat/login')
-  @Public()
-  @Throttle(LOGIN_THROTTLE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '微信用户登录（已有用户）' })
-  @ApiResponse({ status: 200, description: '登录成功', type: LoginResponseDto })
-  @ApiResponse({ status: 404, description: '微信身份尚未绑定' })
-  async wechatLogin(
-    @Body() dto: WechatLoginRequest,
-    @Request() req: AuthRequest,
-  ): Promise<LoginResponseDto> {
-    return this.authService.wechatLogin(dto, this.toSecurityContext(req));
   }
 
   @Post('logout')

@@ -18,21 +18,10 @@ export class CityPasswordLoginRequest {
   password!: string;
 }
 
-/** 微信登录请求（已有用户直接登录） */
-export class WechatLoginRequest {
-  code!: string; // wx.login() 获取的临时 code
-}
-
 /** 登录统一响应 */
 export interface LoginResponse {
   token: string;      // JWT access_token
   user: UserBrief;    // 当前用户简版信息
-}
-
-/** root_admin 预建用户后签发的一次性微信绑定邀请 */
-export class WechatBindRequest {
-  code!: string;
-  invitationToken!: string;
 }
 
 /** 当前用户修改本人密码 */

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
-import { CopyOutlined, KeyOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { CopyOutlined, KeyOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Role, UserStatus, type CreateManagedUserRequest, type UserListItem } from '@biz-reporting/shared-types';
 import * as usersApi from '@/api/users.api';
@@ -51,10 +51,6 @@ export default function Users() {
     mutationFn: usersApi.resetUserPassword,
     onSuccess: (result) => setOneTimeSecret({ title: '一次性临时密码', value: result.temporaryPassword }),
   });
-  const inviteMutation = useMutation({
-    mutationFn: usersApi.createWechatInvitation,
-    onSuccess: (result) => setOneTimeSecret({ title: '一次性微信绑定邀请', value: result.invitationToken }),
-  });
 
   function openEdit(user: UserListItem) {
     setEditUser(user);
@@ -83,7 +79,6 @@ export default function Users() {
         <Space size={4}>
           <Button size="small" onClick={() => openEdit(user)}>角色与范围</Button>
           <Button size="small" icon={<KeyOutlined />} loading={resetMutation.isPending} onClick={() => resetMutation.mutate(user.id)}>重置密码</Button>
-          {user.role === Role.CITY_USER && <Button size="small" icon={<SafetyCertificateOutlined />} loading={inviteMutation.isPending} onClick={() => inviteMutation.mutate(user.id)}>微信邀请</Button>}
         </Space>
       ),
     },

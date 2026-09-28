@@ -3,7 +3,6 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import {
   CreateManagedUserRequest,
   CreateManagedUserResponse,
-  CreateWechatInvitationResponse,
   PaginationParams,
   Permission,
   RebindUserCityRequest,
@@ -62,11 +61,5 @@ export class AdminUsersController {
   @Permissions(Permission.ACCOUNTS_RESET_PASSWORD)
   resetPassword(@Request() req: AuthenticatedRequest, @Param('userId') userId: string): Promise<ResetManagedUserPasswordResponse> {
     return this.security.resetPassword(Number(userId), req.user);
-  }
-
-  @Post(':userId/wechat-invitations')
-  @Permissions(Permission.ACCOUNTS_INVITE_WECHAT)
-  createWechatInvitation(@Request() req: AuthenticatedRequest, @Param('userId') userId: string): Promise<CreateWechatInvitationResponse> {
-    return this.security.createWechatInvitation(Number(userId), req.user);
   }
 }

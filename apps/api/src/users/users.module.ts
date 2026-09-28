@@ -6,11 +6,10 @@ import { OperationLogEntity } from '../common/entities/operation-log.entity';
 import { UsersController } from './users.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { UsersService } from './users.service';
-import { WechatInvitationEntity } from './wechat-invitation.entity';
 import { AccountSecurityService } from './account-security.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity, CityEntity, OperationLogEntity, WechatInvitationEntity])],
+  imports: [TypeOrmModule.forFeature([UserEntity, CityEntity, OperationLogEntity])],
   controllers: [UsersController, AdminUsersController],
   providers: [UsersService, AccountSecurityService],
   exports: [UsersService, AccountSecurityService],

@@ -7,14 +7,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
-import { createHash, randomBytes } from 'node:crypto';
+import { Repository } from 'typeorm';
+import { randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import {
   ChangeOwnPasswordRequest,
   CreateManagedUserRequest,
   CreateManagedUserResponse,
-  CreateWechatInvitationResponse,
   ResetManagedUserPasswordResponse,
   Role,
   UpdateManagedUserRoleRequest,
@@ -22,7 +21,6 @@ import {
 } from '@biz-reporting/shared-types';
 import { UserEntity } from './user.entity';
 import { CityEntity } from '../cities/city.entity';
-import { WechatInvitationEntity } from './wechat-invitation.entity';
 import { OperationLogEntity } from '../common/entities/operation-log.entity';
 
 export interface SecurityActor {
@@ -36,9 +34,7 @@ export class AccountSecurityService {
   constructor(
     @InjectRepository(UserEntity) private readonly users: Repository<UserEntity>,
     @InjectRepository(CityEntity) private readonly cities: Repository<CityEntity>,
-    @InjectRepository(WechatInvitationEntity) private readonly invitations: Repository<WechatInvitationEntity>,
     @InjectRepository(OperationLogEntity) private readonly logs: Repository<OperationLogEntity>,
-    private readonly dataSource: DataSource,
   ) {}
 
   async createAccount(dto: CreateManagedUserRequest, actor: SecurityActor): Promise<CreateManagedUserResponse> {
@@ -109,66 +105,6 @@ export class AccountSecurityService {
     return this.toListItem((await this.findUserForSecurity(user.id)));
   }
 
-  async createWechatInvitation(userId: number, actor: SecurityActor): Promise<CreateWechatInvitationResponse> {
-    this.assertRoot(actor);
-    const user = await this.findUserForSecurity(userId);
-    if (user.role !== Role.CITY_USER || user.status !== UserStatus.ENABLED || !user.cityId) {
-      throw new BadRequestException('仅可为已启用且已绑定地市的地市用户签发邀请');
-    }
-    const invitationToken = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await this.invitations.save(this.invitations.create({
-      userId: user.id,
-      tokenHash: this.hashToken(invitationToken),
-      expiresAt,
-      usedAt: null,
-      createdBy: actor.userId,
-    }));
-    await this.audit(actor, 'wechat_invitation_create', user.id, null, { expiresAt: expiresAt.toISOString() });
-    return { userId: user.id, invitationToken, expiresAt: expiresAt.toISOString() };
-  }
-
-  async consumeWechatInvitation(invitationToken: string, openid: string): Promise<UserEntity> {
-    const tokenHash = this.hashToken(invitationToken);
-    return this.dataSource.transaction(async (manager) => {
-      const inviteRepo = manager.getRepository(WechatInvitationEntity);
-      const userRepo = manager.getRepository(UserEntity);
-      const invite = await inviteRepo.findOne({ where: { tokenHash } });
-      if (!invite || invite.usedAt || invite.expiresAt.getTime() <= Date.now()) {
-        throw new UnauthorizedException('微信绑定邀请无效或已过期');
-      }
-      const claimed = await inviteRepo.createQueryBuilder()
-        .update(WechatInvitationEntity)
-        .set({ usedAt: new Date() })
-        .where('id = :id AND used_at IS NULL AND expires_at > :now', { id: invite.id, now: new Date() })
-        .execute();
-      if (claimed.affected !== 1) throw new UnauthorizedException('微信绑定邀请无效或已过期');
-      const user = await userRepo.findOne({ where: { id: invite.userId } });
-      if (!user || user.role !== Role.CITY_USER || user.status !== UserStatus.ENABLED || !user.cityId) {
-        throw new UnauthorizedException('微信绑定邀请对应账号不可用');
-      }
-      const other = await userRepo.findOne({ where: { openid } });
-      if (other && other.id !== user.id) throw new ConflictException('该微信身份已绑定其他账号');
-      if (user.openid && user.openid !== openid) throw new ConflictException('该账号已绑定其他微信身份');
-      await userRepo.update(user.id, { openid, authVersion: user.authVersion + 1 });
-      const logRepo = manager.getRepository(OperationLogEntity);
-      await logRepo.save(logRepo.create({
-        operatorUserId: user.id,
-        operatorCityId: user.cityId,
-        actionType: 'wechat_identity_bind',
-        targetType: 'user',
-        targetId: String(user.id),
-        summaryText: 'WeChat identity bound through one-time invitation',
-        beforeDataJson: { openidBound: Boolean(user.openid) },
-        afterDataJson: { openidBound: true, invitationId: invite.id },
-        resultStatus: 'success',
-      }));
-      const updated = await userRepo.findOne({ where: { id: user.id } });
-      if (!updated) throw new NotFoundException('绑定后的用户不存在');
-      return updated;
-    });
-  }
-
   async changeOwnPassword(actor: SecurityActor, dto: ChangeOwnPasswordRequest): Promise<void> {
     if (dto.newPassword !== dto.confirmPassword) throw new BadRequestException('两次输入的新密码不一致');
     this.validatePassword(dto.newPassword);
@@ -236,11 +172,6 @@ export class AccountSecurityService {
 
   private generateTemporaryPassword(): string {
     return `${randomBytes(18).toString('base64url')}!7a`;
-  }
-
-  private hashToken(token: string): string {
-    if (typeof token !== 'string' || token.length < 32) throw new UnauthorizedException('微信绑定邀请无效或已过期');
-    return createHash('sha256').update(token).digest('hex');
   }
 
   private toListItem(user: UserEntity) {

@@ -66,10 +66,6 @@ export class UsersService {
     );
   }
 
-  async findByOpenid(openid: string): Promise<UserEntity | null> {
-    return this.userRepository.findOne({ where: { openid } });
-  }
-
   async findCityUsersByName(name: string): Promise<UserEntity[]> {
     return this.userRepository.find({
       where: { role: Role.CITY_USER, name },
@@ -116,41 +112,6 @@ export class UsersService {
     return updated;
   }
 
-  async bindWechatOpenid(userId: number, openid: string): Promise<UserEntity> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
-    });
-    if (!user) throw new NotFoundException('User not found');
-
-    if (user.openid && user.openid !== openid) {
-      throw new BadRequestException('该用户已绑定其他小程序账号');
-    }
-
-    if (!user.openid) {
-      await this.userRepository.update(userId, { openid });
-      await this.operationLogRepo.save(
-        this.operationLogRepo.create({
-          operatorUserId: userId,
-          operatorCityId: user.cityId,
-          actionType: 'wechat_openid_bind',
-          targetType: 'user',
-          targetId: String(userId),
-          summaryText: 'City user WeChat identity bound',
-          beforeDataJson: { openidBound: false },
-          afterDataJson: { openidBound: true },
-          resultStatus: 'success',
-        }),
-      );
-    }
-
-    const updated = await this.userRepository.findOne({
-      where: { id: userId },
-      select: ['id', 'role', 'name', 'cityId', 'openid', 'username', 'passwordHash', 'status'],
-    });
-    if (!updated) throw new NotFoundException('User not found after WeChat binding');
-    return updated;
-  }
   async createCityUser(input: CreateCityUserInput): Promise<UserEntity> {
     const city = await this.cityRepository.findOne({
       where: { id: input.cityId, isDeleted: 0 },

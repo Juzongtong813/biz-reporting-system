@@ -30,7 +30,6 @@ export enum Permission {
   ACCOUNTS_CREATE = 'accounts.create',
   ACCOUNTS_UPDATE = 'accounts.update',
   ACCOUNTS_RESET_PASSWORD = 'accounts.reset_password',
-  ACCOUNTS_INVITE_WECHAT = 'accounts.invite_wechat',
   CONTRACTS_READ = 'contracts.read',
   CONTRACTS_CREATE = 'contracts.create',
   CONTRACTS_UPDATE = 'contracts.update',

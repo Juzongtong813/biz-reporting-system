@@ -1,14 +1,11 @@
-import { BadRequestException, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from '../users/users.service';
-import { WechatService } from './wechat.service';
 import { AccountSecurityService, SecurityActor } from '../users/account-security.service';
 import {
   AdminLoginRequest,
   CityPasswordLoginRequest,
-  WechatLoginRequest,
-  WechatBindRequest,
   LoginResponse,
   Role,
   UserStatus,
@@ -18,7 +15,6 @@ import {
   LoginRouteKey,
   LoginSecurityContext,
   LoginSecurityBlockedError,
-  LoginAuditDetails,
 } from './login-security.service';
 
 /**
@@ -30,26 +26,20 @@ const DUMMY_PASSWORD_HASH = '$2a$10$5z8kiAlKpCdQasH2zEg4tuDz2lo/eGR6X2e4A.so51np
 /**
  * Auth 核心服务
  *
- * 三端认证：
+ * 认证方式：
  * 1. admin-login: username + password_hash 对比 → JWT
- * 2. wechat-bind: wx.code + root_admin 签发的一次性邀请 → 绑定已有 city_user
- * 3. wechat-login: wx.code → openid → 查找已绑定的 city_user → JWT
+ * 2. city-login: 地市用户账号密码 → JWT
  *
  * C-04/C-05 安全加固：
  * - LoginSecurityService：HMAC 哈希桶 + DB 事务 pessimistic_write + 第 5 次失败锁 15 分钟
  * - dummy bcrypt：账号不存在也执行 compare，统一 401 文案，不泄露账号存在性
  * - 审计只写 HMAC subject/ip 哈希，不写明文/密码/code/token
- *
- * 微信 code2session：
- * - 配置 WECHAT_APPID + WECHAT_SECRET → 真实微信接口
- * - 未配置 → 自动降级 mock 模式（本地开发用）
  */
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-    private readonly wechatService: WechatService,
     private readonly accountSecurity: AccountSecurityService,
     private readonly loginSecurity: LoginSecurityService,
   ) {}
@@ -113,56 +103,6 @@ export class AuthService {
     }
 
     await this.recordLoginSuccess(route, subject, ctx, user.id, user.cityId);
-    await this.usersService.updateLastLogin(user.id);
-    return this.buildTokenResponse(user);
-  }
-
-  async bindWechat(dto: WechatBindRequest, context?: LoginSecurityContext): Promise<{ success: true }> {
-    const route: LoginRouteKey = 'wechat_bind';
-    const ctx = this.withDefaultContext(context);
-    const openid = await this.wechatService.code2Session(dto.code);
-    // 微信身份绑定：审计只写 HMAC（subject=openid 哈希），token 仅在内存消费。审计写失败 → 503 传播。
-    await this.loginSecurity.recordSuccess({
-      route,
-      subject: openid,
-      context: ctx,
-      outcome: 'success',
-      reasonCode: 'WECHAT_BIND_OK',
-    } as LoginAuditDetails);
-    await this.accountSecurity.consumeWechatInvitation(dto.invitationToken, openid);
-    return { success: true };
-  }
-
-  /**
-   * 微信用户登录（已有账号）
-   */
-  async wechatLogin(dto: WechatLoginRequest, context?: LoginSecurityContext): Promise<LoginResponse> {
-    const route: LoginRouteKey = 'wechat_login';
-    const ctx = this.withDefaultContext(context);
-    const openid = await this.wechatService.code2Session(dto.code);
-
-    const user = await this.usersService.findByOpenid(openid);
-    if (!user) {
-      await this.recordLoginFailure(route, openid, ctx, null, null);
-      throw new NotFoundException('微信身份尚未绑定，请联系 root_admin');
-    }
-
-    if (user.status !== UserStatus.ENABLED) {
-      await this.recordLoginFailure(route, openid, ctx, user.id, user.cityId);
-      throw new UnauthorizedException('账号已被禁用，请联系管理员');
-    }
-
-    if (user.role !== Role.CITY_USER) {
-      await this.recordLoginFailure(route, openid, ctx, user.id, user.cityId);
-      throw new UnauthorizedException('微信登录仅支持地市用户');
-    }
-
-    if (user.role === Role.CITY_USER && !user.cityId) {
-      await this.recordLoginFailure(route, openid, ctx, user.id, user.cityId);
-      throw new UnauthorizedException('当前账号未绑定城市，请联系管理员');
-    }
-
-    await this.recordLoginSuccess(route, openid, ctx, user.id, user.cityId);
     await this.usersService.updateLastLogin(user.id);
     return this.buildTokenResponse(user);
   }
