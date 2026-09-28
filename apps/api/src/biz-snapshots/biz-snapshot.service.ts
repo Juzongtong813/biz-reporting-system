@@ -1211,8 +1211,10 @@ export class BizSnapshotService implements OnModuleInit {
   /** 计算"当前用户范围 + cityId 筛选"下可见的合同 id 集合；无市范围约束返回 null。 */
   private async cityScopeContractIds(scope: BizAuthContext['dataScope'], cityIdFilter?: string): Promise<Set<string> | null> {
     let set: Set<string> | null = null;
-    if (scope.scopeType === 'city' && scope.cityId) {
-      set = await this.contractIdsByCity(scope.cityId);
+    if (scope.scopeType === 'city' && (scope.cityIds?.length || scope.cityId)) {
+      const cityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      const sets = await Promise.all(cityIds.map((id) => this.contractIdsByCity(id)));
+      set = new Set(sets.flatMap((s) => [...s]));
     }
     if (cityIdFilter) {
       const filterSet = await this.contractIdsByCity(cityIdFilter);

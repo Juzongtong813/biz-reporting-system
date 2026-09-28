@@ -100,7 +100,7 @@ export default function BizAdmin() {
 
   const onCreate = async (values: Record<string, unknown>) => {
     try {
-      await bizAdminCreateUser(values as { username: string; password: string; name: string; roleCode: string; cityId?: string | null });
+      await bizAdminCreateUser(values as { username: string; password: string; name: string; roleCode: string; cityIds?: string[] | null });
       message.success('账号已创建');
       setCreateOpen(false);
       form.resetFields();
@@ -270,8 +270,8 @@ export default function BizAdmin() {
           <Form.Item name="roleCode" label="角色" rules={[{ required: true }]}>
             <Select onChange={(v) => setCreateRole(String(v))} options={roles.filter((r) => r.code !== 'super_admin').map((r) => ({ value: r.code, label: r.name }))} />
           </Form.Item>
-          <Form.Item name="cityId" label="绑定地市" extra={createRole === 'city_user' ? '地市用户必选' : '仅地市用户需要'}>
-            <Select allowClear placeholder="选择地市" options={cities.map((c) => ({ value: c.id, label: c.name }))} />
+          <Form.Item name="cityIds" label="绑定地市" extra={createRole === 'city_user' ? '地市用户至少选择一个地市（可多选）' : '仅地市用户需要'}>
+            <Select mode="multiple" allowClear placeholder="选择地市（可多选）" options={cities.map((c) => ({ value: c.id, label: c.name }))} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block>创建</Button>
         </Form>

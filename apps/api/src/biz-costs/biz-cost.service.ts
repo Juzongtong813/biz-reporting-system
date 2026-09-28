@@ -67,18 +67,25 @@ export class BizCostService {
     return item;
   }
 
-  /** 地市用户仅本地市 */
+  /** 地市用户仅其数据范围内的地市（支持多城市） */
   private async assertCityAccess(auth: BizAuthContext, cityId: string | null): Promise<void> {
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
+    const allowedCityIds = auth.dataScope.cityIds?.length
+      ? auth.dataScope.cityIds
+      : auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
     if (auth.roleCode === PlatformRole.CITY_USER) {
-      if (cityId !== auth.dataScope.cityId) throw new ForbiddenException('数据范围不足');
+      if (!cityId || !allowedCityIds.includes(cityId)) throw new ForbiddenException('数据范围不足');
     } else if (cityId) {
       await this.rbac.assertCityScope(auth, cityId);
     }
   }
 
   private resolveCityId(auth: BizAuthContext, cityId?: string | null): string {
-    const resolved = auth.dataScope.scopeType === 'city' ? auth.dataScope.cityId : cityId;
+    const allowedCityIds = auth.dataScope.cityIds?.length
+      ? auth.dataScope.cityIds
+      : auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
+    // 多城市账号必须显式传地市；单城市账号自动取绑定地市
+    const resolved = allowedCityIds.length === 1 ? allowedCityIds[0] : cityId;
     if (!resolved) throw new BadRequestException('请选择地市');
     return resolved;
   }
@@ -100,7 +107,11 @@ export class BizCostService {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.costRepo.createQueryBuilder('c');
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无成本数据范围');
-    if (auth.dataScope.scopeType === 'city') qb.andWhere('c.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    if (auth.dataScope.cityIds?.length) {
+      qb.andWhere('c.cityId IN (:...scopeCityIds)', { scopeCityIds: auth.dataScope.cityIds });
+    } else if (auth.dataScope.scopeType === 'city') {
+      qb.andWhere('c.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    }
     if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
       const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
       const cityIds = cities.map((city) => city.id);

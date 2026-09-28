@@ -20,6 +20,7 @@ import { RbacService, BizAuthContext } from '../rbac/rbac.service';
 export interface RecalcScope {
   provinceId?: string;
   cityId?: string;
+  cityIds?: string[];
   contractId?: string;
   month?: string;
 }
@@ -98,7 +99,7 @@ export class BizAggregateService {
   /** 范围重算：失败范围优先；全库需 confirmAll=true */
   async recalc(auth: BizAuthContext, scope: RecalcScope, confirmAll = false): Promise<{ affected: number; failures: number }> {
     // 失败范围优先：无显式范围时先重算失败记录范围
-    if (!scope.provinceId && !scope.cityId && !scope.contractId && !scope.month) {
+    if (!scope.provinceId && !scope.cityId && !scope.cityIds?.length && !scope.contractId && !scope.month) {
       const failures = await this.failureRepo.findBy({ status: 'open' });
       if (failures.length > 0 && !confirmAll) {
         // 只重算失败范围
@@ -119,16 +120,17 @@ export class BizAggregateService {
         throw new BadRequestException('存在未解决失败，请先确认失败范围重算或联系管理员');
       }
     }
-    if (!scope.provinceId && !scope.cityId && !scope.contractId && !scope.month && !confirmAll) {
+    if (!scope.provinceId && !scope.cityId && !scope.cityIds?.length && !scope.contractId && !scope.month && !confirmAll) {
       throw new BadRequestException('全库重算需二次确认（confirmAll=true）');
     }
     const r = await this.recalcRange(auth, scope);
-    await this.recordOp(auth.userId, 'aggregate.recalc', scope.contractId ?? scope.cityId ?? scope.provinceId ?? 'all');
+    await this.recordOp(auth.userId, 'aggregate.recalc', scope.contractId ?? (scope.cityIds?.length ? scope.cityIds.join(',') : scope.cityId) ?? scope.provinceId ?? 'all');
     return r;
   }
 
   private async recalcRange(auth: BizAuthContext, scope: RecalcScope): Promise<{ affected: number; failures: number }> {
     if (scope.cityId) await this.rbac.assertCityScope(auth, scope.cityId);
+    if (scope.cityIds?.length) await this.rbac.assertCityIdsScope(auth, scope.cityIds);
     if (scope.provinceId) await this.rbac.assertProvinceScope(auth, scope.provinceId);
     if (scope.contractId) await this.assertContractInScope(auth, scope.contractId);
     return this.recalcRangeInternal(scope);
@@ -141,7 +143,8 @@ export class BizAggregateService {
     const scope = auth.dataScope;
     if (scope.scopeType === 'all' || scope.scopeType === 'contract') return;
     if (scope.scopeType === 'city') {
-      const alloc = await this.allocRepo.findOneBy({ contractId, cityId: scope.cityId ?? '', status: 'active' });
+      const allowedCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      const alloc = await this.allocRepo.findOne({ where: { contractId, status: 'active', cityId: In(allowedCityIds) } });
       if (!alloc) throw new ForbiddenException('数据范围不足');
       return;
     }
@@ -161,9 +164,10 @@ export class BizAggregateService {
       await this.dataSource.transaction(async (manager) => {
         // 1. 删除范围内旧汇总
         const qb = manager.createQueryBuilder().delete().from(BizMonthlyAggregateEntity);
-        const params: Record<string, string> = {};
+        const params: Record<string, string | string[]> = {};
         if (scope.provinceId) { qb.andWhere('province_id = :provinceId'); params.provinceId = scope.provinceId; }
-        if (scope.cityId) { qb.andWhere('city_id = :cityId'); params.cityId = scope.cityId; }
+        const recalcCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+        if (recalcCityIds.length) { qb.andWhere('city_id IN (:...cityIds)'); params.cityIds = recalcCityIds; }
         if (scope.contractId) { qb.andWhere('contract_id = :contractId'); params.contractId = scope.contractId; }
         if (scope.month) { qb.andWhere('business_month = :month'); params.month = scope.month; }
         qb.setParameters(params);
@@ -273,7 +277,8 @@ export class BizAggregateService {
       .addSelect('c.businessMonth', 'businessMonth')
       .addSelect('SUM(c.amountFen)', 'costFen')
       .where('c.status = :status', { status: 'approved' });
-    if (scope.cityId) costQb.andWhere('c.cityId = :cityId', { cityId: scope.cityId });
+    const recalcCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+    if (recalcCityIds.length) costQb.andWhere('c.cityId IN (:...cityIds)', { cityIds: recalcCityIds });
     if (scope.provinceId) costQb.andWhere('c.cityId IN (SELECT id FROM biz_cities WHERE province_id = :costProvinceId)', { costProvinceId: scope.provinceId });
     if (scope.month) costQb.andWhere('c.businessMonth = :month', { month: scope.month });
     if (auth) this.applyAggScope(costQb, auth, 'c');
@@ -289,9 +294,10 @@ export class BizAggregateService {
     return [...map.values()];
   }
 
-  private applyScope(qb: { andWhere: (cond: string, params?: Record<string, string>) => unknown }, scope: RecalcScope, alias: string): void {
+  private applyScope(qb: { andWhere: (cond: string, params?: Record<string, string | string[]>) => unknown }, scope: RecalcScope, alias: string): void {
     if (scope.provinceId) qb.andWhere(`${alias}.provinceId = :provinceId`, { provinceId: scope.provinceId });
-    if (scope.cityId) qb.andWhere(`${alias}.cityId = :cityId`, { cityId: scope.cityId });
+    const recalcCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+    if (recalcCityIds.length) qb.andWhere(`${alias}.cityId IN (:...cityIds)`, { cityIds: recalcCityIds });
     if (scope.contractId) qb.andWhere(`${alias}.contractId = :contractId`, { contractId: scope.contractId });
     if (scope.month) qb.andWhere(`${alias}.businessMonth = :month`, { month: scope.month });
   }
@@ -369,7 +375,8 @@ export class BizAggregateService {
     if (scope.scopeType === 'all') return;
     if (scope.scopeType === 'contract') throw new ForbiddenException('当前账号无经营分析数据范围');
     if (scope.scopeType === 'city') {
-      qb.andWhere(`${alias}.cityId = :scopeCityId`, { scopeCityId: scope.cityId });
+      const ids = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      qb.andWhere(`${alias}.cityId IN (:...scopeCityIds)`, { scopeCityIds: ids.length ? ids : ['__none__'] });
       return;
     }
     if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
@@ -386,8 +393,10 @@ export class BizAggregateService {
       return true;
     }
     if (scope.scopeType === 'city') {
-      if (!(citiesByContract?.get(contract.id)?.has(scope.cityId ?? '') ?? false)) return false;
-      if (cityId) return cityId === scope.cityId;
+      const allowedCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      const visibleCities = citiesByContract?.get(contract.id);
+      if (!visibleCities || !allowedCityIds.some((id) => visibleCities.has(id))) return false;
+      if (cityId) return allowedCityIds.includes(cityId);
       return true;
     }
     if (scope.scopeType === 'province') {
@@ -700,7 +709,8 @@ export class BizAggregateService {
       .andWhere('o.validationStatus = :vs', { vs: 'valid' });
     const scope = auth.dataScope;
     if (scope.scopeType === 'city') {
-      qb.andWhere('o.cityId = :scopeCityId', { scopeCityId: scope.cityId });
+      const ids = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      qb.andWhere('o.cityId IN (:...scopeCityIds)', { scopeCityIds: ids.length ? ids : ['__none__'] });
     } else if (scope.scopeType === 'province' && scope.provinceIds.length > 0) {
       qb.andWhere('o.cityId IN (SELECT id FROM biz_cities WHERE province_id IN (:...pids))', { pids: scope.provinceIds });
     }

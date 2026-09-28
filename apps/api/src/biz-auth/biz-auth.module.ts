@@ -27,6 +27,7 @@ import { BizAdminService } from './biz-admin.service';
 import { BizAuthController } from './biz-auth.controller';
 import { BizPortalController } from './biz-portal.controller';
 import { BizAdminController } from './biz-admin.controller';
+import { BizCommonController } from '../biz-common.controller';
 
 @Module({
   imports: [
@@ -60,7 +61,7 @@ import { BizAdminController } from './biz-admin.controller';
       }),
     }),
   ],
-  controllers: [BizAuthController, BizPortalController, BizAdminController],
+  controllers: [BizAuthController, BizPortalController, BizAdminController, BizCommonController],
   providers: [
     BizAuthService,
     BizJwtStrategy,

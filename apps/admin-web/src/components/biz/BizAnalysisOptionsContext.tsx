@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { bizAdminCities, bizAdminProvinces, bizAnalysisYears } from '@/api/biz.api';
+import { bizAdminProvinces, bizAnalysisYears, bizCities, bizMe } from '@/api/biz.api';
 
 /**
  * 经营分析共享筛选项（年度 / 省份 / 地市）全局缓存。
@@ -28,13 +28,15 @@ export interface AnalysisOptionsState {
   years: string[];
   provinces: AnalysisOptionProvince[];
   cities: AnalysisOptionCity[];
+  /** 当前账号可访问城市 ID；null=不限制（admin/super_admin 查看全部）；非空=仅这些城市（city_user 等） */
+  accessibleCityIds: string[] | null;
   loading: boolean;
   error: string | null;
 }
 
 type CachedOptions = Pick<AnalysisOptionsState, 'years' | 'provinces' | 'cities'>;
 
-const EMPTY_STATE: AnalysisOptionsState = { years: [], provinces: [], cities: [], loading: true, error: null };
+const EMPTY_STATE: AnalysisOptionsState = { years: [], provinces: [], cities: [], accessibleCityIds: null, loading: true, error: null };
 const OptionsContext = createContext<AnalysisOptionsState>(EMPTY_STATE);
 
 let cache: CachedOptions | null = null;
@@ -43,7 +45,7 @@ let inflight: Promise<CachedOptions> | null = null;
 /** 拉取（并缓存）选项；并发调用共享同一个 inflight Promise */
 function fetchOptions(): Promise<CachedOptions> {
   if (!inflight) {
-    inflight = Promise.all([bizAnalysisYears(), bizAdminProvinces(), bizAdminCities()])
+    inflight = Promise.all([bizAnalysisYears(), bizAdminProvinces(), bizCities()])
       .then(([yearResult, provinceResult, cityResult]) => ({
         years: (yearResult.items ?? []).map(String),
         provinces: (provinceResult.items ?? []).map((p) => ({ id: p.id, name: p.name })) as AnalysisOptionProvince[],
@@ -59,23 +61,27 @@ function fetchOptions(): Promise<CachedOptions> {
 }
 
 export function BizAnalysisOptionsProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AnalysisOptionsState>(cache ? { ...cache, loading: false, error: null } : EMPTY_STATE);
+  const [state, setState] = useState<AnalysisOptionsState>(cache ? { ...cache, accessibleCityIds: null, loading: false, error: null } : EMPTY_STATE);
 
   useEffect(() => {
     let active = true;
     if (cache) {
-      setState({ ...cache, loading: false, error: null });
-      return;
+      setState((prev) => ({ ...cache, ...prev, loading: false, error: null, accessibleCityIds: prev.accessibleCityIds }));
+    } else {
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+      fetchOptions()
+        .then((data) => {
+          cache = data;
+          if (active) setState((prev) => ({ ...prev, ...data, loading: false, error: null }));
+        })
+        .catch(() => {
+          if (active) setState({ years: [], provinces: [], cities: [], accessibleCityIds: null, loading: false, error: '筛选选项加载失败，请刷新重试' });
+        });
     }
-    setState((prev) => ({ ...prev, loading: true, error: null }));
-    fetchOptions()
-      .then((data) => {
-        cache = data;
-        if (active) setState({ ...data, loading: false, error: null });
-      })
-      .catch(() => {
-        if (active) setState({ years: [], provinces: [], cities: [], loading: false, error: '筛选选项加载失败，请刷新重试' });
-      });
+    // 当前账号可访问城市（数据范围）随登录用户变化，每次挂载都拉取，不模块级缓存
+    void bizMe()
+      .then((me) => { if (active) setState((prev) => ({ ...prev, accessibleCityIds: me.dataScope?.cityIds ?? null })); })
+      .catch(() => { if (active) setState((prev) => ({ ...prev, accessibleCityIds: null })); });
     return () => {
       active = false;
     };

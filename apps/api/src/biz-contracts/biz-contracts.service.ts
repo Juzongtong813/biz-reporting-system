@@ -272,7 +272,7 @@ export class BizContractsService {
     let visibleIds: string[];
     if (scope.scopeType === 'city') {
       const allocs = await this.allocationRepo.find({
-        where: { contractId: In(contracts.map((c) => c.id)), cityId: scope.cityId ?? '', status: 'active' },
+        where: { contractId: In(contracts.map((c) => c.id)), cityId: scope.cityIds?.length ? In(scope.cityIds) : (scope.cityId ?? 'no_match'), status: 'active' },
       });
       const okSet = new Set(allocs.map((a) => a.contractId));
       visibleIds = contracts.filter((c) => okSet.has(c.id)).map((c) => c.id);
@@ -306,7 +306,7 @@ export class BizContractsService {
     const visibleRows = rows.filter((row) => {
       if (auth.isSuperAdmin || scope.scopeType === 'all' || scope.scopeType === 'contract') return true;
       if (scope.scopeType === 'province') return !scope.provinceIds.length || (row.provinceId != null && scope.provinceIds.includes(row.provinceId));
-      return scope.scopeType === 'city' && row.cityId === scope.cityId;
+      return scope.scopeType === 'city' && (row.cityId != null && (scope.cityIds?.includes(row.cityId) ?? false));
     });
     const sheetIds = [...new Set(visibleRows.map((row) => row.sheetId))];
     const sheets = sheetIds.length ? await this.importSheetRepo.findBy({ id: In(sheetIds) }) : [];
@@ -333,7 +333,7 @@ export class BizContractsService {
     if (!auth.isSuperAdmin && scope.scopeType !== 'all' && scope.scopeType !== 'contract') {
       if (scope.scopeType === 'province' && sourceRow.provinceId != null && scope.provinceIds.includes(sourceRow.provinceId)) {
         // province-scoped maintain is permitted for rows already mapped to this province.
-      } else if (scope.scopeType !== 'city' || sourceRow.cityId !== scope.cityId) throw new ForbiddenException('数据范围不足');
+      } else if (scope.scopeType !== 'city' || !(sourceRow.cityId != null && (scope.cityIds?.includes(sourceRow.cityId) ?? false))) throw new ForbiddenException('数据范围不足');
     }
     const contractNo = this.normalizePrimaryContractNo(dto.contractNo);
     const contractName = dto.contractName.trim();
@@ -380,7 +380,7 @@ export class BizContractsService {
     // 数据范围裁剪：地市用户只看自己地市的分配/费率/完工；省范围看省下辖市；all/contract 全量
     let visibleCityIds: Set<string> | null = null;
     if (auth.dataScope.scopeType === 'city') {
-      visibleCityIds = auth.dataScope.cityId ? new Set([auth.dataScope.cityId]) : new Set();
+      visibleCityIds = auth.dataScope.cityIds?.length ? new Set(auth.dataScope.cityIds) : new Set();
     } else if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
       const provinceCities = await this.cityRepo.createQueryBuilder('ct')
         .select('ct.id', 'id')

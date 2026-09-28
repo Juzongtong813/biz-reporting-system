@@ -66,13 +66,14 @@ function SnapshotStatusBar() {
   );
 }
 
-/** 按权限码过滤菜单（super_admin 通配） */
-type PermissionMenuItem = { key: string; label: string; icon?: React.ReactNode; permission?: string };
+/** 按权限码过滤菜单（super_admin 通配）；hideForRoles 指定的角色无论如何都不显示该菜单 */
+type PermissionMenuItem = { key: string; label: string; icon?: React.ReactNode; permission?: string; hideForRoles?: string[] };
 
-function filterByPermission(items: PermissionMenuItem[], permissions: Set<string>, isSuper: boolean): NonNullable<MenuProps['items']> {
+function filterByPermission(items: PermissionMenuItem[], permissions: Set<string>, isSuper: boolean, roleCode?: string): NonNullable<MenuProps['items']> {
   return items
     .filter((i) => !i.permission || isSuper || permissions.has(i.permission))
-    .map(({ permission: _permission, ...item }) => item);
+    .filter((i) => !i.hideForRoles?.length || !roleCode || !i.hideForRoles.includes(roleCode))
+    .map(({ permission: _permission, hideForRoles: _hideForRoles, ...item }) => item);
 }
 
 /** 新基线统一布局：顶部用户 + 侧边菜单（经营管理六入口 + 系统管理） */
@@ -131,29 +132,29 @@ export default function BizLayout() {
     { key: '/biz/region-settings', label: '省市设置', icon: <ApartmentOutlined />, permission: 'operation.region.manage' },
     { key: '/biz/audit-logs', label: '审计日志', icon: <FileTextOutlined />, permission: 'operation.user.manage' },
     ...(isSuper ? [{ key: '/biz/data-delete', label: '数据删除', icon: <DeleteOutlined /> }] : []),
-  ], permSet, isSuper);
+  ], permSet, isSuper, me?.roleCode);
   const messageItems = filterByPermission([
     { key: '/biz/messages', label: unreadCount > 0 ? `消息中心 (${unreadCount})` : '消息中心', icon: <BellOutlined />, permission: 'operation.message.read' },
-  ], permSet, isSuper);
+  ], permSet, isSuper, me?.roleCode);
 
   const analysisItems = filterByPermission([
     { key: '/biz/analysis', label: '经营概览', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
     { key: '/biz/analysis/trend', label: '月度趋势', icon: <BarChartOutlined />, permission: 'operation.analysis.read' },
     { key: '/biz/analysis/cities', label: '地市对比', icon: <ApartmentOutlined />, permission: 'operation.analysis.read' },
     { key: '/biz/analysis/overruns', label: '超额清单', icon: <WalletOutlined />, permission: 'operation.analysis.read' },
-  ], permSet, isSuper);
+  ], permSet, isSuper, me?.roleCode);
   const contractItems = filterByPermission([
     { key: '/biz/contract-overview', label: '合同概览', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
-    { key: '/biz/operation', label: '合同上传', icon: <FileTextOutlined />, permission: 'operation.contract.read' },
-    { key: '/biz/fee-rates', label: '管理费率', icon: <WalletOutlined />, permission: 'operation.contract.read' },
-  ], permSet, isSuper);
+    { key: '/biz/operation', label: '合同上传', icon: <FileTextOutlined />, permission: 'operation.contract.read', hideForRoles: ['city_user'] },
+    { key: '/biz/fee-rates', label: '管理费率', icon: <WalletOutlined />, permission: 'operation.contract.read', hideForRoles: ['city_user'] },
+  ], permSet, isSuper, me?.roleCode);
   const costItems = filterByPermission([
     { key: '/biz/costs', label: '地市成本', icon: <WalletOutlined />, permission: 'operation.cost.read' },
-  ], permSet, isSuper);
+  ], permSet, isSuper, me?.roleCode);
   const completionItems = filterByPermission([
     { key: '/biz/orders', label: '订单管理', icon: <InboxOutlined />, permission: 'operation.order.upload' },
     { key: '/biz/offline-completions', label: '线下完工', icon: <TeamOutlined />, permission: 'operation.completion.read' },
-  ], permSet, isSuper);
+  ], permSet, isSuper, me?.roleCode);
 
   const businessItems: NonNullable<MenuProps['items']> = [
     ...(analysisItems.length > 0 ? [{ key: 'biz-analysis', label: '经营管理', icon: <BarChartOutlined />, children: analysisItems }] : []),

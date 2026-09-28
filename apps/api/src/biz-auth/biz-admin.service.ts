@@ -22,7 +22,8 @@ export interface CreateUserDto {
   password: string;
   name: string;
   roleCode: PlatformRole;
-  cityId?: string | null;
+  /** 绑定地市（多选）。city_user 至少选一个；多城市时 user.cityId 取第一个作为主城市 */
+  cityIds?: string[] | null;
   sensitiveOrderScope?: 'full' | 'masked';
 }
 
@@ -95,9 +96,16 @@ export class BizAdminService {
   async createUser(operatorId: string, dto: CreateUserDto): Promise<PlatformUserEntity> {
     if (!PLATFORM_ROLES.includes(dto.roleCode)) throw new BadRequestException('非法角色');
     if (dto.roleCode === PlatformRole.SUPER_ADMIN) throw new BadRequestException('不允许创建 super_admin 账号');
-    if (dto.roleCode === PlatformRole.CITY_USER && !dto.cityId) throw new BadRequestException('地市用户必须绑定地市');
+    // 归一化城市列表（去空、去重）
+    const cityIds = [...new Set((dto.cityIds ?? []).map((id) => String(id).trim()).filter(Boolean))];
+    if (dto.roleCode === PlatformRole.CITY_USER && cityIds.length === 0) throw new BadRequestException('地市用户至少绑定一个地市');
     const existing = await this.userRepo.findOneBy({ username: dto.username });
     if (existing) throw new BadRequestException('账号已存在');
+
+    // 校验所选城市都存在
+    if (cityIds.length && (await this.cityRepo.countBy({ id: In(cityIds) })) !== new Set(cityIds).size) {
+      throw new BadRequestException('存在不存在的地市');
+    }
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const user = await this.userRepo.save({
@@ -106,15 +114,18 @@ export class BizAdminService {
       passwordHash,
       name: dto.name,
       roleCode: dto.roleCode,
-      cityId: dto.roleCode === PlatformRole.CITY_USER ? (dto.cityId ?? null) : null,
+      cityId: dto.roleCode === PlatformRole.CITY_USER ? (cityIds[0] ?? null) : null,
       status: 'enabled',
       authVersion: 1,
       sensitiveOrderScope: dto.sensitiveOrderScope ?? 'masked',
       mustChangePassword: true,
     });
     await this.userRoleRepo.save({ id: randomUUID(), userId: user.id, roleCode: dto.roleCode, isPrimary: true });
-    if (dto.roleCode === PlatformRole.CITY_USER && dto.cityId) {
-      await this.scopeGrantRepo.save({ id: randomUUID(), userId: user.id, scopeType: 'city', targetId: dto.cityId, effect: 'allow' });
+    if (dto.roleCode === PlatformRole.CITY_USER && cityIds.length) {
+      // 多城市：每个城市各写一条 allow grant；user.cityId 取第一个作为主城市（向前兼容）
+      for (const cityId of cityIds) {
+        await this.scopeGrantRepo.save({ id: randomUUID(), userId: user.id, scopeType: 'city', targetId: cityId, effect: 'allow' });
+      }
     } else if (dto.roleCode === PlatformRole.ADMIN) {
       await this.scopeGrantRepo.save({ id: randomUUID(), userId: user.id, scopeType: 'all', targetId: null, effect: 'allow' });
     }

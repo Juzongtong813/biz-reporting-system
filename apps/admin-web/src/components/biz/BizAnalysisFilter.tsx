@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Select, Space, Spin, Typography } from 'antd';
 import { useBizAnalysisOptions } from '@/components/biz/BizAnalysisOptionsContext';
 
@@ -29,7 +29,7 @@ interface Props {
  *  - 年度列表为空时给出明确空状态，不渲染误导性的下拉/图表。
  */
 export function BizAnalysisFilter({ value, onChange, showMonths = true }: Props) {
-  const { years, provinces, cities, loading, error } = useBizAnalysisOptions();
+  const { years, provinces, cities, accessibleCityIds, loading, error } = useBizAnalysisOptions();
 
   // 年度选项就绪后自动选择最新有效订单年度；仅在未指定年度时设置一次
   useEffect(() => {
@@ -38,6 +38,16 @@ export function BizAnalysisFilter({ value, onChange, showMonths = true }: Props)
     // 仅在"选项就绪 / 年度为空"时设置，避免覆盖用户已选年度
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, years, value.year]);
+
+  // city_user：首次就绪且尚未选择城市时，默认全选可访问城市，避免空选导致越权或无数据
+  const initedAccessible = useRef(false);
+  useEffect(() => {
+    if (loading || initedAccessible.current) return;
+    if (accessibleCityIds && accessibleCityIds.length && !value.cityIds.length) {
+      initedAccessible.current = true;
+      onChange({ ...value, cityIds: accessibleCityIds });
+    }
+  }, [loading, accessibleCityIds, value, onChange]);
 
   if (loading) {
     return (
@@ -57,7 +67,8 @@ export function BizAnalysisFilter({ value, onChange, showMonths = true }: Props)
   const monthOptions = value.year
     ? Array.from({ length: 12 }, (_, index) => `${value.year}-${String(index + 1).padStart(2, '0')}`)
     : [];
-  const visibleCities = cities.filter((c) => !value.provinceIds.length || value.provinceIds.includes(c.provinceId));
+  const baseCities = accessibleCityIds ? cities.filter((c) => accessibleCityIds.includes(c.id)) : cities;
+  const visibleCities = baseCities.filter((c) => !value.provinceIds.length || value.provinceIds.includes(c.provinceId));
 
   return (
     <Space wrap>

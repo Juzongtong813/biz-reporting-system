@@ -29,7 +29,7 @@ export interface BizMeResult {
   cityId: string | null;
   sensitiveOrderScope: string;
   permissions: string[];
-  dataScope: { scopeType: string; provinceIds: string[]; cityId: string | null };
+  dataScope: { scopeType: string; provinceIds: string[]; cityIds: string[]; cityId: string | null };
 }
 
 export interface BizModuleItem {
@@ -68,7 +68,7 @@ export function bizAdminListUsers(): Promise<{ items: Array<Record<string, unkno
 }
 
 export function bizAdminCreateUser(dto: {
-  username: string; password: string; name: string; roleCode: string; cityId?: string | null;
+  username: string; password: string; name: string; roleCode: string; cityIds?: string[] | null;
 }): Promise<Record<string, unknown>> {
   return request.post('/biz/admin/users', dto).then((r) => r.data);
 }
@@ -118,6 +118,16 @@ export function bizAdminProvinces(): Promise<{ items: Array<{ id: string; code: 
 
 export function bizAdminCities(provinceId?: string): Promise<{ items: Array<{ id: string; code: string; name: string; provinceId: string; unitType?: 'city' | 'province_branch' }> }> {
   return request.get('/biz/admin/cities', { params: provinceId ? { provinceId } : {} }).then((r) => r.data);
+}
+
+/** 当前登录账号数据范围内的城市清单（不需要管理权限；city_user→其绑定城市，admin/super→全部） */
+export function bizCities(): Promise<{ items: Array<{ id: string; code: string; name: string; provinceId: string; unitType?: 'city' | 'province_branch' }> }> {
+  return request.get('/biz/cities').then((r) => r.data);
+}
+
+/** 当前登录账号数据范围内的省份清单（不需要管理权限；按 cityIds/provinceIds/allowAll 推导） */
+export function bizProvinces(): Promise<{ items: Array<{ id: string; code: string; name: string }> }> {
+  return request.get('/biz/provinces').then((r) => r.data);
 }
 
 export function bizAdminCreateProvince(dto: { code: string; name: string }): Promise<Record<string, unknown>> { return request.post('/biz/admin/provinces', dto).then((r) => r.data); }

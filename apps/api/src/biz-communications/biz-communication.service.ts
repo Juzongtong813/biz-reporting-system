@@ -70,12 +70,23 @@ export class BizCommunicationService {
     if (item.publishAt && item.publishAt.getTime() > now) return false;
     if (item.expiresAt && item.expiresAt.getTime() < now) return false;
     if (item.audienceType === 'all' || auth.isSuperAdmin) return true;
-    if (item.audienceType === 'city') return auth.dataScope.scopeType === 'city'
-      ? item.cityId === auth.dataScope.cityId
-      : Boolean(item.cityId && (await this.rbac.assertCityScope(auth, item.cityId).then(() => true).catch(() => false)));
+    if (item.audienceType === 'city') {
+      if (!item.cityId) return false;
+      const allowedCityIds = auth.dataScope.cityIds?.length
+        ? auth.dataScope.cityIds
+        : auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
+      return allowedCityIds.includes(item.cityId)
+        || Boolean(item.cityId && (await this.rbac.assertCityScope(auth, item.cityId).then(() => true).catch(() => false)));
+    }
     if (item.audienceType === 'province') {
       if (!item.provinceId) return false;
-      if (auth.dataScope.scopeType === 'city') return item.provinceId === await this.cityProvince(auth.dataScope.cityId ?? '');
+      const allowedCityIds = auth.dataScope.cityIds?.length
+        ? auth.dataScope.cityIds
+        : auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
+      if (allowedCityIds.length) {
+        const provinces = await Promise.all(allowedCityIds.map((cid) => this.cityProvince(cid)));
+        return provinces.includes(item.provinceId);
+      }
       return auth.dataScope.scopeType === 'province' && (auth.dataScope.provinceIds.length === 0 || auth.dataScope.provinceIds.includes(item.provinceId));
     }
     return false;

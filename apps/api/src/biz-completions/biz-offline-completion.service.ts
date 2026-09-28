@@ -62,11 +62,14 @@ export class BizOfflineCompletionService {
     return item;
   }
 
-  /** 地市用户仅本地市（cityId 强制=绑定地市）；admin 校验地市数据范围 */
+  /** 地市用户仅其数据范围内的地市（支持多城市）；admin 校验地市数据范围 */
   private async assertCityAccess(auth: BizAuthContext, cityId: string | null): Promise<void> {
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无完工数据范围');
+    const allowedCityIds = auth.dataScope.cityIds?.length
+      ? auth.dataScope.cityIds
+      : auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
     if (auth.roleCode === PlatformRole.CITY_USER) {
-      if (cityId !== auth.dataScope.cityId) throw new ForbiddenException('数据范围不足');
+      if (!cityId || !allowedCityIds.includes(cityId)) throw new ForbiddenException('数据范围不足');
     } else if (cityId) {
       await this.rbac.assertCityScope(auth, cityId);
     }
@@ -78,7 +81,11 @@ export class BizOfflineCompletionService {
     if (filter.cityId) await this.assertCityAccess(auth, filter.cityId);
     const qb = this.offlineRepo.createQueryBuilder('o');
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无完工数据范围');
-    if (auth.dataScope.scopeType === 'city') qb.andWhere('o.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    if (auth.dataScope.cityIds?.length) {
+      qb.andWhere('o.cityId IN (:...scopeCityIds)', { scopeCityIds: auth.dataScope.cityIds });
+    } else if (auth.dataScope.scopeType === 'city') {
+      qb.andWhere('o.cityId = :scopeCityId', { scopeCityId: auth.dataScope.cityId });
+    }
     if (auth.dataScope.scopeType === 'province' && auth.dataScope.provinceIds.length > 0) {
       const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
       const cityIds = cities.map((city) => city.id);

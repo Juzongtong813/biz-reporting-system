@@ -3,7 +3,7 @@ import { Alert, Badge, Button, Card, DatePicker, Descriptions, Drawer, Form, Inp
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
-  bizAdminCities, bizAdminProvinces, bizContractBatchFeeRates, bizContractCopyFeeRates, bizContractDetail,
+  bizCities, bizProvinces, bizContractBatchFeeRates, bizContractCopyFeeRates, bizContractDetail,
   bizContractLedger, CONTRACT_STATUS_COLOR, CONTRACT_STATUS_TEXT, effectiveContractStatus, type BizContractDetail, type BizContractLedgerItem,
 } from '@/api/biz.api';
 import { useBizPermission } from '@/utils/biz-permission';
@@ -58,7 +58,7 @@ export default function BizContractOverview() {
     }
   }, [cityId, dates, keyword, page, pageSize, provinceId, status]);
 
-  useEffect(() => { void Promise.all([bizAdminProvinces(), bizAdminCities()]).then(([provinceResult, cityResult]) => { setProvinces(provinceResult.items); setCities(cityResult.items); }); }, []);
+  useEffect(() => { void Promise.all([bizProvinces(), bizCities()]).then(([provinceResult, cityResult]) => { setProvinces(provinceResult.items); setCities(cityResult.items); }); }, []);
   useEffect(() => { void load(); }, [load]);
 
   const openDetail = async (id: string) => {

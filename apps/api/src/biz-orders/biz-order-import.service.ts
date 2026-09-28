@@ -176,7 +176,7 @@ export class BizOrderImportService {
       importedRows: 0,
       uploadedBy: auth.userId,
       tempFilePath: filePath,
-      dataScopeJson: JSON.stringify({ roleCode: auth.roleCode, scopeType: auth.dataScope.scopeType, provinceIds: auth.dataScope.provinceIds ?? [], cityId: auth.dataScope.cityId ?? null }),
+      dataScopeJson: JSON.stringify({ roleCode: auth.roleCode, scopeType: auth.dataScope.scopeType, provinceIds: auth.dataScope.provinceIds ?? [], cityIds: auth.dataScope.cityIds ?? [], cityId: auth.dataScope.cityId ?? null }),
       sourceBatchId: normalizedSourceBatchId,
       batchPurpose: normalizedSourceBatchId ? 'correction' : 'normal',
     });
@@ -467,7 +467,7 @@ export class BizOrderImportService {
   /** 行级数据范围校验：上传人超范围行拒绝（super=all 不限；province=行省份 ∈ provinceIds；city=行地市=绑定地市） */
   private assertRowScope(scopeJson: string | null, provinceId: string, cityId: string | undefined): string | null {
     if (!scopeJson) return null;
-    let scope: { roleCode?: string; scopeType?: string; provinceIds?: string[]; cityId?: string | null };
+    let scope: { roleCode?: string; scopeType?: string; provinceIds?: string[]; cityIds?: string[]; cityId?: string | null };
     try { scope = JSON.parse(scopeJson); } catch { return null; }
     if (scope.scopeType === 'all') return null;
     if (scope.scopeType === 'province') {
@@ -475,7 +475,8 @@ export class BizOrderImportService {
       return scope.provinceIds.includes(provinceId) ? null : '上传人数据范围不包含该省份';
     }
     if (scope.scopeType === 'city') {
-      return cityId && scope.cityId === cityId ? null : '上传人数据范围不包含该地市';
+      const allowedCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      return cityId && allowedCityIds.includes(cityId) ? null : '上传人数据范围不包含该地市';
     }
     if (scope.scopeType === 'contract') return '当前账号无订单数据范围';
     return null;
@@ -622,14 +623,17 @@ export class BizOrderImportService {
 
   private rowMatchesScopeSnapshot(row: BizOrderRowEntity, scopeJson: string | null): boolean {
     if (!scopeJson) return true;
-    let scope: { scopeType?: string; provinceIds?: string[]; cityId?: string | null };
+    let scope: { scopeType?: string; provinceIds?: string[]; cityIds?: string[]; cityId?: string | null };
     try { scope = JSON.parse(scopeJson) as { scopeType?: string; provinceIds?: string[]; cityId?: string | null }; }
     catch { return false; }
     if (scope.scopeType === 'all') return true;
     if (scope.scopeType === 'province') {
       return !scope.provinceIds?.length || (row.provinceId != null && scope.provinceIds.includes(row.provinceId));
     }
-    if (scope.scopeType === 'city') return row.cityId != null && row.cityId === scope.cityId;
+    if (scope.scopeType === 'city') {
+      const allowedCityIds = scope.cityIds?.length ? scope.cityIds : (scope.cityId ? [scope.cityId] : []);
+      return row.cityId != null && allowedCityIds.includes(row.cityId);
+    }
     return false;
   }
 
@@ -692,7 +696,7 @@ export class BizOrderImportService {
   private async visibleCityIds(auth: BizAuthContext): Promise<string[] | null> {
     if (auth.isSuperAdmin || auth.dataScope.scopeType === 'all') return null;
     if (auth.dataScope.scopeType === 'contract') throw new ForbiddenException('当前账号无订单数据范围');
-    if (auth.dataScope.scopeType === 'city') return auth.dataScope.cityId ? [auth.dataScope.cityId] : [];
+    if (auth.dataScope.scopeType === 'city') return auth.dataScope.cityIds?.length ? auth.dataScope.cityIds : (auth.dataScope.cityId ? [auth.dataScope.cityId] : []);
     if (auth.dataScope.provinceIds.length === 0) return null;
     const cities = await this.cityRepo.find({ where: { provinceId: In(auth.dataScope.provinceIds) } });
     return cities.map((city) => city.id);
