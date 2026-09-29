@@ -54,6 +54,7 @@ export default function BizCosts() {
   const [roleCode, setRoleCode] = useState('');
   const [permissions, setPermissions] = useState<string[]>([]);
   const [boundCityId, setBoundCityId] = useState<string | null>(null);
+  const [allowedCityIds, setAllowedCityIds] = useState<string[]>([]);
   const [filterYear, setFilterYear] = useState(currentYear);
   const [error, setError] = useState<string | null>(null);
   /** 汇总请求序列号：仅接受最新一次结果，避免旧响应覆盖新响应 */
@@ -75,6 +76,7 @@ export default function BizCosts() {
   const [returnComment, setReturnComment] = useState('');
   const [returning, setReturning] = useState(false);
   const isCityUser = roleCode === 'city_user';
+  const isMultiCity = isCityUser && allowedCityIds.length > 1;
   const canReturn = !isCityUser && (roleCode === 'super_admin' || permissions.includes('operation.cost.reject'));
 
   const loadItems = useCallback(async () => {
@@ -82,7 +84,7 @@ export default function BizCosts() {
     const seq = ++itemsSeqRef.current;
     setLoading(true);
     try {
-      const result = await bizCostList({ year: filterYear, ...(isCityUser && boundCityId ? { cityId: boundCityId } : {}) });
+      const result = await bizCostList({ year: filterYear, ...(isCityUser && !isMultiCity && boundCityId ? { cityId: boundCityId } : {}) });
       if (seq !== itemsSeqRef.current) return; // 已过期响应，直接丢弃，避免旧结果覆盖新筛选
       setItems(result.items.filter((item) => (!filterMonths.length || filterMonths.includes(String(item.businessMonth).slice(5, 7))) && (!filterCities.length || filterCities.includes(String(item.cityId))) && (!filterCategories.length || filterCategories.includes(String(item.categoryCode))) && (!filterProvinces.length || filterProvinces.includes(String(cities.find((city) => city.id === String(item.cityId))?.provinceId ?? '')))));
       setError(null);
@@ -94,7 +96,7 @@ export default function BizCosts() {
     } finally {
       if (seq === itemsSeqRef.current) setLoading(false);
     }
-  }, [boundCityId, filterCategories, filterCities, filterMonths, filterProvinces, filterYear, isCityUser, roleCode, cities]);
+  }, [boundCityId, filterCategories, filterCities, filterMonths, filterProvinces, filterYear, isCityUser, isMultiCity, roleCode, cities]);
 
   const loadEditRows = useCallback(async () => {
     if (!editCity || !editMonth || !categories.length) { setEditRows([]); return; }
@@ -119,7 +121,11 @@ export default function BizCosts() {
         setPermissions(me.permissions);
         setBoundCityId(me.cityId);
         setCategories(list);
-        if (me.roleCode === 'city_user') setEditCity(me.cityId ?? undefined);
+        if (me.roleCode === 'city_user') {
+          const allowed = me.dataScope?.cityIds?.length ? me.dataScope.cityIds : (me.cityId ? [me.cityId] : []);
+          setAllowedCityIds(allowed);
+          setEditCity(allowed[0] ?? me.cityId ?? undefined);
+        }
       })
       .catch((err: unknown) => {
         if (!active) return;
@@ -137,6 +143,7 @@ export default function BizCosts() {
   useEffect(() => { void loadEditRows(); }, [loadEditRows]);
 
   const availableCities = useMemo(() => cities.filter((city) => !filterProvinces.length || filterProvinces.includes(city.provinceId)), [cities, filterProvinces]);
+  const allowedCityOptions = useMemo(() => allowedCityIds.map((id) => { const c = cities.find((city) => city.id === id); return { value: id, label: c?.name ?? id }; }), [allowedCityIds, cities]);
   const matrixRows = useMemo<MatrixRow[]>(() => {
     const categoryNames = new Map(categories.map((category) => [category.code, category.name]));
     const groups = new Map<string, MatrixRow>();
@@ -201,7 +208,7 @@ export default function BizCosts() {
   };
 
   const columns = [
-    ...(!isCityUser ? [{ title: '省份', key: 'provinceName', width: 110, render: (_: unknown, row: MatrixRow) => provinces.find((province) => province.id === cities.find((city) => city.id === row.cityId)?.provinceId)?.name ?? '-' }, { title: '地市', dataIndex: 'cityName', key: 'cityName', width: 110 }] : []),
+    ...(!isCityUser || isMultiCity ? [{ title: '省份', key: 'provinceName', width: 110, render: (_: unknown, row: MatrixRow) => provinces.find((province) => province.id === cities.find((city) => city.id === row.cityId)?.provinceId)?.name ?? '-' }, { title: '地市', dataIndex: 'cityName', key: 'cityName', width: 110 }] : []),
     { title: '成本类别', dataIndex: 'categoryName', key: 'categoryName', width: 130 },
     ...visibleMonths.map((month) => ({ title: `${Number(month)}月`, key: month, width: 130, render: (_: unknown, row: MatrixRow) => { const item = row.items[month]; if (!item) return <Text type="secondary">0.00</Text>; if (row.isSubtotal) { const monthItems = row.monthItems?.[month] ?? []; const hasEffective = monthItems.some((entry) => String(entry.status) === 'approved'); return <Space direction="vertical" size={0}><Text strong>{fenToYuan(item.amountFen)}</Text>{canReturn && hasEffective && <Button type="link" danger size="small" onClick={() => void returnMonth(row, month)}>整月退回</Button>}</Space>; } return <Space direction="vertical" size={0}><Text>{fenToYuan(item.amountFen)}</Text>{statusTag(item.status)}</Space>; } })),
   ];
@@ -219,13 +226,14 @@ export default function BizCosts() {
       <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选月份" value={filterMonths} onChange={setFilterMonths} options={MONTHS.map((month) => ({ value: month, label: `${Number(month)}月` }))} style={{ width: 220 }} />
       {!isCityUser && <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选省份" value={filterProvinces} onChange={(value) => { setFilterProvinces(value); setFilterCities([]); }} options={provinces.map((province) => ({ value: province.id, label: province.name }))} style={{ width: 220 }} />}
       {!isCityUser && <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选地市" value={filterCities} onChange={setFilterCities} options={availableCities.map((city) => ({ value: city.id, label: city.name }))} style={{ width: 260 }} />}
+      {isMultiCity && <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选地市（仅本账号范围）" value={filterCities} onChange={setFilterCities} options={allowedCityOptions} style={{ width: 260 }} />}
       <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选成本类别" value={filterCategories} onChange={setFilterCategories} options={(categories.length ? categories : FALLBACK_CATEGORIES.map(([code, name]) => ({ code, name }))).map((category) => ({ value: category.code, label: category.name }))} style={{ width: 220 }} />
     </Space></Card>
     {error && <Alert style={{ marginBottom: 16 }} type="error" showIcon message={error} />}
     <Card size="small" title={`${filterYear} 年地市成本汇总`} loading={loading}><Table size="small" bordered scroll={{ x: 'max-content' }} rowKey="key" dataSource={citySummaries} pagination={{ pageSize: 50 }} locale={{ emptyText: '暂无已生效成本' }} columns={[{ title: '省份', dataIndex: 'provinceName', fixed: 'left' }, { title: '地市', dataIndex: 'cityName', fixed: 'left', render: (value: string, row: CitySummaryRow) => <Button type="link" size="small" onClick={() => { setFilterCities([row.cityId]); setEditCity(row.cityId); }}>{value}</Button> }, ...[['reimbursement', '报销'], ['rent', '房租'], ['labor', '人工成本'], ['utilities', '水电费'], ['fuel', '油补'], ['entertainment', '招待费']].map(([code, title]) => ({ title, key: code, render: (_: unknown, row: CitySummaryRow) => fenToYuan(row.amounts[code] ?? 0) }))]} /></Card>
     <Card size="small" title={`${filterYear} 年成本明细`} loading={loading} style={{ marginTop: 16 }}><Table size="small" bordered scroll={{ x: 900 }} rowKey="key" columns={columns} dataSource={matrixRows} pagination={{ pageSize: 50 }} locale={{ emptyText: '暂无成本数据' }} /></Card>
-    <Card size="small" title="成本填报" style={{ marginTop: 16 }} extra={<Space wrap>{!isCityUser && <><Select allowClear placeholder="选择省份" value={editProvince} onChange={(value) => { setEditProvince(value); setEditCity(undefined); }} options={provinces.map((province) => ({ value: province.id, label: province.name }))} style={{ width: 150 }} /><Select allowClear placeholder="选择地市" value={editCity} onChange={setEditCity} options={cities.filter((city) => !editProvince || city.provinceId === editProvince).map((city) => ({ value: city.id, label: city.name }))} style={{ width: 150 }} /></>}<Input type="month" value={editMonth} onChange={(event) => setEditMonth(event.target.value)} style={{ width: 150 }} /></Space>}>
-      {isCityUser && <Alert type="info" showIcon message="当前账号只能填报和查看本地市成本" style={{ marginBottom: 12 }} />}
+    <Card size="small" title="成本填报" style={{ marginTop: 16 }} extra={<Space wrap>{!isCityUser && <><Select allowClear placeholder="选择省份" value={editProvince} onChange={(value) => { setEditProvince(value); setEditCity(undefined); }} options={provinces.map((province) => ({ value: province.id, label: province.name }))} style={{ width: 150 }} /><Select allowClear placeholder="选择地市" value={editCity} onChange={setEditCity} options={cities.filter((city) => !editProvince || city.provinceId === editProvince).map((city) => ({ value: city.id, label: city.name }))} style={{ width: 150 }} /></>}{isMultiCity && <Select allowClear placeholder="选择地市" value={editCity} onChange={setEditCity} options={allowedCityOptions} style={{ width: 150 }} />}<Input type="month" value={editMonth} onChange={(event) => setEditMonth(event.target.value)} style={{ width: 150 }} /></Space>}>
+      {isCityUser && <Alert type="info" showIcon message={isMultiCity ? `当前账号可填报和查看以下地市成本：${allowedCityOptions.map((o) => o.label).join('、')}` : '当前账号只能填报和查看本地市成本'} style={{ marginBottom: 12 }} />}
       {!isCityUser && !editCity ? <Text type="secondary">请选择地市后填报成本。</Text> : <><Table size="small" bordered loading={editLoading} rowKey="categoryCode" pagination={false} columns={editColumns} dataSource={editRows} /><Space style={{ marginTop: 12 }}><Button loading={saving} onClick={() => void saveEditRows(false)}>保存草稿</Button><Button type="primary" loading={saving} onClick={() => void saveEditRows(true)}>提交并生效</Button></Space></>}
     </Card>
     <Modal title="整月退回成本" open={Boolean(returnTarget)} confirmLoading={returning} okText="确认退回" cancelText="取消" onCancel={() => { if (!returning) setReturnTarget(null); }} onOk={() => void confirmReturnMonth()}>
