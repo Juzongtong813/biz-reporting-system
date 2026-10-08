@@ -39,45 +39,26 @@ type CachedOptions = Pick<AnalysisOptionsState, 'years' | 'provinces' | 'cities'
 const EMPTY_STATE: AnalysisOptionsState = { years: [], provinces: [], cities: [], accessibleCityIds: null, loading: true, error: null };
 const OptionsContext = createContext<AnalysisOptionsState>(EMPTY_STATE);
 
-let cache: CachedOptions | null = null;
-let inflight: Promise<CachedOptions> | null = null;
-
-/** 拉取（并缓存）选项；并发调用共享同一个 inflight Promise */
+/** 选项只在当前登录布局生命周期内加载；不能跨账号缓存权限范围内的城市。 */
 function fetchOptions(): Promise<CachedOptions> {
-  if (!inflight) {
-    inflight = Promise.all([bizAnalysisYears(), bizAdminProvinces(), bizCities()])
-      .then(([yearResult, provinceResult, cityResult]) => ({
-        years: (yearResult.items ?? []).map(String),
-        provinces: (provinceResult.items ?? []).map((p) => ({ id: p.id, name: p.name })) as AnalysisOptionProvince[],
-        cities: (cityResult.items ?? []).map((c) => ({ id: c.id, name: c.name, provinceId: c.provinceId })) as AnalysisOptionCity[],
-      }))
-      .catch((error: unknown) => {
-        // 失败时清空 inflight，允许后续重试
-        inflight = null;
-        throw error;
-      });
-  }
-  return inflight;
+  return Promise.all([bizAnalysisYears(), bizAdminProvinces(), bizCities()]).then(([yearResult, provinceResult, cityResult]) => ({
+    years: (yearResult.items ?? []).map(String),
+    provinces: (provinceResult.items ?? []).map((p) => ({ id: p.id, name: p.name })) as AnalysisOptionProvince[],
+    cities: (cityResult.items ?? []).map((c) => ({ id: c.id, name: c.name, provinceId: c.provinceId })) as AnalysisOptionCity[],
+  }));
 }
 
 export function BizAnalysisOptionsProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AnalysisOptionsState>(cache ? { ...cache, accessibleCityIds: null, loading: false, error: null } : EMPTY_STATE);
+  const [state, setState] = useState<AnalysisOptionsState>(EMPTY_STATE);
 
   useEffect(() => {
     let active = true;
-    if (cache) {
-      setState((prev) => ({ ...cache, ...prev, loading: false, error: null, accessibleCityIds: prev.accessibleCityIds }));
-    } else {
-      setState((prev) => ({ ...prev, loading: true, error: null }));
-      fetchOptions()
-        .then((data) => {
-          cache = data;
-          if (active) setState((prev) => ({ ...prev, ...data, loading: false, error: null }));
-        })
-        .catch(() => {
-          if (active) setState({ years: [], provinces: [], cities: [], accessibleCityIds: null, loading: false, error: '筛选选项加载失败，请刷新重试' });
-        });
-    }
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    fetchOptions().then((data) => {
+      if (active) setState((prev) => ({ ...prev, ...data, loading: false, error: null }));
+    }).catch(() => {
+      if (active) setState({ years: [], provinces: [], cities: [], accessibleCityIds: null, loading: false, error: '筛选选项加载失败，请刷新重试' });
+    });
     // 当前账号可访问城市（数据范围）随登录用户变化，每次挂载都拉取，不模块级缓存
     void bizMe()
       .then((me) => { if (active) setState((prev) => ({ ...prev, accessibleCityIds: me.dataScope?.cityIds ?? null })); })
