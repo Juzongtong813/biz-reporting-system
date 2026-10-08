@@ -128,6 +128,9 @@ export class BizOrderRowEntity {
   @Column({ name: 'validation_status', type: 'varchar', length: 16, default: 'valid' })
   validationStatus: 'valid' | 'needs_review' | 'superseded';
 
+  @Column({ name: 'is_current', type: 'boolean', default: true })
+  isCurrent: boolean;
+
   @Column({ name: 'validation_error', type: 'text', nullable: true })
   validationError: string | null;
 

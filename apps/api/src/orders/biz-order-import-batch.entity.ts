@@ -75,6 +75,9 @@ export class BizOrderImportBatchEntity {
   @Column({ name: 'batch_purpose', type: 'varchar', length: 16, default: 'normal' })
   batchPurpose: 'normal' | 'correction';
 
+  @Column({ name: 'lifecycle_status', type: 'varchar', length: 16, default: 'historical' })
+  lifecycleStatus: 'current' | 'historical';
+
   /** 作废人 UUID */
   @Column({ name: 'voided_by', type: 'varchar', length: 36, nullable: true })
   voidedBy: string | null;

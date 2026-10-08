@@ -363,6 +363,7 @@ export function bizOrderUpload(file: File, idempotencyKey: string, onProgress?: 
   if (sourceBatchId) form.append('sourceBatchId', sourceBatchId);
   form.append('file', file);
   return request.post('/biz/orders/upload', form, {
+    timeout: 10 * 60_000,
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (event) => {
       if (event.total) onProgress?.(Math.round((event.loaded / event.total) * 100));

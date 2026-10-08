@@ -121,7 +121,7 @@ export default function BizOrders() {
       });
       setUploadProgress(35);
       setUploadStatus('文件已提交，正在解析');
-      const deadline = Date.now() + 5 * 60_000;
+      const deadline = Date.now() + 30 * 60_000;
       let batchStatus = result.status;
       while (batchStatus === 'parsing' && Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 700));
@@ -144,10 +144,10 @@ export default function BizOrders() {
       setPreviewPage(parsedRows.page);
       setPreviewTotal(parsedRows.total);
       setPreviewOpen(true);
-      const reviewCount = batchDetail.errors.length;
+      const reviewCount = Number(batchDetail.batch.totalRows) - Number(batchDetail.batch.importedRows);
       message.success(reviewCount > 0
-        ? `已保存 ${parsedRows.items.length} 行，其中 ${reviewCount} 行待维护`
-        : `已导入 ${parsedRows.items.length} 条订单`);
+        ? `已保存 ${batchDetail.batch.totalRows} 行，其中 ${reviewCount} 行待维护`
+        : `已导入 ${batchDetail.batch.totalRows} 条订单`);
       void load();
       void loadRows();
     } catch (e: unknown) {
@@ -297,6 +297,7 @@ export default function BizOrders() {
   };
 
   const columns = [
+    { title: '生效状态', dataIndex: 'lifecycleStatus', key: 'lifecycleStatus', render: (v: string) => <Tag color={v === 'current' ? 'green' : 'default'}>{v === 'current' ? '当前生效' : '历史批次'}</Tag> },
     { title: '文件名', dataIndex: 'filename', key: 'filename', ellipsis: true },
     { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => { const s = BATCH_STATUS[v] ?? { label: v, color: 'default' }; return <Badge status={s.color as 'success' | 'processing' | 'error' | 'default'} text={s.label} />; } },
     { title: '总行数', dataIndex: 'totalRows', key: 'totalRows' },
@@ -361,7 +362,7 @@ export default function BizOrders() {
         </Space>
       </div>
 
-      <Card title="上传订单文件（.xlsx，≤50MB，≤20 万行，单工作表）" style={{ marginBottom: 16 }}>
+      <Card title="上传订单全量总表（.xlsx，≤50MB，≤30 万行，单工作表）" style={{ marginBottom: 16 }}>
         <Upload.Dragger
           accept=".xlsx"
           beforeUpload={onUpload}
@@ -371,7 +372,7 @@ export default function BizOrders() {
         >
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
           <p className="ant-upload-text">点击或拖拽 .xlsx 文件到此处上传</p>
-          <p className="ant-upload-hint">上传即视为导入确认；全部原始行均会保存，无法识别的行将标记为待维护</p>
+          <p className="ant-upload-hint">导入成功后替换当前订单；历史批次保留用于追溯，无法识别的行标记为待维护</p>
         </Upload.Dragger>
         {uploading && <Progress percent={uploadProgress} status="active" format={() => uploadStatus} style={{ marginTop: 16 }} />}
       </Card>

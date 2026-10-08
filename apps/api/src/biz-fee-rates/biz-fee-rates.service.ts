@@ -353,7 +353,7 @@ export class BizFeeRatesService {
       .addSelect('o.businessMonth', 'businessMonth')
       .addSelect('COUNT(o.id)', 'count')
       .addSelect('COALESCE(SUM(o.completionAmountFen), 0)', 'amountFen')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :validationStatus', { validationStatus: 'valid' })
       .andWhere('o.businessMonth IS NOT NULL')
       .andWhere('o.contractId IS NOT NULL')
@@ -807,7 +807,7 @@ export class BizFeeRatesService {
     const count = await this.orderRowRepo.createQueryBuilder('o')
       .where('o.contractId = :contractId', { contractId })
       .andWhere('o.cityId = :cityId', { cityId })
-      .andWhere('o.isVoid = 0')
+      .andWhere('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :status', { status: 'valid' })
       .getCount();
     return count > 0;
@@ -829,7 +829,7 @@ export class BizFeeRatesService {
     const orders = await this.orderRowRepo.createQueryBuilder('o')
       .select(['o.id', 'o.contractId', 'o.cityId', 'o.businessMonth', 'o.completionAmountFen'])
       .where('o.contractId IN (:...contractIds)', { contractIds })
-      .andWhere('o.isVoid = 0')
+      .andWhere('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :status', { status: 'valid' })
       .andWhere('o.businessMonth IS NOT NULL')
       .getMany();

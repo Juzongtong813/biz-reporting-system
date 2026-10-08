@@ -223,7 +223,7 @@ export class BizAggregateService {
       .addSelect('o.businessMonth', 'businessMonth')
       .addSelect('SUM(o.completionAmountFen)', 'orderCompletionFen')
       .addSelect('SUM(o.grossProfitFen)', 'grossProfitFen')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :orderValidationStatus', { orderValidationStatus: 'valid' });
     const offlineQb = this.offlineRepo.createQueryBuilder('f')
       .select('f.cityId', 'cityId')
@@ -610,7 +610,7 @@ export class BizAggregateService {
     const orderRows = await this.orderRowRepo.createQueryBuilder('o')
       .select('o.contractId', 'contractId')
       .addSelect('SUM(o.completionAmountFen)', 'amount')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :orderValidationStatus', { orderValidationStatus: 'valid' })
       .groupBy('o.contractId')
       .getRawMany();
@@ -705,7 +705,7 @@ export class BizAggregateService {
   async availableYears(auth: BizAuthContext): Promise<string[]> {
     const qb = this.orderRowRepo.createQueryBuilder('o')
       .select('DISTINCT SUBSTRING(o.businessMonth, 1, 4)', 'year')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :vs', { vs: 'valid' });
     const scope = auth.dataScope;
     if (scope.scopeType === 'city') {
@@ -763,7 +763,7 @@ export class BizAggregateService {
     const orderQb = this.orderRowRepo.createQueryBuilder('o')
       .select('COALESCE(SUM(o.completionAmountFen),0)', 'completionFen')
       .addSelect('COALESCE(SUM(o.grossProfitFen),0)', 'grossFen')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :vs', { vs: 'valid' })
       .andWhere('o.cityId = :cityId', { cityId });
     const orderMc = monthCond('o');
@@ -810,7 +810,7 @@ export class BizAggregateService {
     const orderByContract = await this.orderRowRepo.createQueryBuilder('o')
       .select('o.contractId', 'contractId')
       .addSelect('SUM(o.completionAmountFen)', 'completionFen')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :vs', { vs: 'valid' })
       .andWhere('o.cityId = :cityId', { cityId })
       .groupBy('o.contractId')
@@ -906,7 +906,7 @@ export class BizAggregateService {
     // 5. 订单完工明细（valid 且非 void；只返回展示字段，不返回敏感列，沿用现有脱敏约束）
     const orderDetailQb = this.orderRowRepo.createQueryBuilder('o')
       .select(['o.id', 'o.businessMonth', 'o.purchaseOrderNo', 'o.contractId', 'o.supplierName', 'o.completionAmountFen', 'o.grossProfitFen', 'o.validationStatus', 'o.isVoid'])
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :vs', { vs: 'valid' })
       .andWhere('o.cityId = :cityId', { cityId });
     if (orderMc) orderDetailQb.andWhere(orderMc.sql, orderMc.params);

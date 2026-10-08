@@ -283,7 +283,7 @@ export class BizContractsService {
     }
     if (!visibleIds.length) return {};
 
-    const orders = await this.orderRowRepo.find({ where: { contractId: In(visibleIds), isVoid: false, validationStatus: 'valid' } });
+    const orders = await this.orderRowRepo.find({ where: { contractId: In(visibleIds), isVoid: false, isCurrent: true, validationStatus: 'valid' } });
     const offlines = await this.offlineRepo.find({ where: { contractId: In(visibleIds), status: 'approved' } });
     const orderSum = new Map<string, number>();
     for (const o of orders) orderSum.set(String(o.contractId), (orderSum.get(String(o.contractId)) ?? 0) + (Number(o.completionAmountFen) || 0));
@@ -396,7 +396,7 @@ export class BizContractsService {
       .filter((alert) => alert.alertType !== ContractTag.EXPIRED);
 
     // 有效完工（订单未作废 + 线下完工已审核未作废；按可见地市过滤）
-    const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
+    const orders = (await this.orderRowRepo.findBy({ contractId: id, isVoid: false, isCurrent: true, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
     const offlines = (await this.offlineRepo.findBy({ contractId: id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const orderCompletionFen = orders.reduce((s, o) => s + (Number(o.completionAmountFen) || 0), 0);
     const offlineCompletionFen = offlines.reduce((s, o) => s + Number(o.amountFen), 0);
@@ -1577,6 +1577,7 @@ export class BizContractsService {
       .andWhere('o.business_month >= :fromMonth', { fromMonth })
       .andWhere('o.validation_status = :status', { status: 'valid' })
       .andWhere('o.is_void = 0')
+      .andWhere('o.is_current = 1')
       .getMany();
     if (rows.length > 0) {
       await this.dataSource.transaction(async (manager) => {
@@ -1620,7 +1621,7 @@ export class BizContractsService {
         .getRawOne();
       costFen = Number(costs?.total ?? 0);
     }
-    const orders = (await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
+    const orders = (await this.orderRowRepo.findBy({ contractId: contract.id, isVoid: false, isCurrent: true, validationStatus: 'valid' })).filter((o) => inScope(o.cityId));
     const offlines = (await this.offlineRepo.findBy({ contractId: contract.id, status: 'approved' })).filter((o) => inScope(o.cityId));
     const grossProfitFen = orders.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0)
       + offlines.reduce((s, o) => s + (Number(o.grossProfitFen) || 0), 0);

@@ -689,6 +689,14 @@ async function inspectState(version) {
       adapter.indexExists('biz_user_scope_grants', 'idx_biz_user_scope_grant_target'),
     ]);
   }
+  if (version === '030_order_snapshot') {
+    return allOrNothing([
+      adapter.columnExists('biz_order_rows', 'is_current'),
+      adapter.columnExists('biz_order_import_batches', 'lifecycle_status'),
+      adapter.indexExists('biz_order_rows', 'idx_order_current'),
+      adapter.tableExists('biz_order_snapshot_lock'),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 

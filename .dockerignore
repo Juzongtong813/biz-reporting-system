@@ -36,4 +36,8 @@ deploy-output/
 deploy-test/
 scripts/oneoff/
 **/*.bak
+.research-*/
+.artifacts/
+.order-chunks/
+.tmp-orders.xlsx
 

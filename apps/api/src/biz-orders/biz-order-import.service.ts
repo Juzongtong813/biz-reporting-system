@@ -27,6 +27,7 @@ import { PlatformUserEntity } from '../rbac/platform-user.entity';
 import { BizContractsService } from '../biz-contracts/biz-contracts.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 import { BizAuthContext } from '../rbac/rbac.service';
+import { BizSnapshotRegistryEntity } from '../biz-snapshots/biz-snapshot-registry.entity';
 
 interface PendingRow {
   sourceRowNo: number;
@@ -133,8 +134,14 @@ export class BizOrderImportService {
     // 幂等：相同请求键返回原批次
     const existing = await this.batchRepo.findOneBy({ idempotencyKey });
     if (existing) return existing;
+    if (await this.batchRepo.countBy({ status: OrderBatchStatus.PARSING })) {
+      throw new BadRequestException('已有订单文件正在解析，请等待当前导入完成后再上传');
+    }
 
     const normalizedSourceBatchId = sourceBatchId?.trim() || null;
+    if (!normalizedSourceBatchId && auth.dataScope.scopeType !== 'all') {
+      throw new ForbiddenException('全量总表替换需要全部数据范围权限');
+    }
     if (normalizedSourceBatchId) {
       const source = await this.batchRepo.findOneBy({ id: normalizedSourceBatchId });
       if (!source) throw new BadRequestException('来源批次不存在');
@@ -148,10 +155,12 @@ export class BizOrderImportService {
     const tempBatchId = randomUUID();
     const { filePath, fileHash } = this.saveTempFile(file.buffer, tempBatchId);
 
-    // 解析最小元数据：最大下单时间（防重第二指纹）
+    // Extract the timestamp fingerprint before creating the batch.
     let maxOrderTime: Date | null = null;
+    let parsedWorkbook: XLSX.WorkBook;
     try {
       const wb = readWorkbookSafe(file.buffer, { maxRowsPerSheet: ORDER_FILE_MAX_ROWS + 1 });
+      parsedWorkbook = wb;
       maxOrderTime = this.extractMaxOrderTime(wb);
     } catch (e) {
       rmSync(filePath, { force: true });
@@ -182,14 +191,14 @@ export class BizOrderImportService {
     });
 
     // 后台异步解析（单实例进程内任务；幂等与唯一约束保障重试安全）
-    void this.processBatch(batch.id).catch((err: unknown) => {
+    void this.processBatch(batch.id, parsedWorkbook).catch((err: unknown) => {
       void this.failBatch(batch.id, err instanceof Error ? err.message : String(err));
     });
     return batch;
   }
 
   /** 后台解析：结构校验 → 整批校验 → 全过才写入（零业务行部分写入） */
-  private async processBatch(batchId: string): Promise<void> {
+  private async processBatch(batchId: string, parsedWorkbook?: XLSX.WorkBook): Promise<void> {
     const batch = await this.batchRepo.findOneBy({ id: batchId });
     if (!batch || batch.status !== OrderBatchStatus.PARSING) return;
 
@@ -201,7 +210,7 @@ export class BizOrderImportService {
 
     let wb: XLSX.WorkBook;
     try {
-      wb = readWorkbookSafe(readFileSync(filePath), { maxRowsPerSheet: ORDER_FILE_MAX_ROWS + 1 });
+      wb = parsedWorkbook ?? readWorkbookSafe(readFileSync(filePath), { maxRowsPerSheet: ORDER_FILE_MAX_ROWS + 1 });
     } catch (e) {
       await this.failBatch(batchId, e instanceof Error ? e.message : '文件解析失败');
       return;
@@ -258,7 +267,7 @@ export class BizOrderImportService {
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
     const dataRows = rows.slice(1); // 去掉表头
     if (dataRows.length > ORDER_FILE_MAX_ROWS) {
-      await this.failBatch(batchId, `数据行数 ${dataRows.length} 超过 20 万行上限`);
+      await this.failBatch(batchId, `数据行数 ${dataRows.length} 超过 30 万行上限`);
       return;
     }
     if (dataRows.length === 0) {
@@ -367,6 +376,12 @@ export class BizOrderImportService {
     batch.importedRows = pending.filter((p) => !p.error).length;
     batch.failureReason = errors.length > 0 ? `已保存全部 ${pending.length} 行，其中 ${errors.length} 行待维护` : null;
     await this.dataSource.transaction(async (manager) => {
+      // Serialize activations and corrections across instances, including when no snapshot exists yet.
+      await manager.query('UPDATE biz_order_snapshot_lock SET revision = revision + 1 WHERE id = 1');
+      if (batch.batchPurpose === 'correction') {
+        const currentSource = await manager.countBy(BizOrderRowEntity, { batchId: batch.sourceBatchId!, isCurrent: true });
+        if (!currentSource) throw new BadRequestException('来源批次已被最新总表替换，请下载当前批次的待维护订单');
+      }
       if (errors.length > 0) {
         const entities = errors.map((e) => ({
           id: randomUUID(), batchId, errorType: e.type, rowNo: e.rowNo, field: e.field, message: e.message,
@@ -431,6 +446,7 @@ export class BizOrderImportService {
             isVoid: false,
             sourceRowJson: p.raw,
             validationStatus: p.error ? 'needs_review' : 'valid',
+            isCurrent: true,
             validationError: p.error?.message ?? null,
             replacesOrderRowId: p.replacesOrderRowId,
           })),
@@ -455,11 +471,27 @@ export class BizOrderImportService {
           }
         }
       }
+      if (batch.batchPurpose === 'normal') {
+        const newer = await manager.createQueryBuilder(BizOrderImportBatchEntity, 'b')
+          .where('b.lifecycleStatus = :current', { current: 'current' })
+          .andWhere('b.batchPurpose = :normal', { normal: 'normal' })
+          .andWhere('b.uploadedAt > :uploadedAt', { uploadedAt: batch.uploadedAt }).getCount();
+        if (newer) throw new BadRequestException('更新的全量批次已生效，本批次取消替换');
+        await manager.createQueryBuilder().update(BizOrderRowEntity).set({ isCurrent: false })
+          .where('is_current = 1 AND batch_id <> :batchId', { batchId }).execute();
+        await manager.createQueryBuilder().update(BizOrderImportBatchEntity).set({ lifecycleStatus: 'historical' })
+          .where('lifecycle_status = :current', { current: 'current' }).execute();
+      }
+      batch.lifecycleStatus = 'current';
       batch.status = OrderBatchStatus.IMPORTED;
       await manager.save(batch);
+      if (this.dataSource.hasMetadata(BizSnapshotRegistryEntity)) {
+        await manager.update(BizSnapshotRegistryEntity, { status: 'ready' }, { status: 'stale' });
+      }
     });
 
     this.cleanupTempFile(batch);
+    await this.recordOp(batch.uploadedBy, 'order_snapshot.activate', batch.id);
     // M6：明细变更触发增量重算（失败仅记录不阻断）
     void this.aggregates.recalcInternal({}).catch(() => {});
   }
@@ -485,7 +517,7 @@ export class BizOrderImportService {
   /** 批次失败：零写入（从未插入行）→ 状态 FAILED + 错误报告 + 删除临时文件 */
   private async failBatch(batchId: string, reason: string, errors: Array<{ type: string; rowNo: number | null; field: string | null; message: string }> = []): Promise<void> {
     const batch = await this.batchRepo.findOneBy({ id: batchId });
-    if (!batch) return;
+    if (!batch || batch.status !== OrderBatchStatus.PARSING) return;
     if (errors.length > 0) {
       // 错误报告分块保存，避免超 SQLite/MySQL 变量数上限（7 万行级失败文件）
       const entities = errors.map((e) => ({
@@ -514,7 +546,7 @@ export class BizOrderImportService {
       return `文件必须包含 ${ORDER_TEMPLATE_SHEET_COUNT} 个工作表（当前 ${wb.SheetNames.length}）`;
     }
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, range: 'A1:AZ1', raw: true, defval: '' });
     const header = (rows[0] ?? []).map((v) => String(v).trim());
     if (header.length === 0) return '文件缺少表头行';
     const aliases = new Map<string, string[]>([
@@ -592,7 +624,7 @@ export class BizOrderImportService {
 
   private resolveCorrectionIndexes(wb: XLSX.WorkBook): { sourceBatch?: number; sourceRow?: number } {
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' });
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, range: 'A1:AZ1', raw: true, defval: '' });
     const header = (rows[0] ?? []).map((v) => this.normalizeHeader(String(v)));
     const indexOf = (value: string): number | undefined => {
       const index = header.indexOf(this.normalizeHeader(value));
@@ -821,6 +853,7 @@ export class BizOrderImportService {
   async maintainRow(auth: BizAuthContext, id: string, input: MaintainOrderRowInput): Promise<Record<string, unknown>> {
     const row = await this.rowRepo.findOneBy({ id });
     if (!row) throw new NotFoundException('订单行不存在');
+    if (!row.isCurrent) throw new BadRequestException('历史批次不能维护，请使用当前生效批次');
     const batch = await this.batchRepo.findOneBy({ id: row.batchId });
     if (!batch) throw new NotFoundException('导入批次不存在');
     if (batch.status !== OrderBatchStatus.IMPORTED) throw new BadRequestException('仅已导入批次可以维护');
@@ -861,6 +894,10 @@ export class BizOrderImportService {
     const grossProfitFen = completionAmountFen != null && rateBp != null ? Math.round((completionAmountFen * rateBp) / 10000) : null;
     const validationError = errors.length > 0 ? errors.map((error) => error.message).join('；') : null;
     await this.dataSource.transaction(async (manager) => {
+      await manager.query('UPDATE biz_order_snapshot_lock SET revision = revision + 1 WHERE id = 1');
+      if (!await manager.countBy(BizOrderRowEntity, { id, isCurrent: true })) {
+        throw new BadRequestException('订单已被最新总表替换，请刷新后重试');
+      }
       row.provinceId = provinceId;
       row.cityId = cityId;
       row.contractId = contractId;
@@ -966,6 +1003,7 @@ export class BizOrderImportService {
       qb.andWhere('r.city_id IN (:...visibleCityIds)', { visibleCityIds: cityIds });
     }
     if (filter.batchId) qb.andWhere('r.batchId = :batchId', { batchId: filter.batchId });
+    else qb.andWhere('r.isCurrent = 1');
     if (filter.cityId) qb.andWhere('r.cityId = :cityId', { cityId: filter.cityId });
     if (filter.overrun === 'city') qb.andWhere('r.cityOverrunFlag = 1');
     if (filter.overrun === 'contract') qb.andWhere('r.contractOverrunFlag = 1');

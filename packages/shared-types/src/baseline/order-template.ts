@@ -67,7 +67,7 @@ export const ORDER_TEMPLATE_CITY_COLUMN_INDEX_0BASED = 1;
 
 /** 单文件约束（基线 01 5.1 / 07 5.4） */
 export const ORDER_FILE_MAX_BYTES = 50 * 1024 * 1024; // 50MB
-export const ORDER_FILE_MAX_ROWS = 200_000; // 20 万行
+export const ORDER_FILE_MAX_ROWS = 300_000; // 30 万行
 export const ORDER_FILE_ALLOWED_EXT = '.xlsx';
 
 /** 订单列名索引映射（用于解析时快速定位，0-based） */

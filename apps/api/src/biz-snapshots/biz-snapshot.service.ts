@@ -283,7 +283,7 @@ export class BizSnapshotService implements OnModuleInit {
       .addSelect('o.businessMonth', 'businessMonth')
       .addSelect('SUM(o.completionAmountFen)', 'orderCompletionFen')
       .addSelect('SUM(o.grossProfitFen)', 'grossProfitFen')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :valid', { valid: 'valid' })
       .andWhere('o.businessMonth IN (:...months)', { months })
       .groupBy('o.cityId').addGroupBy('o.businessMonth')
@@ -505,7 +505,7 @@ export class BizSnapshotService implements OnModuleInit {
       .select('o.contractId', 'contractId')
       .addSelect('o.businessMonth', 'businessMonth')
       .addSelect('SUM(o.completionAmountFen)', 'amount')
-      .where('o.isVoid = 0').andWhere('o.validationStatus = :valid', { valid: 'valid' })
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1').andWhere('o.validationStatus = :valid', { valid: 'valid' })
       .groupBy('o.contractId').addGroupBy('o.businessMonth').getRawMany();
     const offByContractMonthQ = await this.offlineRepo.createQueryBuilder('f')
       .select('f.contractId', 'contractId')
@@ -634,7 +634,7 @@ export class BizSnapshotService implements OnModuleInit {
     const orderRows = await this.orderRowRepo.createQueryBuilder('o')
       .select('o.contractId', 'contractId')
       .addSelect('SUM(o.completionAmountFen)', 'amount')
-      .where('o.isVoid = 0')
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1')
       .andWhere('o.validationStatus = :v', { v: 'valid' })
       .groupBy('o.contractId')
       .getRawMany();
@@ -664,7 +664,7 @@ export class BizSnapshotService implements OnModuleInit {
   private async allBusinessMonths(asOf: string): Promise<string[]> {
     const orderMonths = await this.orderRowRepo.createQueryBuilder('o')
       .select('DISTINCT o.businessMonth', 'm')
-      .where('o.isVoid = 0').andWhere('o.validationStatus = :valid', { valid: 'valid' })
+      .where('o.isVoid = 0').andWhere('o.isCurrent = 1').andWhere('o.validationStatus = :valid', { valid: 'valid' })
       .getRawMany<{ m: string }>();
     const offlineMonths = await this.offlineRepo.createQueryBuilder('f')
       .select('DISTINCT f.businessMonth', 'm')
