@@ -220,7 +220,7 @@ export default function BizContracts() {
   const onActivate = async (id: string) => {
     try {
       await bizContractActivate(id);
-      message.success('合同已生效（合同额锁定）');
+      message.success('合同已生效');
       if (detail?.contract.id === id) await openDetail(id);
       void load();
     } catch (e: unknown) {
@@ -708,11 +708,11 @@ export default function BizContracts() {
           <Form.Item name="endDate" label="结束日期"><Input type="date" /></Form.Item>
           <Form.Item
             name="taxInclusiveAmountFen"
-            label={`含税合同金额（元）${!editBatch && editTarget?.amountLocked ? '（已锁定）' : ''}`}
+            label="含税合同金额（元）"
           >
-            <InputNumber min={0} precision={2} style={{ width: '100%' }} disabled={!editBatch && Boolean(editTarget?.amountLocked)} />
+            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
           </Form.Item>
-          {editBatch && <Alert type="info" showIcon message="仅填写需要修改的字段，未填写字段保持不变；合同额已锁定的合同不会被修改。" />}
+          {editBatch && <Alert type="info" showIcon message="仅填写需要修改的字段，未填写字段保持不变。" />}
         </Form>
       </Modal>
 
@@ -745,7 +745,7 @@ export default function BizContracts() {
                   <div>
                     <Descriptions bordered size="small" column={2}>
                       <Descriptions.Item label="状态"><Tag color={STATUS_COLOR[detail.contract.status]}>{STATUS_LABEL[detail.contract.status]}</Tag></Descriptions.Item>
-                      <Descriptions.Item label="合同额锁定">{detail.contract.amountLocked ? '已锁定' : '未锁定'}</Descriptions.Item>
+                      <Descriptions.Item label="合同状态">{detail.contract.status === 'draft' ? '草稿' : '已生效，可继续编辑'}</Descriptions.Item>
                       <Descriptions.Item label="含税合同额（元）">{fenToYuan(detail.contract.taxInclusiveAmountFen)}</Descriptions.Item>
                       <Descriptions.Item label="不含税（元）">{detail.contract.taxExclusiveAmountFen != null ? fenToYuan(detail.contract.taxExclusiveAmountFen) : '-'}</Descriptions.Item>
                       <Descriptions.Item label="开始日期"><span data-testid="contract-start-date">{formatYearMonth(detail.contract.startDate)}</span></Descriptions.Item>
@@ -754,7 +754,7 @@ export default function BizContracts() {
                       <Descriptions.Item label="版本号">{detail.contract.versionNo}</Descriptions.Item>
                     </Descriptions>
                     <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {detail.contract.status === 'draft' && <Button type="primary" disabled={Boolean(detail.activationIssues?.length)} onClick={() => onActivate(detail.contract.id)}>生效并锁定合同额</Button>}
+                      {detail.contract.status === 'draft' && <Button type="primary" disabled={Boolean(detail.activationIssues?.length)} onClick={() => onActivate(detail.contract.id)}>生效合同</Button>}
                       {['active', 'completed'].includes(detail.contract.status) && <Button danger onClick={() => onVoid(detail.contract.id)}>作废合同</Button>}
                     </div>
                     {detail.contract.status === 'draft' && Boolean(detail.activationIssues?.length) && (

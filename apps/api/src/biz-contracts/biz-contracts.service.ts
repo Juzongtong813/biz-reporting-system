@@ -1142,14 +1142,11 @@ export class BizContractsService {
     return parsed.toISOString().slice(0, 10);
   }
 
-  /** 编辑：草稿可改合同额；生效后合同额永久锁定（amountLocked=true 时拒绝金额修改） */
+  /** 编辑：合同生效后仍允许修改合同资料和合同额。 */
   async update(auth: BizAuthContext, id: string, dto: UpdateContractDto): Promise<BizContractEntity> {
     const contract = await this.getContractOrFail(id);
     await this.assertContractVisible(auth, contract);
     if (contract.status === ContractStatus.VOIDED) throw new BadRequestException('合同已作废，不可编辑');
-    if (dto.taxInclusiveAmountFen !== undefined && contract.amountLocked) {
-      throw new BadRequestException('合同生效后合同额永久锁定，不可修改（录错请作废重建）'); // CON-003
-    }
     if (dto.taxInclusiveAmountFen !== undefined) contract.taxInclusiveAmountFen = Math.round(dto.taxInclusiveAmountFen);
     if (dto.taxExclusiveAmountFen !== undefined) contract.taxExclusiveAmountFen = dto.taxExclusiveAmountFen != null ? Math.round(dto.taxExclusiveAmountFen) : null;
     if (dto.contractName !== undefined) contract.contractName = dto.contractName;
@@ -1366,7 +1363,7 @@ export class BizContractsService {
     return { checked: uniqueIds.length, restored, skipped };
   }
 
-  /** 批量修改：对所选合同统一更新允许字段（合同名称/起止日期/未锁定合同额）。逐条返回成功/失败。 */
+  /** 批量修改：对所选合同统一更新合同名称、起止日期和合同额。逐条返回成功/失败。 */
   async batchUpdate(auth: BizAuthContext, ids: string[], dto: UpdateContractDto): Promise<{ checked: number; updated: string[]; skipped: Array<{ id: string; contractNo?: string; reason: string }> }> {
     if (!auth.isSuperAdmin && !auth.permissionCodes.has('operation.contract.batch_update')) {
       throw new ForbiddenException('当前账号无批量修改合同权限');
@@ -1386,10 +1383,7 @@ export class BizContractsService {
         if (dto.contractName !== undefined) contract.contractName = dto.contractName;
         if (dto.startDate !== undefined) contract.startDate = dto.startDate;
         if (dto.endDate !== undefined) contract.endDate = dto.endDate;
-        if (dto.taxInclusiveAmountFen !== undefined) {
-          if (contract.amountLocked) throw new BadRequestException('合同额已锁定，不可修改');
-          contract.taxInclusiveAmountFen = Math.round(dto.taxInclusiveAmountFen);
-        }
+        if (dto.taxInclusiveAmountFen !== undefined) contract.taxInclusiveAmountFen = Math.round(dto.taxInclusiveAmountFen);
         if (dto.taxExclusiveAmountFen !== undefined) contract.taxExclusiveAmountFen = dto.taxExclusiveAmountFen != null ? Math.round(dto.taxExclusiveAmountFen) : null;
         contract.versionNo += 1;
         contract.updatedBy = auth.userId;
