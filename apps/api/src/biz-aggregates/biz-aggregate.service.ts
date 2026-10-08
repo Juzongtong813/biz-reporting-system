@@ -422,14 +422,17 @@ export class BizAggregateService {
     if (cityId) {
       // 地市口径：合同额 × (该地市分配配额/合同总配额)，与 byCity 行内 contractAmountFen 完全一致
       const totalQuotaByContract = new Map<string, number>();
+      const allocsByContract = new Map<string, typeof allocs>();
       for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
+      for (const a of allocs) allocsByContract.set(a.contractId, [...(allocsByContract.get(a.contractId) ?? []), a]);
       amountFen = 0;
       for (const c of visible) {
-        const cityAllocs = allocs.filter((a) => a.contractId === c.id && a.cityId === cityId);
+        const contractAllocs = allocsByContract.get(c.id) ?? [];
+        const cityAllocs = contractAllocs.filter((a) => a.cityId === cityId);
         if (cityAllocs.length === 0) continue;
         const quota = cityAllocs.reduce((sum, a) => sum + (Number(a.quotaFen) || 0), 0);
         const totalQuota = totalQuotaByContract.get(c.id) || 0;
-        const allocCount = allocs.filter((x) => x.contractId === c.id).length || 1;
+        const allocCount = contractAllocs.length || 1;
         const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
         amountFen += (Number(c.taxInclusiveAmountFen) || 0) * share;
       }
@@ -506,13 +509,16 @@ export class BizAggregateService {
       citiesByContract.get(a.contractId)!.add(a.cityId);
     }
     const totalQuotaByContract = new Map<string, number>();
+    const allocCountByContract = new Map<string, number>();
     for (const a of allocs) totalQuotaByContract.set(a.contractId, (totalQuotaByContract.get(a.contractId) ?? 0) + Number(a.quotaFen || 0));
+    for (const a of allocs) allocCountByContract.set(a.contractId, (allocCountByContract.get(a.contractId) ?? 0) + 1);
     const amountByContract = new Map(contracts.map((c) => [c.id, Number(c.taxInclusiveAmountFen) || 0]));
+    const contractById = new Map(contracts.map((c) => [c.id, c]));
     const cityInventory = new Map<string, { contractCount: number; contractAmountFen: number; contractIds: Set<string> }>();
     for (const a of allocs) {
       // 多选地市：只保留选中地市的分配行（合同额分摊口径仍基于全量 allocs，与单选保持一致）
       if (cityIds?.length && !cityIds.includes(a.cityId)) continue;
-      const contract = contracts.find((c) => c.id === a.contractId);
+      const contract = contractById.get(a.contractId);
       // P0：分配地市也必须在可见范围内——共享合同的其他地市分配不得泄露（济南管理员只看到济南行）
       if (!contract || !this.isContractVisible(auth, contract, a.cityId, citiesByContract)) continue;
       const entry = cityInventory.get(a.cityId) ?? { contractCount: 0, contractAmountFen: 0, contractIds: new Set() };
@@ -521,7 +527,7 @@ export class BizAggregateService {
         entry.contractCount += 1;
         const quota = Number(a.quotaFen) || 0;
         const totalQuota = totalQuotaByContract.get(a.contractId) || 0;
-        const allocCount = allocs.filter((x) => x.contractId === a.contractId).length || 1;
+        const allocCount = allocCountByContract.get(a.contractId) || 1;
         const share = totalQuota > 0 ? quota / totalQuota : 1 / allocCount;
         entry.contractAmountFen += (amountByContract.get(a.contractId) ?? 0) * share;
       }

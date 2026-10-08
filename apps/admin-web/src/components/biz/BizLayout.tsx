@@ -53,6 +53,8 @@ function SnapshotStatusBar() {
     text = updateTime
       ? <Text type="secondary">数据已于 {fmtShort(updateTime)} 更新</Text>
       : <Text type="secondary">数据已更新</Text>;
+  } else if (meta?.status === 'live') {
+    text = <Text type="secondary">当前使用实时数据</Text>;
   } else {
     text = <Text type="secondary">暂未生成统计数据</Text>;
   }
