@@ -48,7 +48,7 @@ export class BizSnapshotScheduler implements OnModuleInit {
 
   private async runScheduledBuild(): Promise<void> {
     try {
-      const asOf = new Date().toISOString().slice(0, 10);
+      const asOf = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       const result = await this.snapshots.requestBuild(asOf, 'auto');
       this.logger.log(`[BizSnapshot] 定时触发 run=${result.runId} status=${result.status} asOf=${asOf}`);
     } catch (err) {

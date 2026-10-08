@@ -157,8 +157,10 @@ export class BizAggregateController {
     @BizAuthUser() auth: BizAuthContext,
     @Body() body?: { asOf?: string },
   ) {
-    // asOf 缺省取服务端当日（系统上下文生成，不依赖请求用户时区）
-    const asOf = body?.asOf && /^\d{4}-\d{2}-\d{2}$/.test(body.asOf) ? body.asOf : new Date().toISOString().slice(0, 10);
+    // 业务日期按中国时区确定，避免 UTC 凌晨仍落在前一业务日。
+    const asOf = body?.asOf && /^\d{4}-\d{2}-\d{2}$/.test(body.asOf)
+      ? body.asOf
+      : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     const result = await this.snapshots.requestBuild(asOf);
     return { ok: true, ...result, asOf };
   }

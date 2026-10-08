@@ -160,12 +160,25 @@ export class BizSnapshotService implements OnModuleInit {
     const existingBuilding = await this.runRepo.findOne({ where: { status: 'building' }, order: { startedAt: 'DESC' } });
     if (existingBuilding) return { runId: existingBuilding.id, status: 'building' };
 
-    const run = this.runRepo.create({
-      asOf,
-      status: 'building',
-      source,
-      sourceWatermark: `${source}:${new Date().toISOString()}`,
-    });
+    // as_of 唯一约束要求同一业务日复用既有记录；失败任务可重试，成功任务则无需重复全量计算。
+    const previousRun = await this.runRepo.findOne({ where: { asOf } });
+    if (previousRun?.status === 'ready') return { runId: previousRun.id, status: 'ready' };
+
+    const run = previousRun
+      ? Object.assign(previousRun, {
+          status: 'building' as const,
+          source,
+          sourceWatermark: `${source}:${new Date().toISOString()}`,
+          startedAt: new Date(),
+          finishedAt: null,
+          errorMessage: null,
+        })
+      : this.runRepo.create({
+          asOf,
+          status: 'building',
+          source,
+          sourceWatermark: `${source}:${new Date().toISOString()}`,
+        });
     await this.runRepo.save(run);
 
     const promise = this.buildSnapshot(run.id, asOf)
@@ -230,15 +243,32 @@ export class BizSnapshotService implements OnModuleInit {
     lastRun: { runId: string; status: SnapshotStatus; asOf: string; finishedAt: Date | string | null; errorMessage: string | null; source: string | null } | null;
   }> {
     const registry = await this.getEffectiveRegistry();
-    const lastRun = await this.runRepo.createQueryBuilder('run').orderBy('run.startedAt', 'DESC').limit(1).getOne();
-    const hasReady = !!registry && registry.status === 'ready' && !!registry.currentSnapshotId;
+    const [lastRun, latestReadyRun] = await Promise.all([
+      this.runRepo.createQueryBuilder('run').orderBy('run.startedAt', 'DESC').limit(1).getOne(),
+      this.runRepo.findOne({ where: { status: 'ready' }, order: { finishedAt: 'DESC' } }),
+    ]);
+    // 修复/兼容历史 registry 指针丢失或多行不一致：ready run 可由原子构建事务证实，补回当前指针。
+    let effectiveRegistry = registry;
+    if ((!effectiveRegistry?.currentSnapshotId || effectiveRegistry.status !== 'ready') && latestReadyRun) {
+      effectiveRegistry = effectiveRegistry ?? this.registryRepo.create();
+      effectiveRegistry.currentSnapshotId = latestReadyRun.id;
+      effectiveRegistry.currentAsOf = latestReadyRun.asOf;
+      effectiveRegistry.lastSuccessfulAt = latestReadyRun.finishedAt ?? latestReadyRun.startedAt;
+      effectiveRegistry.status = 'ready';
+      try {
+        await this.registryRepo.save(effectiveRegistry);
+      } catch (err) {
+        this.logger.warn(`[BizSnapshot] 恢复 ready 快照指针失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    const hasReady = !!effectiveRegistry && effectiveRegistry.status === 'ready' && !!effectiveRegistry.currentSnapshotId;
     return {
-      snapshotId: hasReady ? registry!.currentSnapshotId! : null,
-      asOf: registry?.currentAsOf ?? null,
+      snapshotId: hasReady ? effectiveRegistry!.currentSnapshotId! : null,
+      asOf: effectiveRegistry?.currentAsOf ?? null,
       status: hasReady ? 'ready' : 'none',
-      generatedAt: registry?.lastSuccessfulAt ?? null,
-      lastSuccessfulAt: registry?.lastSuccessfulAt ?? null,
-      currentAsOf: registry?.currentAsOf ?? null,
+      generatedAt: effectiveRegistry?.lastSuccessfulAt ?? null,
+      lastSuccessfulAt: effectiveRegistry?.lastSuccessfulAt ?? null,
+      currentAsOf: effectiveRegistry?.currentAsOf ?? null,
       lastRun: lastRun
         ? {
             runId: lastRun.id,

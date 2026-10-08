@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { message } from 'antd';
 import { bizSnapshotBuild, bizSnapshotMetadata, bizSnapshotStatus } from '@/api/biz.api';
 import type { BizSnapshotMetadata } from '@/api/biz.api';
 
@@ -55,9 +56,16 @@ export function BizSnapshotProvider({ children }: { children: React.ReactNode })
         buildingRef.current = false;
         setBuilding(false);
         await refreshMeta();
-      } catch {
+        if (run?.status === 'failed') {
+          message.error(run.errorMessage ? `数据更新失败：${run.errorMessage}` : '数据更新失败，请检查数据后重试');
+        } else if (run?.status === 'ready') {
+          message.success('数据更新完成');
+        }
+      } catch (error) {
         buildingRef.current = false;
         setBuilding(false);
+        const responseMessage = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+        message.error(Array.isArray(responseMessage) ? responseMessage.join('；') : (responseMessage ?? '快照状态查询失败，请重试'));
       }
     },
     [refreshMeta],
@@ -71,14 +79,18 @@ export function BizSnapshotProvider({ children }: { children: React.ReactNode })
       const res = await bizSnapshotBuild();
       await refreshMeta();
       if (res.status === 'building' && res.runId) {
-        await poll(res.runId);
+        void poll(res.runId);
       } else {
         buildingRef.current = false;
         setBuilding(false);
+        await refreshMeta();
+        if (res.status === 'ready') message.info('当天数据已是最新，无需重复生成');
       }
-    } catch {
+    } catch (error) {
       buildingRef.current = false;
       setBuilding(false);
+      const responseMessage = (error as { response?: { data?: { message?: string | string[] } } }).response?.data?.message;
+      message.error(Array.isArray(responseMessage) ? responseMessage.join('；') : (responseMessage ?? '数据更新失败，请稍后重试'));
     }
   }, [poll, refreshMeta]);
 
