@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { App as AntdApp, Button, Card, Col, Descriptions, Drawer, Progress, Row, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
+import { writeWorkbook } from '@/utils/page-export-core';
 import {
   bizAnalysisOverview, bizAnalysisTrend, bizAnalysisByCity, bizAnalysisOverrunList, bizAnalysisAlerts, bizAnalysisYears,
   bizAggregateRecalc, bizAggregateCheck, bizContractDetail, bizContractList, bizOrderRows, bizCostList, BizContractDetail,
@@ -97,19 +98,12 @@ export default function BizAnalysis() {
         const overrun = overruns.find((o) => o.type === 'city' && o.cityId === r.cityId);
         return [String(r.cityName ?? r.cityId ?? '-'), String(Number(r.contractCount) || 0), fenToYuan(Number(r.contractAmountFen) || 0), fenToYuan(Number(r.orderCompletionFen) || 0), fenToYuan(Number(r.offlineCompletionFen) || 0), fenToYuan(Number(r.grossProfitFen) || 0), fenToYuan(Number(r.costFen) || 0), fenToYuan(Number(r.netProfitFen) || 0), overrun ? `超额${fenToYuan(Number(overrun.overrunFen))}` : '-'];
       });
-      // Neutralize formula-like text fields while preserving numeric amount semantics.
-      const escapeCsv = (v: string, isNumeric: boolean) => {
-        const neutral = (!isNumeric && /^\s*[=+\-@]/.test(v)) ? "'" + v : v;
-        return /[",\n]/.test(neutral) ? '"' + neutral.replace(/"/g, '""') + '"' : neutral;
-      };
-      const csv = '\uFEFF' + [header, ...rows]
-        .map((r) => r.map((v, i) => escapeCsv(v, i >= 1 && i <= 7)).join(','))
-        .join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `经营分析-地市指标-${filterYear ?? '累计'}${filterMonth ? filterMonth : '全年'}.csv`;
-      a.click(); URL.revokeObjectURL(url);
+      writeWorkbook(`经营分析-地市指标-${filterYear ?? '累计'}${filterMonth ? filterMonth : '全年'}.xlsx`, [
+        { name: '地市指标', rows: [header, ...rows] },
+        { name: '月度趋势', rows: [Object.keys(trend[0] ?? { month: '' }), ...trend.map((row) => Object.values(row))] },
+        { name: '合同预警', rows: [Object.keys(contractAlerts[0] ?? { contractNo: '' }), ...visibleAlerts.map((row) => Object.values(row))] },
+        { name: '超额清单', rows: [Object.keys(overruns[0] ?? { type: '' }), ...overruns.map((row) => Object.values(row))] },
+      ]);
       msg.success(`已导出 ${rows.length} 条地市指标`);
     } finally {
       setExporting(false);
@@ -219,7 +213,7 @@ export default function BizAnalysis() {
           value={filterCity} onChange={(v) => setFilterCity(v ?? undefined)}
         />
         {(filterYear || filterMonth || filterCity) && <Button data-testid="analysis-clear-filter" onClick={() => { setFilterYear(undefined); setFilterMonth(undefined); setFilterCity(undefined); }}>清空筛选</Button>}
-        <Button data-testid="analysis-export" icon={<DownloadOutlined />} loading={exporting} onClick={onExport}>导出当前视图</Button>
+        <Button data-testid="analysis-export" icon={<DownloadOutlined />} loading={exporting} onClick={onExport}>导出 Excel</Button>
       </div>
       <div className="v3-note">年度/月份筛选影响经营金额、订单完工、成本、毛利、净利、地市对比、超额数据、月度趋势；选年度查全年、选年度+月份查指定年月、清空=累计。合同数量/合同额（库存口径）与到期/满额提醒为累计实时口径，不受年度/月份筛选影响。</div>
 

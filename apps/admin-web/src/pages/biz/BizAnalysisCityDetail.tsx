@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Button, Card, Descriptions, Drawer, message, Select, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
-import { ArrowLeftOutlined, HomeOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, DownloadOutlined, HomeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { ALLOCATION_STATUS_TEXT, bizAnalysisCityDetail, bizAnalysisCityDetailSnapshot, bizAnalysisYears, bizContractDetail, CONTRACT_STATUS_COLOR, CONTRACT_STATUS_TEXT, effectiveContractStatus, type BizContractDetail } from '@/api/biz.api';
+import { writeWorkbook } from '@/utils/page-export-core';
 
 /** 预警类型中文（与 BizContracts 视图保持一致） */
 const ALERT_LABEL: Record<string, string> = {
@@ -221,6 +222,14 @@ export default function BizAnalysisCityDetail() {
         <Space className="v3-page-head-actions" wrap>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/biz/analysis/cities')}>返回地市对比</Button>
           <Button icon={<HomeOutlined />} onClick={() => navigate('/biz/portal')}>返回门户首页</Button>
+          <Button icon={<DownloadOutlined />} disabled={!snapshot} onClick={() => writeWorkbook(`地市详情-${city?.name ?? cityId}-${year}.xlsx`, [
+            { name: '经营汇总', rows: [['指标', '金额（元）'], ['合同数', summary?.contractCount ?? 0], ['合同额', fenToYuan(summary?.contractAmountFen ?? 0)], ['订单完工', fenToYuan(summary?.orderCompletionFen ?? 0)], ['线下完工', fenToYuan(summary?.offlineCompletionFen ?? 0)], ['成本', fenToYuan(summary?.costFen ?? 0)], ['毛利', fenToYuan(summary?.grossProfitFen ?? 0)], ['净利', fenToYuan(summary?.netProfitFen ?? 0)]] },
+            { name: '合同明细', rows: contracts.length ? [Object.keys(contracts[0]), ...contracts.map((row) => Object.values(row))] : [['合同明细']] },
+            { name: '成本汇总', rows: costRows.length ? [Object.keys(costRows[0]), ...costRows.map((row) => Object.values(row))] : [['成本汇总']] },
+            { name: '成本明细', rows: (data?.costs ?? []).flatMap((row) => row.entries ?? []).length ? [Object.keys((data?.costs ?? []).flatMap((row) => row.entries ?? [])[0]), ...(data?.costs ?? []).flatMap((row) => row.entries ?? []).map((row) => Object.values(row))] : [['成本明细']] },
+            { name: '订单完工', rows: data?.orderCompletions?.length ? [Object.keys(data.orderCompletions[0]), ...data.orderCompletions.map((row) => Object.values(row))] : [['订单完工']] },
+            { name: '线下完工', rows: data?.offlineCompletions?.length ? [Object.keys(data.offlineCompletions[0]), ...data.offlineCompletions.map((row) => Object.values(row))] : [['线下完工']] },
+          ])}>导出 Excel</Button>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>刷新</Button>
         </Space>
       </div>

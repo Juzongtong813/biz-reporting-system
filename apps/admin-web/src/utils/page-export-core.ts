@@ -44,3 +44,17 @@ export function buildWorkbook(sheets: PageExportSheet[]): XLSX.WorkBook {
 export function writeWorkbook(fileName: string, sheets: PageExportSheet[]): void {
   XLSX.writeFile(buildWorkbook(sheets), fileName, { compression: true });
 }
+
+/** Export plain page rows without coupling the page to table column definitions. */
+export function exportPageRows(pageName: string, rows: Array<object>, scope = '当前筛选', fields?: string[]): void {
+  const records = rows as Array<Record<string, unknown>>;
+  const keys = fields ?? [...new Set(records.flatMap((row) => Object.keys(row)))];
+  const safe = (value: unknown) => {
+    if (typeof value !== 'string') return value;
+    return /^[=+\-@]/.test(value) ? `'${value}` : value;
+  };
+  writeWorkbook(makeExportFileName(pageName, scope, '导出'), [{
+    name: '数据',
+    rows: [keys, ...records.map((row) => keys.map((key) => safe(row[key])))],
+  }]);
+}

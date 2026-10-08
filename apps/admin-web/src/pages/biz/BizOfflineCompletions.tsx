@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Button, Card, Drawer, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import { bizOfflineList, bizOfflineCreate, bizOfflineSubmit, bizOfflineApprove, bizOfflineReject, bizOfflineVoid, bizOfflineRestore, bizContractList, bizContractDetail } from '@/api/biz.api';
 
 const { Title, Text } = Typography;
@@ -169,6 +170,7 @@ export default function BizOfflineCompletions() {
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
+          <Button icon={<DownloadOutlined />} disabled={!items.length} onClick={() => exportPageRows('线下完工', items)}>导出 Excel</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建完工</Button>
         </Space>
       </div>

@@ -7,6 +7,7 @@ import {
 import { DeleteOutlined, DownloadOutlined, EditOutlined, ExportOutlined, PlusOutlined, ReloadOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import * as XLSX from 'xlsx';
+import { exportPageRows } from '@/utils/page-export-core';
 import {
   bizAdminProvinces, bizAdminCities,
   bizContractList, bizContractCreate, bizContractDetail, bizContractUpdate,
@@ -57,6 +58,7 @@ export default function BizContracts() {
   const canRestoreContract = useBizPermission('operation.contract.restore');
   const canExportContract = useBizPermission('operation.contract.export');
   const [items, setItems] = useState<BizContractItem[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [pendingItems, setPendingItems] = useState<BizPendingContractRow[]>([]);
   const [provinces, setProvinces] = useState<Array<{ id: string; name: string }>>([]);
   const [cities, setCities] = useState<Array<{ id: string; name: string; provinceId: string; unitType?: 'city' | 'province_branch' }>>([]);
@@ -406,6 +408,18 @@ export default function BizContracts() {
     } catch (e) { message.error(errorText(e, '导出失败')); } finally { setBatchRunning(false); }
   };
 
+  const onExportCurrent = async () => {
+    setExporting(true);
+    try {
+      const filters = { ...(statusFilter && statusFilter !== 'needs_review' ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}), includeDeleted };
+      if (statusFilter === 'needs_review') exportPageRows('合同待维护', pendingItems);
+      else {
+        const result = await bizContractList(filters);
+        exportPageRows('合同管理', result.items, appliedKeyword || '当前筛选');
+      }
+    } finally { setExporting(false); }
+  };
+
   const onVoid = (id: string) => {
     Modal.confirm({
       title: '作废合同',
@@ -557,6 +571,7 @@ export default function BizContracts() {
         <Space className="v3-page-head-actions" wrap>
           {canUploadOrder === true && <Button onClick={() => navigate('/biz/orders')}>订单管理</Button>}
           {canCreateContract === true && <Button icon={<DownloadOutlined />} onClick={() => message.info('请从上传记录下载数据库重建的原始台账')}>原始台账下载</Button>}
+          {canExportContract === true && <Button icon={<DownloadOutlined />} loading={exporting} disabled={!items.length && !pendingItems.length} onClick={() => void onExportCurrent()}>导出 Excel</Button>}
           {(canCreateContract === true || canBatchCreate === true) && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入合同</Button>}
           {canUpdateContract === true && <Button disabled={!selectedRowKeys.length} loading={batchRunning} onClick={() => void runBatch(true)}>批量校验</Button>}
           {canUpdateContract === true && <Button type="primary" disabled={!selectedRowKeys.length} loading={batchRunning} onClick={onBatchActivate}>批量生效</Button>}

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Progress, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { DownloadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
   bizCities, bizProvinces, bizContractBatchFeeRates, bizContractCopyFeeRates, bizContractDetail,
   bizContractLedger, CONTRACT_STATUS_COLOR, CONTRACT_STATUS_TEXT, effectiveContractStatus, type BizContractDetail, type BizContractLedgerItem,
 } from '@/api/biz.api';
 import { useBizPermission } from '@/utils/biz-permission';
+import { exportPageRows } from '@/utils/page-export-core';
 
 const { Title, Text } = Typography;
 
@@ -32,6 +33,7 @@ export default function BizContractOverview() {
   const [detail, setDetail] = useState<BizContractDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [rateSaving, setRateSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [rateForm] = Form.useForm();
   const [copyForm] = Form.useForm();
   const canManageRates = useBizPermission('operation.contract.rate');
@@ -68,6 +70,16 @@ export default function BizContractOverview() {
   const reloadDetail = async () => {
     if (!detail) return;
     setDetail(await bizContractDetail(detail.contract.id));
+  };
+
+  const exportLedger = async () => {
+    setExporting(true);
+    try {
+      const params = { keyword: keyword.trim() || undefined, provinceId, cityId, status, startDate: dates[0]?.format('YYYY-MM-DD'), endDate: dates[1]?.format('YYYY-MM-DD') };
+      const first = await bizContractLedger({ ...params, page: 1, pageSize: 200 });
+      const pages = await Promise.all(Array.from({ length: Math.ceil(first.total / first.pageSize) - 1 }, (_, index) => bizContractLedger({ ...params, page: index + 2, pageSize: first.pageSize })));
+      exportPageRows('合同概览', [first.items, ...pages.map((result) => result.items)].flat(), '当前筛选');
+    } finally { setExporting(false); }
   };
 
   const saveRates = async (values: { cityIds: string[]; effectiveMonth: Dayjs; ratePercent: number; changeReason?: string }) => {
@@ -139,7 +151,7 @@ export default function BizContractOverview() {
       </Space>
     </Card>
     {liveFallback && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="当前无可用快照，以下为实时聚合数据（状态：live）。点击顶部「更新数据」生成快照后将切换为快照口径。" />}
-    <Card title={`已生效合同（${total}）`}>
+    <Card title={`已生效合同（${total}）`} extra={<Button icon={<DownloadOutlined />} loading={exporting} disabled={!total} onClick={() => void exportLedger()}>导出 Excel</Button>}>
       <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={items} scroll={{ x: 1120 }} onRow={(row) => ({ onClick: () => void openDetail(row.contractId), style: { cursor: 'pointer' } })} pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }} />
     </Card>
     <Drawer title={detail ? `${detail.contract.contractName} / ${detail.contract.contractNo}` : '合同详情'} open={detailOpen} onClose={() => setDetailOpen(false)} width="88%">

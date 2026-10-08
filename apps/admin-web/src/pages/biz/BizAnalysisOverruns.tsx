@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Card, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Space, Table, Tag, Typography, message } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
 import { bizSnapshotDashboard, type BizDashboardResult } from '@/api/biz.api';
 import { BizAnalysisFilter, EMPTY_ANALYSIS_FILTER, type AnalysisFilterValue } from '@/components/biz/BizAnalysisFilter';
 import { useBizAnalysisOptions } from '@/components/biz/BizAnalysisOptionsContext';
+import { exportPageRows } from '@/utils/page-export-core';
 
 const { Title } = Typography;
 function fenToYuan(value: number): string { return (Number(value || 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -57,7 +59,7 @@ export default function BizAnalysisOverruns() {
 
   return (
     <div className="v3-content">
-      <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>超额清单</Title></div><Space wrap /></div>
+      <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>超额清单</Title></div><Space wrap><Button icon={<DownloadOutlined />} disabled={!items.length} onClick={() => exportPageRows('超额清单', items, filter.year || '全部年度')}>导出 Excel</Button></Space></div>
       <BizAnalysisFilter value={filter} onChange={setFilter} />
       <Card size="small" style={{ marginTop: 12 }} title="合同与地市超额" loading={loading}>
         <Table scroll={{ x: 'max-content' }} size="small" rowKey={(row) => `${row.type}-${row.contractId ?? row.cityId}-${row.overrunFen}`} pagination={{ pageSize: 20 }} dataSource={items}

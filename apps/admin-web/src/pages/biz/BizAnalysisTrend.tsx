@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Space, Spin, Typography } from 'antd';
+import { Button, Card, Space, Spin, Typography } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import { bizSnapshotDashboard } from '@/api/biz.api';
 import { BizAnalysisFilter, EMPTY_ANALYSIS_FILTER, type AnalysisFilterValue } from '@/components/biz/BizAnalysisFilter';
 import { useBizAnalysisOptions } from '@/components/biz/BizAnalysisOptionsContext';
+import { exportPageRows } from '@/utils/page-export-core';
 
 const { Title } = Typography;
 
@@ -125,6 +127,11 @@ export default function BizAnalysisTrend() {
     return map;
   }, [months, items]);
 
+  const trendRows = useMemo(() => months.map((month) => {
+    const bucket = byMonth.get(month) ?? emptyBucket();
+    return { month, orderCompletionFen: bucket.orderCompletionFen, offlineCompletionFen: bucket.offlineCompletionFen, grossProfitFen: bucket.grossProfitFen, netProfitFen: bucket.netProfitFen };
+  }), [months, byMonth]);
+
   const hasData = useMemo(
     () =>
       months.some((m) => {
@@ -195,7 +202,7 @@ export default function BizAnalysisTrend() {
           <Title level={4} style={{ margin: 0 }}>月度趋势</Title>
           <Typography.Text type="secondary">{filter.year ? `${filter.year}年度` : '全部期间'}</Typography.Text>
         </div>
-        <Space wrap />
+        <Space wrap><Button icon={<DownloadOutlined />} disabled={!items.length} onClick={() => exportPageRows('月度趋势', trendRows, filter.year || '全部年度')}>导出 Excel</Button></Space>
       </div>
       <BizAnalysisFilter value={filter} onChange={setFilter} />
       <Card size="small" style={{ marginTop: 12 }} title={filter.year ? `${filter.year}年月度经营趋势` : '月度经营趋势'}>

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd';
-import { BellOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { BellOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   bizAdminCities, bizAdminProvinces, bizAnnouncementCreate, bizAnnouncementManageList, bizAnnouncementPublish,
   bizAnnouncementUpdate, bizAnnouncementWithdraw, bizMe, bizMessageList, bizMessageMarkRead,
   type BizAnnouncementDto, type BizInboxItem,
 } from '@/api/biz.api';
+import { writeWorkbook } from '@/utils/page-export-core';
 
 const { Title, Paragraph } = Typography;
 type ScopeOption = { id: string; name: string; provinceId?: string };
@@ -100,7 +101,7 @@ export default function BizMessages() {
   ];
 
   return <div className="v3-content">
-    <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}><BellOutlined /> 消息中心 {unreadCount > 0 && <Tag color="blue">{unreadCount} 条未读</Tag>}</Title></div><Space><Button icon={<ReloadOutlined />} onClick={() => { void loadInbox(); void loadManage(); }}>刷新</Button>{canManage && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>发布公告</Button>}</Space></div>
+    <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}><BellOutlined /> 消息中心 {unreadCount > 0 && <Tag color="blue">{unreadCount} 条未读</Tag>}</Title></div><Space><Button icon={<DownloadOutlined />} disabled={!inbox.length && !announcements.length} onClick={() => writeWorkbook('消息中心.xlsx', [{ name: '收件箱', rows: [['状态', '类型', '标题', '内容', '时间'], ...inbox.map((row) => [row.status === 'unread' ? '未读' : '已读', row.messageType, row.title, row.content, row.createdAt])] }, ...(canManage ? [{ name: '公告管理', rows: [['标题', '范围', '状态', '发布时间'], ...announcements.map((row) => [row.title, row.audienceType === 'all' ? '全省' : row.audienceType === 'city' ? '指定地市' : '指定省份', statusLabels[String(row.status)]?.label ?? row.status, row.publishAt])] }] : [])])}>导出 Excel</Button><Button icon={<ReloadOutlined />} onClick={() => { void loadInbox(); void loadManage(); }}>刷新</Button>{canManage && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>发布公告</Button>}</Space></div>
     <Tabs items={[{ key: 'inbox', label: `消息收件箱${unreadCount ? ` (${unreadCount})` : ''}`, children: <Card size="small"><Table size="small" rowKey={(item) => `${item.source}-${item.id}`} loading={loading} columns={inboxColumns} dataSource={inbox} pagination={{ pageSize: 20 }} onRow={(item) => ({ onDoubleClick: () => void markRead(item) })} locale={{ emptyText: '暂无消息' }} /></Card> }, ...(canManage ? [{ key: 'manage', label: '公告管理', children: <Card size="small"><Table size="small" rowKey={(item) => String(item.id)} loading={manageLoading} columns={manageColumns} dataSource={announcements} pagination={{ pageSize: 20 }} locale={{ emptyText: '暂无公告' }} /></Card> }] : [])]} />
     <Modal title={editingId ? '编辑公告草稿' : '新建公告'} open={modalOpen} confirmLoading={saving} okText="保存草稿" cancelText="取消" onCancel={() => { if (!saving) setModalOpen(false); }} onOk={() => { void form.submit(); }} destroyOnClose>
       <Form form={form} layout="vertical" onFinish={(values) => void saveAnnouncement(values)}>

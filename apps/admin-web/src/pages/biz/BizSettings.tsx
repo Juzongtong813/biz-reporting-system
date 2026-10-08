@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Form, Input, Select, Space, Switch, Table, TimePicker, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import dayjs from 'dayjs';
 import { bizSettingsList, bizSettingUpdate, type BizSnapshotMetadata } from '@/api/biz.api';
 import { useBizSnapshot } from '@/components/biz/BizSnapshotContext';
@@ -128,7 +130,7 @@ export default function BizSettings() {
         </div>
         <Space className="v3-page-head-actions" wrap>
           <Button onClick={() => navigate('/biz/operation')}>返回经营管理</Button>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
+          <Button icon={<DownloadOutlined />} disabled={!genericItems.length} onClick={() => exportPageRows('系统设置', genericItems.filter((item) => !/secret|token|password|key|密钥|密码|令牌/i.test(item.key)), '非敏感设置', ['key', 'description', 'value'])}>导出 Excel</Button><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>
         </Space>
       </div>
       <Card>

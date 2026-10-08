@@ -13,6 +13,8 @@ import { useBizSnapshot } from '@/components/biz/BizSnapshotContext';
 import { BizAnalysisFilter, EMPTY_ANALYSIS_FILTER, type AnalysisFilterValue } from '@/components/biz/BizAnalysisFilter';
 import { useBizAnalysisOptions } from '@/components/biz/BizAnalysisOptionsContext';
 import { ALERT_TYPE_OPTIONS, alertTypeLabel, normalizeAlerts, selectVisibleAlerts } from '@/utils/alert-filter';
+import { DownloadOutlined } from '@ant-design/icons';
+import { writeWorkbook } from '@/utils/page-export-core';
 const { Title } = Typography;
 function fenToYuan(value: number | null | undefined): string { return (Number(value ?? 0) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 type Summary = Record<string, unknown>;
@@ -32,6 +34,9 @@ export default function BizAnalysisOverview() {
   const [filter, setFilter] = useState<AnalysisFilterValue>(EMPTY_ANALYSIS_FILTER);
   const [overview, setOverview] = useState<Summary | null>(null);
   const [alerts, setAlerts] = useState<Array<Record<string, unknown>>>([]);
+  const [trendRows, setTrendRows] = useState<Array<Record<string, unknown>>>([]);
+  const [cityRows, setCityRows] = useState<Array<Record<string, unknown>>>([]);
+  const [overrunRows, setOverrunRows] = useState<Array<Record<string, unknown>>>([]);
   /** 预警类型多选：空数组 = 全部真实预警。纯前端筛选，不触发整页数据重新请求 */
   const [alertTypes, setAlertTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,6 +83,9 @@ export default function BizAnalysisOverview() {
         // 过滤 none/normal，并按 contractId + alertType + cityId 去重
         // （快照按"合同 × 活跃地市分配"写入，同一合同同一类型可能出现多地市行）
         setAlerts(normalizeAlerts(d.contractAlerts?.items as Array<Record<string, unknown>>));
+        setTrendRows(d.trend?.items ?? []);
+        setCityRows(d.byCity?.items ?? []);
+        setOverrunRows(d.overruns?.items ?? []);
       })
       .catch(() => {
         if (controller.signal.aborted || seq !== seqRef.current) return;
@@ -117,7 +125,17 @@ export default function BizAnalysisOverview() {
   };
 
   return <div className="v3-content"><div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>经营概览</Title><Typography.Text type="secondary">{periodLabel(filter)}</Typography.Text></div><Space wrap>
-    <Button onClick={() => setRefreshTick((tick) => tick + 1)}>刷新数据</Button>
+    <Button icon={<DownloadOutlined />} disabled={!overview} onClick={() => {
+      const metrics = Object.entries(overview ?? {});
+      const toRows = (rows: Array<Record<string, unknown>>) => [Object.keys(rows[0] ?? { empty: '' }), ...rows.map((row) => Object.values(row))];
+      writeWorkbook(`经营概览-${periodLabel(filter)}.xlsx`, [
+        { name: '指标汇总', rows: [['指标', '数值（分）'], ...metrics] },
+        { name: '月度趋势', rows: toRows(trendRows) },
+        { name: '地市对比', rows: toRows(cityRows) },
+        { name: '合同预警', rows: toRows(visibleAlerts) },
+        { name: '超额清单', rows: toRows(overrunRows) },
+      ]);
+    }}>导出 Excel</Button><Button onClick={() => setRefreshTick((tick) => tick + 1)}>刷新数据</Button>
   </Space></div>
     <BizAnalysisFilter value={filter} onChange={setFilter} />
     <Row gutter={[12, 12]} style={{ marginTop: 12 }}>

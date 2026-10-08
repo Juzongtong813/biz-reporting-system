@@ -4,6 +4,7 @@ import { useBizPermission } from '@/utils/biz-permission';
 import { Badge, Button, Card, Drawer, Form, Input, Modal, Progress, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd';
 import { DownloadOutlined, InboxOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { exportPageRows } from '@/utils/page-export-core';
 import {
   bizAdminCities, bizAdminProvinces, bizContractList, bizMe, bizOrderBatches, bizOrderBatchDetail, bizOrderBatchDelete, bizOrderUpload, bizOrderRows, bizOrderRowMaintain, bizOrderReviewExport,
 } from '@/api/biz.api';
@@ -39,6 +40,7 @@ export default function BizOrders() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [overrunFilter, setOverrunFilter] = useState<string | undefined>();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
+  const [rowTotal, setRowTotal] = useState(0);
   const [rowsLoading, setRowsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -84,10 +86,18 @@ export default function BizOrders() {
     try {
       const data = await bizOrderRows(overrunFilter ? { overrun: overrunFilter as 'city' | 'contract' | 'any' } : {});
       setRows(data.items);
+      setRowTotal(data.total);
     } finally {
       setRowsLoading(false);
     }
   }, [overrunFilter]);
+
+  const exportRows = async () => {
+    const first = await bizOrderRows({ ...(overrunFilter ? { overrun: overrunFilter as 'city' | 'contract' | 'any' } : {}), page: 1, pageSize: 500 });
+    const pages = await Promise.all(Array.from({ length: Math.ceil(first.total / first.pageSize) - 1 }, (_, index) => bizOrderRows({ ...(overrunFilter ? { overrun: overrunFilter as 'city' | 'contract' | 'any' } : {}), page: index + 2, pageSize: first.pageSize })));
+    const allRows = [first.items, ...pages.map((page) => page.items)].flat();
+    exportPageRows('订单管理', allRows, overrunFilter || '当前有效订单');
+  };
 
   useEffect(() => {
     if (canUpload !== true) return;
@@ -358,6 +368,7 @@ export default function BizOrders() {
             ]}
           />
           <Button icon={<ReloadOutlined />} onClick={() => { void load(); void loadRows(); }}>刷新</Button>
+          <Button icon={<DownloadOutlined />} disabled={!rowTotal} onClick={() => void exportRows()}>导出 Excel</Button>
           <Button onClick={() => navigate('/biz/operation')}>返回合同管理</Button>
         </Space>
       </div>

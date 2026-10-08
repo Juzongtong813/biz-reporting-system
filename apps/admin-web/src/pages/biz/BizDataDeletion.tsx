@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Card, Input, Modal, Select, Space, Spin, Table, Tag, Typography, message } from 'antd';
-import { DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import dayjs from 'dayjs';
 import {
   bizMe, bizSuperDelete, bizSuperDeleteList, bizSuperDeleteResources,
@@ -89,7 +90,7 @@ export default function BizDataDeletion() {
     <div className="v3-content">
       <div className="v3-page-head">
         <div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>数据删除</Title></div>
-        <Button icon={<ReloadOutlined />} onClick={() => void loadItems()}>刷新</Button>
+        <Space><Button icon={<DownloadOutlined />} disabled={!items.length} onClick={() => exportPageRows('数据删除记录', items)}>导出 Excel</Button><Button icon={<ReloadOutlined />} onClick={() => void loadItems()}>刷新</Button></Space>
       </div>
       <Card>
         <Space wrap style={{ marginBottom: 16 }}>

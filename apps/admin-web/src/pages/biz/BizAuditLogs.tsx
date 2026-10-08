@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, DatePicker, Input, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import dayjs, { type Dayjs } from 'dayjs';
 import { bizAdminListUsers, bizOperationLogs } from '@/api/biz.api';
 import { useBizPermission } from '@/utils/biz-permission';
@@ -36,6 +37,7 @@ export default function BizAuditLogs() {
   const [actionType, setActionType] = useState<string>();
   const [targetType, setTargetType] = useState<string>();
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const loadUsers = useCallback(async () => {
     const data = await bizAdminListUsers();
@@ -65,6 +67,19 @@ export default function BizAuditLogs() {
       setLoading(false);
     }
   }, [actionType, dateRange, targetType, username]);
+
+  const exportLogs = async () => {
+    setExporting(true);
+    try {
+      const filters = {
+        ...(username ? { operatorUserId: username } : {}), ...(actionType ? { actionType } : {}), ...(targetType ? { targetType } : {}),
+        ...(dateRange?.[0] ? { dateFrom: dateRange[0].startOf('day').toISOString() } : {}), ...(dateRange?.[1] ? { dateTo: dateRange[1].endOf('day').toISOString() } : {}),
+      };
+      const first = await bizOperationLogs({ ...filters, page: 1, pageSize: 100 });
+      const pages = await Promise.all(Array.from({ length: Math.ceil(first.total / first.pageSize) - 1 }, (_, index) => bizOperationLogs({ ...filters, page: index + 2, pageSize: first.pageSize })));
+      exportPageRows('审计日志', [first.items, ...pages.map((result) => result.items)].flat(), '当前筛选');
+    } finally { setExporting(false); }
+  };
 
   useEffect(() => {
     if (canRead === true) {
@@ -104,7 +119,7 @@ export default function BizAuditLogs() {
           <Text type="secondary">按账号查看登录与业务操作记录，super 账号不展示。</Text>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} onClick={() => void loadLogs(1, pageSize)}>刷新</Button>
+          <Button icon={<DownloadOutlined />} loading={exporting} disabled={!total} onClick={() => void exportLogs()}>导出 Excel</Button><Button icon={<ReloadOutlined />} onClick={() => void loadLogs(1, pageSize)}>刷新</Button>
         </Space>
       </div>
       <Card style={{ marginBottom: 12 }}>

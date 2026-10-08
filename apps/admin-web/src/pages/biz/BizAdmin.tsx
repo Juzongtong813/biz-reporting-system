@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Spin } from 'antd';
 import { useBizPermission } from '@/utils/biz-permission';
 import { Alert, Badge, Button, Card, Drawer, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { DownloadOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import { Result } from 'antd';
 import {
   bizAdminCreateUser, bizAdminListUsers, bizAdminSetUserStatus, bizAdminResetPassword,
@@ -255,7 +256,7 @@ export default function BizAdmin() {
           <Title level={4} style={{ margin: 0 }}>账号与权限管理</Title>
         </div>
         <div className="v3-page-head-actions">
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
+          <Button icon={<DownloadOutlined />} disabled={!users.length} onClick={() => exportPageRows('账号权限', users.map(({ username, name, roleCode, status, cityId }) => ({ username, name, roleCode: ROLE_LABEL[String(roleCode)] ?? roleCode, status: status === 'enabled' ? '启用' : '停用', cityId })), '当前账号列表', ['username', 'name', 'roleCode', 'status', 'cityId'])}>导出 Excel</Button><Button icon={<ReloadOutlined />} onClick={() => { void load(); void loadDict(); }}>刷新</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建账号</Button>
         </div>
       </div>
       <Card title="用户管理">

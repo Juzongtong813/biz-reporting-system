@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined } from '@ant-design/icons';
+import { exportPageRows } from '@/utils/page-export-core';
 import {
   bizCostCategories, bizCostList, bizCostReturnMonthly, bizCostSaveMonthly, bizMe,
 } from '@/api/biz.api';
@@ -220,7 +222,7 @@ export default function BizCosts() {
   ];
 
   return <div className="v3-content">
-    <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>地市成本</Title></div><Space wrap><Button onClick={() => navigate('/biz/portal')}>门户首页</Button><Button icon={<ReloadOutlined />} onClick={() => { void loadItems(); void loadEditRows(); }}>刷新</Button></Space></div>
+    <div className="v3-page-head"><div className="v3-page-titles"><Title level={4} style={{ margin: 0 }}>地市成本</Title></div><Space wrap><Button icon={<DownloadOutlined />} disabled={!items.length} onClick={() => exportPageRows('地市成本', items, filterYear)}>导出 Excel</Button><Button onClick={() => navigate('/biz/portal')}>门户首页</Button><Button icon={<ReloadOutlined />} onClick={() => { void loadItems(); void loadEditRows(); }}>刷新</Button></Space></div>
     <Card size="small" style={{ marginBottom: 16 }}><Space wrap>
       <Select value={filterYear} onChange={setFilterYear} options={years.map((year) => ({ value: year, label: `${year}年` }))} style={{ width: 120 }} />
       <Select mode="multiple" maxTagCount="responsive" allowClear placeholder="可多选月份" value={filterMonths} onChange={setFilterMonths} options={MONTHS.map((month) => ({ value: month, label: `${Number(month)}月` }))} style={{ width: 220 }} />
