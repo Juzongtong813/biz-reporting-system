@@ -9,7 +9,7 @@ import dayjs from 'dayjs';
 import * as XLSX from 'xlsx';
 import { exportPageRows } from '@/utils/page-export-core';
 import {
-  bizAdminProvinces, bizAdminCities,
+  bizProvinces, bizAdminCities,
   bizContractList, bizContractCreate, bizContractDetail, bizContractUpdate,
   bizContractActivate, bizContractBatchActivate, bizContractBatchClearDrafts, bizContractVoid, bizContractUpsertAllocation,
   bizContractCancelAllocation, bizContractAddFeeRate,
@@ -99,7 +99,7 @@ export default function BizContracts() {
       const [list, pending, p, c, records] = await Promise.all([
         isPending ? Promise.resolve({ items: [] as BizContractItem[] }) : bizContractList({ ...(statusFilter ? { status: statusFilter } : {}), ...(appliedKeyword ? { keyword: appliedKeyword } : {}), includeDeleted }),
         isPending ? bizPendingContractRows(appliedKeyword) : Promise.resolve({ items: [] as BizPendingContractRow[] }),
-        bizAdminProvinces().catch(() => ({ items: [] })),
+        bizProvinces().catch(() => ({ items: [] })),
         bizAdminCities().catch(() => ({ items: [] })),
         bizContractImportRecords().catch(() => ({ items: [] })),
       ]);

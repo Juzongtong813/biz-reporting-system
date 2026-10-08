@@ -58,7 +58,7 @@ export class BizCommonController {
   async provinces(@BizAuthUser() auth: BizAuthContext) {
     const scope = auth.dataScope;
     let entities: ProvinceEntity[];
-    if (scope.allowAll) {
+    if (scope.allowAll || scope.scopeType === 'contract') {
       entities = await this.provinceRepo.find({ order: { code: 'ASC' } });
     } else {
       let provinceIds: string[] = [];

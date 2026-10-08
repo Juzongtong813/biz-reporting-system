@@ -61,7 +61,13 @@ export function BizAnalysisOptionsProvider({ children }: { children: ReactNode }
     });
     // 当前账号可访问城市（数据范围）随登录用户变化，每次挂载都拉取，不模块级缓存
     void bizMe()
-      .then((me) => { if (active) setState((prev) => ({ ...prev, accessibleCityIds: me.dataScope?.cityIds ?? null })); })
+      .then((me) => {
+        if (!active) return;
+        const cityIds = me.dataScope?.cityIds;
+        // An empty list means the scope is not restricted to explicit cities
+        // (for example super_admin/admin), rather than access to zero cities.
+        setState((prev) => ({ ...prev, accessibleCityIds: cityIds?.length ? cityIds : null }));
+      })
       .catch(() => { if (active) setState((prev) => ({ ...prev, accessibleCityIds: null })); });
     return () => {
       active = false;
