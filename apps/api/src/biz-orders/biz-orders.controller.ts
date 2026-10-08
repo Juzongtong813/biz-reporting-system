@@ -34,6 +34,22 @@ export class BizOrdersController {
     private readonly deletionService: BizDataDeletionService,
   ) {}
 
+  @Post('upload-part')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } }))
+  @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
+  async uploadPart(@BizAuthUser() auth: BizAuthContext, @UploadedFile() file: Express.Multer.File,
+    @Body() body: { key: string; index: string; count: string; filename: string; sourceBatchId?: string }) {
+    return this.service.uploadPart(auth, file, { key: body.key || '', index: Number(body.index),
+      count: Number(body.count), filename: body.filename || '', sourceBatchId: body.sourceBatchId });
+  }
+
+  @Post('upload-complete')
+  @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
+  async completeUpload(@BizAuthUser() auth: BizAuthContext, @Body('key') key: string) {
+    const batch = await this.service.completeUpload(auth, key || '');
+    return { batchId: batch.id, status: batch.status };
+  }
+
   @Post('upload')
   @UseInterceptors(FileInterceptor('file', {
     storage: memoryStorage(),

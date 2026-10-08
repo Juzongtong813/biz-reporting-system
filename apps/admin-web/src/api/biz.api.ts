@@ -357,18 +357,26 @@ export function bizContractExport(params?: { ids?: string[]; includeDeleted?: bo
 
 // ================= 订单域（M4） =================
 
-export function bizOrderUpload(file: File, idempotencyKey: string, onProgress?: (percent: number) => void, sourceBatchId?: string): Promise<{ batchId: string; status: string }> {
-  const form = new FormData();
-  form.append('idempotencyKey', idempotencyKey);
-  if (sourceBatchId) form.append('sourceBatchId', sourceBatchId);
-  form.append('file', file);
-  return request.post('/biz/orders/upload', form, {
-    timeout: 10 * 60_000,
-    headers: { 'Content-Type': 'multipart/form-data' },
-    onUploadProgress: (event) => {
-      if (event.total) onProgress?.(Math.round((event.loaded / event.total) * 100));
-    },
-  }).then((r) => r.data);
+export async function bizOrderUpload(file: File, idempotencyKey: string, onProgress?: (percent: number) => void, sourceBatchId?: string): Promise<{ batchId: string; status: string }> {
+  if (!file.size || file.size > 50 * 1024 * 1024) throw new Error('文件不能为空且不能超过 50MB');
+  const partSize = 4 * 1024 * 1024;
+  const count = Math.ceil(file.size / partSize);
+  for (let index = 0; index < count; index += 1) {
+    const form = new FormData();
+    form.append('key', idempotencyKey);
+    form.append('index', String(index));
+    form.append('count', String(count));
+    form.append('filename', file.name);
+    if (sourceBatchId) form.append('sourceBatchId', sourceBatchId);
+    form.append('file', file.slice(index * partSize, (index + 1) * partSize), 'part.bin');
+    await request.post('/biz/orders/upload-part', form, {
+      timeout: 120_000,
+      onUploadProgress: (event) => {
+        if (event.total) onProgress?.(Math.round((index + event.loaded / event.total) / count * 100));
+      },
+    });
+  }
+  return request.post('/biz/orders/upload-complete', { key: idempotencyKey }, { timeout: 10 * 60_000 }).then((r) => r.data);
 }
 
 export async function bizOrderReviewExport(id: string): Promise<Blob> {

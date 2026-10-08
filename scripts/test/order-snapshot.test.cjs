@@ -7,12 +7,13 @@ const { BizOrderRowEntity } = require('../../apps/api/dist/orders/biz-order-row.
 const { BizOrderImportBatchEntity } = require('../../apps/api/dist/orders/biz-order-import-batch.entity');
 const { BizOrderImportErrorEntity } = require('../../apps/api/dist/orders/biz-order-import-error.entity');
 const { BizOrderImportService } = require('../../apps/api/dist/biz-orders/biz-order-import.service');
+const { BizOrderUploadPartEntity } = require('../../apps/api/dist/orders/biz-order-upload-part.entity');
 const XLSX = req('xlsx');
 const { ORDER_TEMPLATE_COLUMNS } = require('../../packages/shared-types/dist');
 const fs = require('node:fs');
 const os = require('node:os');
 (async () => {
-  const ds = new DataSource({type:'better-sqlite3', database:':memory:', entities:[BizOrderRowEntity,BizOrderImportBatchEntity,BizOrderImportErrorEntity], synchronize:true});
+  const ds = new DataSource({type:'better-sqlite3', database:':memory:', entities:[BizOrderRowEntity,BizOrderImportBatchEntity,BizOrderImportErrorEntity,BizOrderUploadPartEntity], synchronize:true});
   await ds.initialize();
   await ds.query('CREATE TABLE biz_order_snapshot_lock (id INTEGER PRIMARY KEY, revision INTEGER)');
   await ds.query('INSERT INTO biz_order_snapshot_lock VALUES (1,0)');
@@ -47,5 +48,21 @@ const os = require('node:os');
       console.log(JSON.stringify({realRows:batch.totalRows,seconds:(Date.now()-started)/1000,rssMB:Math.round(process.memoryUsage().rss/1048576)}));
     }
     console.log('ORDER_SNAPSHOT_OK replacement, history preservation, failure retention, historical maintenance rejection');
+    const input={key:'parts-test',index:0,count:2,filename:'orders.xlsx'};
+    const firstPart={buffer:Buffer.alloc(4*1024*1024,1)};
+    await svc.uploadPart(auth,firstPart,input);
+    await svc.uploadPart(auth,firstPart,input);
+    assert.equal(await ds.getRepository(BizOrderUploadPartEntity).count(),1,'part retry must be idempotent');
+    await assert.rejects(()=>svc.uploadPart({...auth,userId:'other'},firstPart,input),/冲突/);
+    await assert.rejects(()=>svc.completeUpload(auth,input.key),/不完整/);
+    const tail={buffer:Buffer.from('tail')};
+    await svc.uploadPart(auth,tail,{...input,index:1});
+    let merged;
+    svc.upload=async (_auth,file)=>{merged=file.buffer;return {id:'merged',status:'parsing'};};
+    const complete=await svc.completeUpload(auth,input.key);
+    assert.equal(complete.id,'merged');
+    assert.deepEqual(merged,Buffer.concat([firstPart.buffer,tail.buffer]));
+    assert.equal(await ds.getRepository(BizOrderUploadPartEntity).count(),0,'parts cleaned after completion');
+    console.log('ORDER_UPLOAD_PARTS_OK merge, retry, ownership, incomplete rejection, cleanup');
   } finally {await ds.destroy(); fs.rmSync(dir,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

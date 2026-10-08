@@ -28,6 +28,7 @@ import { BizContractsService } from '../biz-contracts/biz-contracts.service';
 import { BizAggregateService } from '../biz-aggregates/biz-aggregate.service';
 import { BizAuthContext } from '../rbac/rbac.service';
 import { BizSnapshotRegistryEntity } from '../biz-snapshots/biz-snapshot-registry.entity';
+import { BizOrderUploadPartEntity } from '../orders/biz-order-upload-part.entity';
 
 interface PendingRow {
   sourceRowNo: number;
@@ -124,6 +125,55 @@ export class BizOrderImportService {
   }
 
   /** 上传：创建批次（PARSING）→ 后台解析；返回批次 ID 供轮询 */
+  async uploadPart(auth: BizAuthContext, file: Express.Multer.File, input: {
+    key: string; index: number; count: number; filename: string; sourceBatchId?: string;
+  }): Promise<{ received: true }> {
+    const partBytes = 4 * 1024 * 1024;
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(input.key) || !Number.isInteger(input.index)
+      || !Number.isInteger(input.count) || input.count < 1 || input.count > 13
+      || input.index < 0 || input.index >= input.count || !file?.buffer?.length
+      || file.buffer.length > partBytes || (input.index < input.count - 1 && file.buffer.length !== partBytes)
+      || input.filename.length > 255 || !input.filename.toLowerCase().endsWith('.xlsx')) {
+      throw new BadRequestException('文件分片参数无效');
+    }
+    if (!input.sourceBatchId && auth.dataScope.scopeType !== 'all') throw new ForbiddenException('全量总表替换需要全部数据范围权限');
+    const repo = this.dataSource.getRepository(BizOrderUploadPartEntity);
+    await repo.createQueryBuilder().delete().where('created_at < :cutoff', { cutoff: new Date(Date.now() - 24 * 3600_000) }).execute();
+    const part = { uploadKey: input.key, partIndex: input.index, userId: auth.userId,
+      partCount: input.count, filename: input.filename, sourceBatchId: input.sourceBatchId || null,
+      dataBase64: file.buffer.toString('base64') };
+    await repo.createQueryBuilder().insert().values(part).orIgnore().execute();
+    const stored = await repo.findOneByOrFail({ uploadKey: input.key, partIndex: input.index });
+    if (stored.userId !== auth.userId || stored.partCount !== part.partCount || stored.filename !== part.filename
+      || stored.sourceBatchId !== part.sourceBatchId || stored.dataBase64 !== part.dataBase64) {
+      throw new BadRequestException('分片冲突，请重新上传文件');
+    }
+    return { received: true };
+  }
+
+  async completeUpload(auth: BizAuthContext, key: string): Promise<BizOrderImportBatchEntity> {
+    const existing = await this.batchRepo.findOneBy({ idempotencyKey: key });
+    if (existing) {
+      if (existing.uploadedBy !== auth.userId) throw new ForbiddenException('无权访问该上传');
+      return existing;
+    }
+    const repo = this.dataSource.getRepository(BizOrderUploadPartEntity);
+    const parts = await repo.find({ where: { uploadKey: key }, order: { partIndex: 'ASC' } });
+    if (!parts.length || parts.some((p) => p.userId !== auth.userId)) throw new ForbiddenException('上传不存在或无权访问');
+    const first = parts[0];
+    if (parts.length !== first.partCount || parts.some((p, i) => p.partIndex !== i
+      || p.partCount !== first.partCount || p.filename !== first.filename || p.sourceBatchId !== first.sourceBatchId)) {
+      throw new BadRequestException('分片不完整，请重新上传');
+    }
+    const buffer = Buffer.concat(parts.map((p) => Buffer.from(p.dataBase64, 'base64')));
+    if (buffer.length > ORDER_FILE_MAX_BYTES) throw new BadRequestException('文件超过 50MB 上限');
+    try {
+      return await this.upload(auth, { buffer, originalname: first.filename } as Express.Multer.File, key, first.sourceBatchId || undefined);
+    } finally {
+      await repo.delete({ uploadKey: key, userId: auth.userId });
+    }
+  }
+
   async upload(auth: BizAuthContext, file: Express.Multer.File, idempotencyKey: string, sourceBatchId?: string): Promise<BizOrderImportBatchEntity> {
     if (!file) throw new BadRequestException('缺少上传文件');
     const filename = (file.originalname ?? 'upload.xlsx').trim();

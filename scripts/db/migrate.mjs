@@ -697,6 +697,12 @@ async function inspectState(version) {
       adapter.tableExists('biz_order_snapshot_lock'),
     ]);
   }
+  if (version === '031_order_upload_parts') {
+    return allOrNothing([
+      adapter.tableExists('biz_order_upload_parts'),
+      adapter.indexExists('biz_order_upload_parts', 'idx_order_upload_created'),
+    ]);
+  }
   fail(`STATE_CHECK_MISSING version=${version}`);
 }
 
