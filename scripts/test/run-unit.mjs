@@ -19,6 +19,7 @@ const localTests = [
   'apps/api/test/import-overwrite.test.cjs',
   'apps/api/test/legacy-role-migration.test.cjs',
   'apps/api/test/security-scope.test.cjs',
+  'apps/api/test/snapshot-manual-refresh.test.cjs',
   'apps/api/test/year-summary-source.test.cjs',
   'apps/api/test/auth-rate-limit.integration.mjs',
   'apps/api/test/export-access.integration.mjs',

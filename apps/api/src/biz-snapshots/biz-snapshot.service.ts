@@ -151,7 +151,8 @@ export class BizSnapshotService implements OnModuleInit {
    * 幂等：
    *  - 同一 asOf 已在构建中 → 直接返回已有 runId；
    *  - DB 中已存在 building 任务（定时/其他实例）→ 直接返回；
-   *  - 否则创建新 run 并异步构建（不阻塞 HTTP 请求）。
+   *  - 手动请求遇到当天已完成快照时重新计算；自动任务遇到 ready 快照则跳过；
+   *  - 否则创建/复用 run 并异步构建（不阻塞 HTTP 请求）。
    */
   async requestBuild(asOf: string, source: 'manual' | 'auto' = 'manual'): Promise<{ runId: string; status: SnapshotStatus }> {
     const inflight = this.buildLocks.get(asOf);
@@ -160,9 +161,12 @@ export class BizSnapshotService implements OnModuleInit {
     const existingBuilding = await this.runRepo.findOne({ where: { status: 'building' }, order: { startedAt: 'DESC' } });
     if (existingBuilding) return { runId: existingBuilding.id, status: 'building' };
 
-    // as_of 唯一约束要求同一业务日复用既有记录；失败任务可重试，成功任务则无需重复全量计算。
+    // as_of 唯一约束要求同一业务日复用既有记录。手动点击代表明确要求刷新，
+    // 而定时任务仍对 ready 快照幂等跳过，避免每天重复全量计算。
     const previousRun = await this.runRepo.findOne({ where: { asOf } });
-    if (previousRun?.status === 'ready') return { runId: previousRun.id, status: 'ready' };
+    if (previousRun?.status === 'ready' && source === 'auto') {
+      return { runId: previousRun.id, status: 'ready' };
+    }
 
     const run = previousRun
       ? Object.assign(previousRun, {
