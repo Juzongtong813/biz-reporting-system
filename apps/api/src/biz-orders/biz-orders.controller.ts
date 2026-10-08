@@ -21,6 +21,12 @@ interface MaintainOrderRowBody {
   reason?: string;
 }
 
+// Multer rejects files at the limit; the service enforces the inclusive 4MB limit.
+export const ORDER_PART_UPLOAD_OPTIONS = {
+  storage: memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 + 1 },
+};
+
 /**
  * 订单域 API（新基线 M4）
  * 基线：01 §5 / 02 TABLE 4 —— 上传仅 super_admin/admin；作废/恢复仅 super_admin。
@@ -35,7 +41,7 @@ export class BizOrdersController {
   ) {}
 
   @Post('upload-part')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', ORDER_PART_UPLOAD_OPTIONS))
   @BizPermissions(BizPermissionCode.OPERATION_ORDER_UPLOAD)
   async uploadPart(@BizAuthUser() auth: BizAuthContext, @UploadedFile() file: Express.Multer.File,
     @Body() body: { key: string; index: string; count: string; filename: string; sourceBatchId?: string }) {
